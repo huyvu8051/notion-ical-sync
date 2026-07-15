@@ -280,7 +280,7 @@ async fn main() -> anyhow::Result<()> {
             }),
         )
         .route(
-            "/cal/{db_id}.ics",
+            "/cal/{db_id}",
             get(move |State(state): State<AppState>, Path(db_id): Path<String>| async move {
                 let cache = state.cache.read().await;
                 let pages = cache.get(&db_id).cloned().unwrap_or_default();
