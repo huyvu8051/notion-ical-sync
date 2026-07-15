@@ -35,6 +35,7 @@ struct AppState {
     client: Client,
     notion_token: String,
     database_ids: Vec<String>,
+    data_source_ids: Vec<String>,
     date_property: String,
     cache: Arc<RwLock<HashMap<String, Vec<PageInfo>>>>,
 }
@@ -46,8 +47,8 @@ struct NotionQueryResponse {
 }
 
 impl AppState {
-    async fn refresh_db(&self, db_id: &str) -> Result<Vec<PageInfo>, String> {
-        let url = format!("https://api.notion.com/v1/databases/{}/query", db_id);
+    async fn refresh_db(&self, _db_id: &str, ds_id: &str) -> Result<Vec<PageInfo>, String> {
+        let url = format!("https://api.notion.com/v1/data_sources/{}/query", ds_id);
 
         let body = serde_json::json!({
             "filter": {
@@ -141,8 +142,8 @@ impl AppState {
 
     async fn refresh_all(&self) {
         let mut cache = self.cache.write().await;
-        for db_id in &self.database_ids {
-            match self.refresh_db(db_id).await {
+        for (db_id, ds_id) in self.database_ids.iter().zip(&self.data_source_ids) {
+            match self.refresh_db(db_id, ds_id).await {
                 Ok(pages) => {
                     info!("DB {} synced: {} events", db_id, pages.len());
                     cache.insert(db_id.clone(), pages);
@@ -232,6 +233,17 @@ async fn main() -> anyhow::Result<()> {
         tracing::warn!("DATABASE_IDS env var empty; set comma-separated Notion database IDs");
     }
 
+    let data_source_ids = env::var("DATA_SOURCE_IDS")
+        .unwrap_or_default()
+        .split(',')
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect::<Vec<_>>();
+
+    if data_source_ids.is_empty() {
+        tracing::warn!("DATA_SOURCE_IDS env var empty; set comma-separated Notion data source IDs");
+    }
+
     let date_property = env::var("DATE_PROPERTY").unwrap_or_else(|_| "Date".to_string());
     let port = env::var("PORT").unwrap_or_else(|_| "8080".to_string());
 
@@ -241,6 +253,7 @@ async fn main() -> anyhow::Result<()> {
             .build()?,
         notion_token,
         database_ids,
+        data_source_ids,
         date_property,
         cache: Arc::new(RwLock::new(HashMap::new())),
     };
