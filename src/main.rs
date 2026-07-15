@@ -89,17 +89,19 @@ impl AppState {
                 None => continue,
             };
 
-            // Find title property
+            // Find title property - prefer "Name" if present
             let title = props
                 .as_object()
-                .and_then(|o| o.values().find(|v| v.get("type").and_then(|t| t.as_str()) == Some("title")))
-                .and_then(|t| {
-                    t.as_array()
-                        .and_then(|arr| arr.first())
-                        .and_then(|item| item.get("plain_text"))
-                        .and_then(|t| t.as_str().map(|s| s.to_string()))
+                .and_then(|o| o.get("Name"))
+                .or_else(|| {
+                    props.as_object().and_then(|o| o.values().find(|v| v.get("type").and_then(|t| t.as_str()) == Some("title")))
                 })
-                .unwrap_or("(untitled)".to_string())
+                .and_then(|t| t.get("title"))
+                .and_then(|arr| arr.as_array())
+                .and_then(|arr| arr.first())
+                .and_then(|item| item.get("plain_text"))
+                .and_then(|t| t.as_str())
+                .unwrap_or("(untitled)")
                 .to_string();
 
             let date_val = match props.get(&self.date_property).and_then(|v| v.get("date")) {
