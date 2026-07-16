@@ -160,15 +160,25 @@ fn ics_dt(value: &str) -> String {
     if value.is_empty() {
         return String::new();
     }
-    let cleaned = value.replace(['-', ':'], "");
-    if cleaned.contains('T') {
-        let parts: Vec<&str> = cleaned.split('T').collect();
-        let date = parts[0];
-        let time = parts[1].split('+').next().unwrap_or(parts[1]);
-        let time = time.split('Z').next().unwrap_or(time);
+    let mut value = value.replace(['-', ':'], "");
+    if value.contains('T') {
+        let mut parts = value.split('T');
+        let date = parts.next().unwrap_or("");
+        let mut time = parts.next().unwrap_or("");
+        // strip timezone suffix
+        if time.contains('+') {
+            time = time.split('+').next().unwrap_or(time);
+        }
+        if time.contains('Z') {
+            time = time.split('Z').next().unwrap_or(time);
+        }
+        // strip fractional seconds: 070000.000 -> 070000
+        if let Some(dot) = time.find('.') {
+            time = &time[..dot];
+        }
         format!("{}T{}Z", date, time)
     } else {
-        format!(";VALUE=DATE:{}", cleaned)
+        format!(";VALUE=DATE:{}", value)
     }
 }
 
