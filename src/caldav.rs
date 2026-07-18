@@ -496,8 +496,20 @@ pub async fn handle_calendar_impl(
     db_id: String,
     prefix: String,
 ) -> impl IntoResponse {
+    let host = headers
+        .get("host")
+        .and_then(|h| h.to_str().ok())
+        .unwrap_or("")
+        .to_string();
     let name = state.get_calendar_name(&db_id).await;
-
+    info!(
+        method = ?method,
+        path = %prefix,
+        host = %host,
+        db_id = %db_id,
+        calendar = %name,
+        "CalDAV handler: calendar collection"
+    );
     if method == axum::http::Method::GET {
         let cache = state.cache.read().await;
         let pages = cache.get(&db_id).cloned().unwrap_or_default();
@@ -548,14 +560,23 @@ pub async fn handle_calendar_event_impl(
 ) -> impl IntoResponse {
     let name = state.get_calendar_name(&db_id).await;
     let event_id_clean = event_id.strip_suffix(".ics").unwrap_or(&event_id).to_string();
-
+    info!(
+        method = ?method,
+        path = %prefix,
+        db_id = %db_id,
+        event_id = %event_id_clean,
+        calendar = %name,
+        "CalDAV handler: calendar event"
+    );
     if method == axum::http::Method::GET {
         let cache = state.cache.read().await;
         let pages = cache.get(&db_id).cloned().unwrap_or_default();
         if let Some(page) = pages.iter().find(|p| matches_id(&p.id, &event_id_clean)) {
             let body = build_ics(&db_id, &name, std::slice::from_ref(page));
+            info!(status=200, found=true, "CalDAV event GET");
             return ([(header::CONTENT_TYPE, "text/calendar; charset=utf-8")], body).into_response();
         } else {
+            info!(status=404, found=false, "CalDAV event GET not found");
             return axum::http::StatusCode::NOT_FOUND.into_response();
         }
     }
@@ -650,7 +671,20 @@ pub async fn handle_host_calendar(
     headers: axum::http::HeaderMap,
     State(state): State<AppState>,
 ) -> impl IntoResponse {
-    if let Some(db_id) = get_db_id_for_host(&headers, &state) {
+    let host = headers
+        .get("host")
+        .and_then(|h| h.to_str().ok())
+        .unwrap_or("")
+        .to_string();
+    let host_db_id = get_db_id_for_host(&headers, &state);
+    info!(
+        method = ?method,
+        path = "/",
+        host = %host,
+        host_db_id = ?host_db_id,
+        "CalDAV handler: host calendar root"
+    );
+    if let Some(db_id) = host_db_id {
         let prefix = "/".to_string();
         let res = handle_calendar_impl(method, headers, state, db_id, prefix).await.into_response();
         add_caldav_headers(res)
@@ -690,11 +724,33 @@ pub async fn handle_host_calendar_event(
     Path(event_id): Path<String>,
     body: String,
 ) -> impl IntoResponse {
+    let host = headers
+        .get("host")
+        .and_then(|h| h.to_str().ok())
+        .unwrap_or("")
+        .to_string();
     if let Some(db_id) = get_db_id_for_host(&headers, &state) {
         let prefix = "/".to_string();
+        let event_id_clean = event_id.strip_suffix(".ics").unwrap_or(&event_id);
+        info!(
+            method = ?method,
+            path = "/",
+            host = %host,
+            db_id = %db_id,
+            event_id = %event_id_clean,
+            "CalDAV handler: host calendar event"
+        );
         let res = handle_calendar_event_impl(method, state, db_id, event_id, prefix, body).await.into_response();
         add_caldav_headers(res)
     } else {
+        info!(
+            method = ?method,
+            path = "/",
+            host = %host,
+            event_id = %event_id,
+            status = 404,
+            "CalDAV handler: host calendar event - no host db"
+        );
         axum::http::StatusCode::NOT_FOUND.into_response()
     }
 }
@@ -707,7 +763,23 @@ fn add_caldav_headers(mut response: axum::response::Response) -> axum::response:
 }
 
 // Fallback/catch-all or custom route handlers for new endpoints with Auth.
-async fn handle_well_known() -> impl IntoResponse {
+async fn handle_well_known(
+    method: axum::http::Method,
+    headers: axum::http::HeaderMap,
+) -> impl IntoResponse {
+    let host = headers
+        .get("host")
+        .and_then(|h| h.to_str().ok())
+        .unwrap_or("")
+        .to_string();
+    let query = headers.get("x-request-query").map(|_| "has-query").unwrap_or("").to_string();
+    info!(
+        method = ?method,
+        path = "/.well-known/caldav",
+        host = %host,
+        query = %query,
+        "Discovery: /.well-known/caldav"
+    );
     (
         axum::http::StatusCode::MOVED_PERMANENTLY,
         [
@@ -722,6 +794,17 @@ async fn handle_principals(
     method: axum::http::Method,
     headers: axum::http::HeaderMap,
 ) -> impl IntoResponse {
+    let host = headers
+        .get("host")
+        .and_then(|h| h.to_str().ok())
+        .unwrap_or("")
+        .to_string();
+    info!(
+        method = ?method,
+        path = "/principals/",
+        host = %host,
+        "Discovery: /principals/"
+    );
     if method == axum::http::Method::OPTIONS {
         return (
             axum::http::StatusCode::OK,
@@ -772,6 +855,24 @@ async fn handle_calendars_propfind(
     State(state): State<AppState>,
     Path(_user): Path<String>,
 ) -> impl IntoResponse {
+    let host = headers
+        .get("host")
+        .and_then(|h| h.to_str().ok())
+        .unwrap_or("")
+        .to_string();
+    let depth = headers
+        .get("depth")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("0")
+        .to_string();
+    info!(
+        method = ?method,
+        path = "/calendars/{user}",
+        host = %host,
+        depth = %depth,
+        user = %_user,
+        "CalDAV handler: /calendars collection"
+    );
     if method == axum::http::Method::OPTIONS {
         return (
             axum::http::StatusCode::OK,
