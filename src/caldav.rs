@@ -277,9 +277,16 @@ pub fn build_ics(db_id: &str, name: &str, pages: &[PageInfo]) -> String {
         ics.push_str("BEGIN:VEVENT\r\n");
         ics.push_str(&format!("UID:{}-{}\r\n", db_id, page.id.replace("-", "")));
         ics.push_str(&format!("DTSTAMP:{}\r\n", dtstamp));
-        ics.push_str(&format!("DTSTART:{}\r\n", start));
-        if !end.is_empty() {
-            ics.push_str(&format!("DTEND:{}\r\n", end));
+        if start.starts_with(';') {
+            ics.push_str(&format!("DTSTART{}\r\n", start));
+            if !end.is_empty() {
+                ics.push_str(&format!("DTEND{}\r\n", end));
+            }
+        } else {
+            ics.push_str(&format!("DTSTART:{}\r\n", start));
+            if !end.is_empty() {
+                ics.push_str(&format!("DTEND:{}\r\n", end));
+            }
         }
         ics.push_str(&format!("SUMMARY:{}\r\n", escape_ics(&page.title)));
         ics.push_str(&format!("DESCRIPTION:{}\r\n", escape_ics(&page.url)));
