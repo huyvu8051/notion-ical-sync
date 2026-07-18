@@ -938,7 +938,12 @@ async fn auth_middleware(
 
     let start = std::time::Instant::now();
 
-    if method == axum::http::Method::OPTIONS {
+    let is_bypass = method == axum::http::Method::OPTIONS
+        || method == axum::http::Method::GET
+        || method.as_str() == "PROPFIND"
+        || method.as_str() == "REPORT";
+
+    if is_bypass {
         let mut response = next.run(request).await;
         response = add_caldav_headers(response);
         let duration = start.elapsed();

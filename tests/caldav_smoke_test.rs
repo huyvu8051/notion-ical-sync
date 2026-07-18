@@ -314,7 +314,8 @@ async fn test_caldav_new_endpoints_and_auth() {
 
     // 1. Test unauthorized request
     let unauth_res = client
-        .get(&format!("{}/.well-known/caldav", base_url))
+        .put(&format!("{}/cal/{}/unauth-event.ics", base_url, db_id))
+        .body("BEGIN:VCALENDAR\nEND:VCALENDAR")
         .send()
         .await
         .unwrap();
