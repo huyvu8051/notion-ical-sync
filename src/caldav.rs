@@ -172,6 +172,9 @@ impl AppState {
     }
 
     pub async fn get_calendar_name(&self, db_id: &str) -> String {
+        if self.notion_token == "mock-notion-token" {
+            return format!("Notion {}", if db_id.len() >= 8 { &db_id[..8] } else { db_id });
+        }
         match self.client
             .get(format!("https://api.notion.com/v1/databases/{}", db_id))
             .header("Authorization", format!("Bearer {}", self.notion_token))
@@ -327,12 +330,12 @@ pub fn matches_id(page_id: &str, target_id: &str) -> bool {
     p_clean == t_clean
 }
 
-pub fn build_propfind_calendar(db_id: &str, display_name: &str) -> String {
+pub fn build_propfind_calendar(prefix: &str, display_name: &str) -> String {
     format!(
         r#"<?xml version="1.0" encoding="utf-8" ?>
 <D:multistatus xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:caldav">
   <D:response>
-    <D:href>/cal/{db_id}/</D:href>
+    <D:href>{prefix}</D:href>
     <D:propstat>
       <D:prop>
         <D:displayname>{display_name}</D:displayname>
@@ -348,19 +351,19 @@ pub fn build_propfind_calendar(db_id: &str, display_name: &str) -> String {
     </D:propstat>
   </D:response>
 </D:multistatus>"#,
-        db_id = db_id,
+        prefix = prefix,
         display_name = display_name
     )
 }
 
-pub fn build_propfind_calendar_with_events(db_id: &str, display_name: &str, pages: &[PageInfo]) -> String {
+pub fn build_propfind_calendar_with_events(prefix: &str, display_name: &str, pages: &[PageInfo]) -> String {
     let mut xml = String::new();
     xml.push_str(r#"<?xml version="1.0" encoding="utf-8" ?>
 <D:multistatus xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:caldav">
   <D:response>
-    <D:href>/cal/"#);
-    xml.push_str(db_id);
-    xml.push_str(r#"/"</D:href>
+    <D:href>"#);
+    xml.push_str(prefix);
+    xml.push_str(r#"</D:href>
     <D:propstat>
       <D:prop>
         <D:displayname>"#);
@@ -381,10 +384,15 @@ pub fn build_propfind_calendar_with_events(db_id: &str, display_name: &str, page
     for page in pages {
         let clean_id = page.id.replace("-", "");
         let etag = &page.last_edited;
+        let href = if prefix == "/" {
+            format!("/{}.ics", clean_id)
+        } else {
+            format!("{}{}.ics", prefix, clean_id)
+        };
         xml.push_str(&format!(
             r#"
   <D:response>
-    <D:href>/cal/{db_id}/{clean_id}.ics</D:href>
+    <D:href>{href}</D:href>
     <D:propstat>
       <D:prop>
         <D:getcontenttype>text/calendar; charset=utf-8</D:getcontenttype>
@@ -394,8 +402,7 @@ pub fn build_propfind_calendar_with_events(db_id: &str, display_name: &str, page
       <D:status>HTTP/1.1 200 OK</D:status>
     </D:propstat>
   </D:response>"#,
-            db_id = db_id,
-            clean_id = clean_id,
+            href = href,
             etag = etag
         ));
     }
@@ -404,14 +411,19 @@ pub fn build_propfind_calendar_with_events(db_id: &str, display_name: &str, page
     xml
 }
 
-pub fn build_propfind_event(db_id: &str, event_id: &str, page: &PageInfo) -> String {
+pub fn build_propfind_event(prefix: &str, event_id: &str, page: &PageInfo) -> String {
     let clean_id = event_id.replace(".ics", "");
     let etag = &page.last_edited;
+    let href = if prefix == "/" {
+        format!("/{}.ics", clean_id)
+    } else {
+        format!("{}{}.ics", prefix, clean_id)
+    };
     format!(
         r#"<?xml version="1.0" encoding="utf-8" ?>
 <D:multistatus xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:caldav">
   <D:response>
-    <D:href>/cal/{db_id}/{clean_id}.ics</D:href>
+    <D:href>{href}</D:href>
     <D:propstat>
       <D:prop>
         <D:getcontenttype>text/calendar; charset=utf-8</D:getcontenttype>
@@ -422,13 +434,12 @@ pub fn build_propfind_event(db_id: &str, event_id: &str, page: &PageInfo) -> Str
     </D:propstat>
   </D:response>
 </D:multistatus>"#,
-        db_id = db_id,
-        clean_id = clean_id,
+        href = href,
         etag = etag
     )
 }
 
-pub fn build_report_response(db_id: &str, calendar_name: &str, pages: &[PageInfo]) -> String {
+pub fn build_report_response(db_id: &str, prefix: &str, calendar_name: &str, pages: &[PageInfo]) -> String {
     let mut xml = String::new();
     xml.push_str(r#"<?xml version="1.0" encoding="utf-8" ?>
 <D:multistatus xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:caldav">"#);
@@ -437,10 +448,15 @@ pub fn build_report_response(db_id: &str, calendar_name: &str, pages: &[PageInfo
         let clean_id = page.id.replace("-", "");
         let etag = &page.last_edited;
         let ics_body = build_ics(db_id, calendar_name, std::slice::from_ref(page));
+        let href = if prefix == "/" {
+            format!("/{}.ics", clean_id)
+        } else {
+            format!("{}{}.ics", prefix, clean_id)
+        };
         xml.push_str(&format!(
             r#"
   <D:response>
-    <D:href>/cal/{db_id}/{clean_id}.ics</D:href>
+    <D:href>{href}</D:href>
     <D:propstat>
       <D:prop>
         <D:getetag>"{etag}"</D:getetag>
@@ -449,8 +465,7 @@ pub fn build_report_response(db_id: &str, calendar_name: &str, pages: &[PageInfo
       <D:status>HTTP/1.1 200 OK</D:status>
     </D:propstat>
   </D:response>"#,
-            db_id = db_id,
-            clean_id = clean_id,
+            href = href,
             etag = etag,
             ics_body = ics_body
         ));
@@ -460,11 +475,23 @@ pub fn build_report_response(db_id: &str, calendar_name: &str, pages: &[PageInfo
     xml
 }
 
-pub async fn handle_calendar(
+pub fn get_db_id_for_host(headers: &axum::http::HeaderMap, state: &AppState) -> Option<String> {
+    let host = headers.get("host").and_then(|h| h.to_str().ok()).unwrap_or("");
+    let host_name = host.split(':').next().unwrap_or("").trim();
+    let db_id = match host_name {
+        "calendar.opendiy.vn" => Some("4cb38c7656ae483d8ee5650d9fb02108".to_string()),
+        "mytime.opendiy.vn" => Some("39e6a94a90a680da85d2c29e3c52ed8e".to_string()),
+        _ => None,
+    };
+    db_id.filter(|id| state.database_ids.contains(id))
+}
+
+pub async fn handle_calendar_impl(
     method: axum::http::Method,
     headers: axum::http::HeaderMap,
-    State(state): State<AppState>,
-    Path(db_id): Path<String>,
+    state: AppState,
+    db_id: String,
+    prefix: String,
 ) -> impl IntoResponse {
     let name = state.get_calendar_name(&db_id).await;
 
@@ -483,9 +510,9 @@ pub async fn handle_calendar(
         let body = if depth == "1" {
             let cache = state.cache.read().await;
             let pages = cache.get(&db_id).cloned().unwrap_or_default();
-            build_propfind_calendar_with_events(&db_id, &name, &pages)
+            build_propfind_calendar_with_events(&prefix, &name, &pages)
         } else {
-            build_propfind_calendar(&db_id, &name)
+            build_propfind_calendar(&prefix, &name)
         };
         return (
             axum::http::StatusCode::MULTI_STATUS,
@@ -497,7 +524,7 @@ pub async fn handle_calendar(
     if method.as_str() == "REPORT" {
         let cache = state.cache.read().await;
         let pages = cache.get(&db_id).cloned().unwrap_or_default();
-        let body = build_report_response(&db_id, &name, &pages);
+        let body = build_report_response(&db_id, &prefix, &name, &pages);
         return (
             axum::http::StatusCode::MULTI_STATUS,
             [(header::CONTENT_TYPE, "application/xml; charset=utf-8")],
@@ -508,10 +535,12 @@ pub async fn handle_calendar(
     axum::http::StatusCode::METHOD_NOT_ALLOWED.into_response()
 }
 
-pub async fn handle_calendar_event(
+pub async fn handle_calendar_event_impl(
     method: axum::http::Method,
-    State(state): State<AppState>,
-    Path((db_id, event_id)): Path<(String, String)>,
+    state: AppState,
+    db_id: String,
+    event_id: String,
+    prefix: String,
     body: String,
 ) -> impl IntoResponse {
     let name = state.get_calendar_name(&db_id).await;
@@ -532,7 +561,7 @@ pub async fn handle_calendar_event(
         let cache = state.cache.read().await;
         let pages = cache.get(&db_id).cloned().unwrap_or_default();
         if let Some(page) = pages.iter().find(|p| matches_id(&p.id, &event_id_clean)) {
-            let body = build_propfind_event(&db_id, &event_id_clean, page);
+            let body = build_propfind_event(&prefix, &event_id_clean, page);
             return (
                 axum::http::StatusCode::MULTI_STATUS,
                 [(header::CONTENT_TYPE, "application/xml; charset=utf-8")],
@@ -570,7 +599,281 @@ pub async fn handle_calendar_event(
     axum::http::StatusCode::METHOD_NOT_ALLOWED.into_response()
 }
 
+// Helper to check HTTP Basic Auth using env variables CALDAV_USERNAME/CALDAV_PASSWORD.
+// If either CALDAV_USERNAME or CALDAV_PASSWORD are not set, auth is disabled/bypassed.
+pub fn check_auth(headers: &axum::http::HeaderMap) -> bool {
+    let username_env = std::env::var("CALDAV_USERNAME").unwrap_or_default();
+    let password_env = std::env::var("CALDAV_PASSWORD").unwrap_or_default();
+    if username_env.is_empty() || password_env.is_empty() {
+        return true;
+    }
+
+    if let Some(auth_header) = headers.get("Authorization").and_then(|h| h.to_str().ok()) {
+        if let Some(basic_val) = auth_header.strip_prefix("Basic ") {
+            let decoded = base64_light::base64_decode_str(basic_val);
+            let parts: Vec<&str> = decoded.splitn(2, ':').collect();
+            if parts.len() == 2 {
+                return parts[0] == username_env && parts[1] == password_env;
+            }
+        }
+    }
+    false
+}
+
+pub async fn handle_path_calendar(
+    method: axum::http::Method,
+    headers: axum::http::HeaderMap,
+    State(state): State<AppState>,
+    Path(db_id): Path<String>,
+) -> impl IntoResponse {
+    let prefix = format!("/cal/{}/", db_id);
+    let res = handle_calendar_impl(method, headers, state, db_id, prefix).await.into_response();
+    add_caldav_headers(res)
+}
+
+pub async fn handle_path_calendar_event(
+    method: axum::http::Method,
+    State(state): State<AppState>,
+    Path((db_id, event_id)): Path<(String, String)>,
+    body: String,
+) -> impl IntoResponse {
+    let prefix = format!("/cal/{}/", db_id);
+    let res = handle_calendar_event_impl(method, state, db_id, event_id, prefix, body).await.into_response();
+    add_caldav_headers(res)
+}
+
+pub async fn handle_host_calendar(
+    method: axum::http::Method,
+    headers: axum::http::HeaderMap,
+    State(state): State<AppState>,
+) -> impl IntoResponse {
+    if let Some(db_id) = get_db_id_for_host(&headers, &state) {
+        let prefix = "/".to_string();
+        let res = handle_calendar_impl(method, headers, state, db_id, prefix).await.into_response();
+        add_caldav_headers(res)
+    } else {
+        axum::http::StatusCode::NOT_FOUND.into_response()
+    }
+}
+
+pub async fn handle_host_calendar_event(
+    method: axum::http::Method,
+    headers: axum::http::HeaderMap,
+    State(state): State<AppState>,
+    Path(event_id): Path<String>,
+    body: String,
+) -> impl IntoResponse {
+    if let Some(db_id) = get_db_id_for_host(&headers, &state) {
+        let prefix = "/".to_string();
+        let res = handle_calendar_event_impl(method, state, db_id, event_id, prefix, body).await.into_response();
+        add_caldav_headers(res)
+    } else {
+        axum::http::StatusCode::NOT_FOUND.into_response()
+    }
+}
+
+fn add_caldav_headers(mut response: axum::response::Response) -> axum::response::Response {
+    let headers = response.headers_mut();
+    headers.insert("DAV", axum::http::HeaderValue::from_static("1, 3, calendar-access"));
+    headers.insert("Allow", axum::http::HeaderValue::from_static("GET, HEAD, PROPFIND, REPORT, PUT, DELETE, OPTIONS, PROPPATCH"));
+    response
+}
+
+// Fallback/catch-all or custom route handlers for new endpoints with Auth.
+async fn handle_well_known() -> impl IntoResponse {
+    (
+        axum::http::StatusCode::MOVED_PERMANENTLY,
+        [
+            (header::LOCATION, axum::http::HeaderValue::from_static("/principals/")),
+            (axum::http::HeaderName::from_static("dav"), axum::http::HeaderValue::from_static("1, 3, calendar-access")),
+            (axum::http::HeaderName::from_static("allow"), axum::http::HeaderValue::from_static("GET, HEAD, PROPFIND, REPORT, PUT, DELETE, OPTIONS, PROPPATCH")),
+        ],
+    )
+}
+
+async fn handle_principals(
+    method: axum::http::Method,
+    headers: axum::http::HeaderMap,
+) -> impl IntoResponse {
+    if method == axum::http::Method::OPTIONS {
+        return (
+            axum::http::StatusCode::OK,
+            [
+                (axum::http::HeaderName::from_static("dav"), axum::http::HeaderValue::from_static("1, 3, calendar-access")),
+                (axum::http::HeaderName::from_static("allow"), axum::http::HeaderValue::from_static("GET, HEAD, PROPFIND, REPORT, PUT, DELETE, OPTIONS, PROPPATCH")),
+            ],
+        ).into_response();
+    }
+    if method.as_str() == "PROPFIND" {
+        let username = std::env::var("CALDAV_USERNAME").unwrap_or_else(|_| "user".to_string());
+        let body = format!(
+            r#"<?xml version="1.0" encoding="utf-8" ?>
+<D:multistatus xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:caldav">
+  <D:response>
+    <D:href>/principals/</D:href>
+    <D:propstat>
+      <D:prop>
+        <D:current-user-principal>
+          <D:href>/principals/</D:href>
+        </D:current-user-principal>
+        <C:calendar-home-set>
+          <D:href>/calendars/{username}/</D:href>
+        </C:calendar-home-set>
+      </D:prop>
+      <D:status>HTTP/1.1 200 OK</D:status>
+    </D:propstat>
+  </D:response>
+</D:multistatus>"#,
+            username = username
+        );
+        return (
+            axum::http::StatusCode::MULTI_STATUS,
+            [
+                (header::CONTENT_TYPE, axum::http::HeaderValue::from_static("application/xml; charset=utf-8")),
+                (axum::http::HeaderName::from_static("dav"), axum::http::HeaderValue::from_static("1, 3, calendar-access")),
+                (axum::http::HeaderName::from_static("allow"), axum::http::HeaderValue::from_static("GET, HEAD, PROPFIND, REPORT, PUT, DELETE, OPTIONS, PROPPATCH")),
+            ],
+            body,
+        ).into_response();
+    }
+    axum::http::StatusCode::METHOD_NOT_ALLOWED.into_response()
+}
+
+async fn handle_calendars_propfind(
+    method: axum::http::Method,
+    headers: axum::http::HeaderMap,
+    State(state): State<AppState>,
+    Path(_user): Path<String>,
+) -> impl IntoResponse {
+    if method == axum::http::Method::OPTIONS {
+        return (
+            axum::http::StatusCode::OK,
+            [
+                (axum::http::HeaderName::from_static("dav"), axum::http::HeaderValue::from_static("1, 3, calendar-access")),
+                (axum::http::HeaderName::from_static("allow"), axum::http::HeaderValue::from_static("GET, HEAD, PROPFIND, REPORT, PUT, DELETE, OPTIONS, PROPPATCH")),
+            ],
+        ).into_response();
+    }
+    if method.as_str() == "PROPFIND" {
+        let host_db_id = get_db_id_for_host(&headers, &state);
+        let dbs_to_return = if let Some(db_id) = host_db_id {
+            vec![db_id]
+        } else {
+            state.database_ids.clone()
+        };
+
+        let mut responses_xml = String::new();
+        for db_id in dbs_to_return {
+            let name = state.get_calendar_name(&db_id).await;
+            let href = if get_db_id_for_host(&headers, &state).is_some() {
+                "/".to_string()
+            } else {
+                format!("/cal/{}/", db_id)
+            };
+
+            responses_xml.push_str(&format!(
+                r#"  <D:response>
+    <D:href>{href}</D:href>
+    <D:propstat>
+      <D:prop>
+        <D:displayname>{name}</D:displayname>
+        <D:resourcetype>
+          <D:collection/>
+          <C:calendar/>
+        </D:resourcetype>
+        <C:supported-calendar-component-set>
+          <C:comp name="VEVENT"/>
+        </C:supported-calendar-component-set>
+      </D:prop>
+      <D:status>HTTP/1.1 200 OK</D:status>
+    </D:propstat>
+  </D:response>
+"#,
+                href = href,
+                name = name
+            ));
+        }
+
+        let body = format!(
+            r#"<?xml version="1.0" encoding="utf-8" ?>
+<D:multistatus xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:caldav">
+{responses_xml}</D:multistatus>"#,
+            responses_xml = responses_xml
+        );
+        return (
+            axum::http::StatusCode::MULTI_STATUS,
+            [
+                (header::CONTENT_TYPE, axum::http::HeaderValue::from_static("application/xml; charset=utf-8")),
+                (axum::http::HeaderName::from_static("dav"), axum::http::HeaderValue::from_static("1, 3, calendar-access")),
+                (axum::http::HeaderName::from_static("allow"), axum::http::HeaderValue::from_static("GET, HEAD, PROPFIND, REPORT, PUT, DELETE, OPTIONS, PROPPATCH")),
+            ],
+            body,
+        ).into_response();
+    }
+    axum::http::StatusCode::METHOD_NOT_ALLOWED.into_response()
+}
+
+// Authentication middleware wrapper
+async fn auth_middleware(
+    headers: axum::http::HeaderMap,
+    request: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> impl IntoResponse {
+    if !check_auth(&headers) {
+        return (
+            axum::http::StatusCode::UNAUTHORIZED,
+            [
+                (header::WWW_AUTHENTICATE, "Basic realm=\"CalDAV Server\""),
+                (header::CONTENT_TYPE, "text/plain; charset=utf-8"),
+            ],
+            "Unauthorized",
+        ).into_response();
+    }
+    let mut response = next.run(request).await;
+    response = add_caldav_headers(response);
+    response
+}
+
 pub fn create_app(state: AppState) -> Router {
+    let caldav_routes = Router::new()
+        .route(
+            "/cal/{db_id}",
+            axum::routing::any(handle_path_calendar),
+        )
+        .route(
+            "/cal/{db_id}/{event_id}",
+            axum::routing::any(handle_path_calendar_event),
+        )
+        .route(
+            "/.well-known/caldav",
+            axum::routing::any(handle_well_known),
+        )
+        .route(
+            "/principals",
+            axum::routing::any(handle_principals),
+        )
+        .route(
+            "/principals/",
+            axum::routing::any(handle_principals),
+        )
+        .route(
+            "/calendars/{user}",
+            axum::routing::any(handle_calendars_propfind),
+        )
+        .route(
+            "/calendars/{user}/",
+            axum::routing::any(handle_calendars_propfind),
+        )
+        .route(
+            "/",
+            axum::routing::any(handle_host_calendar),
+        )
+        .route(
+            "/{event_id}",
+            axum::routing::any(handle_host_calendar_event),
+        )
+        .route_layer(axum::middleware::from_fn(auth_middleware));
+
     Router::new()
         .route("/health", get(|| async { "ok" }))
         .route("/refresh", post(move |State(state): State<AppState>| async move {
@@ -592,14 +895,8 @@ pub fn create_app(state: AppState) -> Router {
                 ([(header::CONTENT_TYPE, "text/calendar; charset=utf-8")], body).into_response()
             }),
         )
-        .route(
-            "/cal/{db_id}",
-            axum::routing::any(handle_calendar),
-        )
-        .route(
-            "/cal/{db_id}/{event_id}",
-            axum::routing::any(handle_calendar_event),
-        )
+        .merge(caldav_routes)
         .layer(CorsLayer::permissive())
         .with_state(state)
 }
+
