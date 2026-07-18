@@ -4,7 +4,7 @@ use std::{
 };
 use tracing::info;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
-use notion_ical_sync::{AppState, create_app};
+use notion_ical_sync::{AppState, CaldavAllowWrites, create_app};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -40,11 +40,13 @@ async fn main() -> anyhow::Result<()> {
     let date_property = env::var("DATE_PROPERTY").unwrap_or_else(|_| "Date".to_string());
     let port = env::var("PORT").unwrap_or_else(|_| "8080".to_string());
 
+    let caldav_allow_writes = CaldavAllowWrites::from_env();
     let state = AppState::new(
         notion_token,
         database_ids,
         data_source_ids,
         date_property,
+        caldav_allow_writes,
     );
 
     // Initial refresh

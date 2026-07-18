@@ -1,4 +1,4 @@
-use notion_ical_sync::{AppState, PageInfo, create_app};
+use notion_ical_sync::{AppState, CaldavAllowWrites, PageInfo, create_app};
 use tokio::net::TcpListener;
 use std::sync::Mutex;
 
@@ -16,6 +16,7 @@ async fn test_caldav_server_operations() {
         vec![db_id.clone()],
         vec!["mock-ds-id".to_string()],
         "Date".to_string(),
+        CaldavAllowWrites::True,
     );
 
     // Seed mock event
@@ -152,6 +153,7 @@ async fn test_caldav_host_based_routing() {
         vec![db_id_cal.clone(), db_id_time.clone()],
         vec!["mock-ds-1".to_string(), "mock-ds-2".to_string()],
         "Date".to_string(),
+        CaldavAllowWrites::True,
     );
 
     // Seed mock event for calendar.opendiy.vn
@@ -284,6 +286,7 @@ async fn test_caldav_new_endpoints_and_auth() {
         vec![db_id.clone()],
         vec!["mock-ds-id".to_string()],
         "Date".to_string(),
+        CaldavAllowWrites::True,
     );
 
     // Seed mock event
@@ -402,6 +405,70 @@ async fn test_caldav_new_endpoints_and_auth() {
     // Clean up env
     std::env::remove_var("CALDAV_USERNAME");
     std::env::remove_var("CALDAV_PASSWORD");
+}
+
+#[tokio::test]
+async fn test_caldav_readonly_mode() {
+    let _lock = TEST_MUTEX.lock().unwrap();
+
+    let db_id = "test-db-readonly".to_string();
+    let state = AppState::new(
+        "mock-notion-token".to_string(),
+        vec![db_id.clone()],
+        vec!["mock-ds-id".to_string()],
+        "Date".to_string(),
+        CaldavAllowWrites::False,
+    );
+
+    let app = create_app(state);
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+
+    let client = reqwest::Client::new();
+    let base_url = format!("http://{}", addr);
+
+    // 1. Verify health endpoint returns caldav_allow_writes: "false"
+    let health_res = client
+        .get(&format!("{}/health", base_url))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(health_res.status(), 200);
+    let health_json: serde_json::Value = health_res.json().await.unwrap();
+    assert_eq!(health_json["caldav_allow_writes"], "false");
+
+    // 2. Test PUT on event -> 403 Forbidden
+    let put_res = client
+        .put(&format!("{}/cal/{}/event123.ics", base_url, db_id))
+        .body("BEGIN:VCALENDAR\nEND:VCALENDAR")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(put_res.status(), 403);
+
+    // 3. Test DELETE on event -> 403 Forbidden
+    let delete_res = client
+        .delete(&format!("{}/cal/{}/event123.ics", base_url, db_id))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(delete_res.status(), 403);
+
+    // 4. Test PROPPATCH on collection -> 403 Forbidden
+    let proppatch_res = client
+        .request(
+            reqwest::Method::from_bytes(b"PROPPATCH").unwrap(),
+            &format!("{}/cal/{}", base_url, db_id),
+        )
+        .body("<xml></xml>")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(proppatch_res.status(), 403);
 }
 
 

@@ -27,6 +27,34 @@ pub struct PageInfo {
     pub last_edited: String,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum CaldavAllowWrites {
+    False,
+    True,
+    Inbox,
+}
+
+impl Default for CaldavAllowWrites {
+    fn default() -> Self {
+        Self::False
+    }
+}
+
+impl CaldavAllowWrites {
+    pub fn from_env() -> Self {
+        match std::env::var("CALDAV_ALLOW_WRITES")
+            .unwrap_or_default()
+            .to_lowercase()
+            .as_str()
+        {
+            "true" => Self::True,
+            "inbox" => Self::Inbox,
+            _ => Self::False,
+        }
+    }
+}
+
 // Shared app state
 #[derive(Clone)]
 pub struct AppState {
@@ -36,6 +64,7 @@ pub struct AppState {
     pub data_source_ids: Vec<String>,
     pub date_property: String,
     pub cache: Arc<RwLock<HashMap<String, Vec<PageInfo>>>>,
+    pub caldav_allow_writes: CaldavAllowWrites,
 }
 
 // Notion API response types
@@ -50,6 +79,7 @@ impl AppState {
         database_ids: Vec<String>,
         data_source_ids: Vec<String>,
         date_property: String,
+        caldav_allow_writes: CaldavAllowWrites,
     ) -> Self {
         Self {
             client: Client::builder()
@@ -61,6 +91,7 @@ impl AppState {
             data_source_ids,
             date_property,
             cache: Arc::new(RwLock::new(HashMap::new())),
+            caldav_allow_writes,
         }
     }
 
@@ -503,6 +534,11 @@ pub async fn handle_calendar_impl(
         .unwrap_or("")
         .to_string();
     let name = state.get_calendar_name(&db_id).await;
+    if method == axum::http::Method::PUT || method == axum::http::Method::DELETE || method.as_str() == "PROPPATCH" {
+        if state.caldav_allow_writes != CaldavAllowWrites::True {
+            return axum::http::StatusCode::FORBIDDEN.into_response();
+        }
+    }
     info!(
         method = ?method,
         path = %prefix,
@@ -586,6 +622,11 @@ pub async fn handle_calendar_event_impl(
 ) -> impl IntoResponse {
     let name = state.get_calendar_name(&db_id).await;
     let event_id_clean = event_id.strip_suffix(".ics").unwrap_or(&event_id).to_string();
+    if method == axum::http::Method::PUT || method == axum::http::Method::DELETE || method.as_str() == "PROPPATCH" {
+        if state.caldav_allow_writes != CaldavAllowWrites::True {
+            return axum::http::StatusCode::FORBIDDEN.into_response();
+        }
+    }
     info!(
         method = ?method,
         path = %prefix,
@@ -1203,8 +1244,16 @@ pub fn create_app(state: AppState) -> Router {
         .route_layer(axum::middleware::from_fn(auth_middleware));
 
     Router::new()
-        .route("/health", get(|| async { "ok" }).layer(CorsLayer::permissive()))
-        .route("/caldav-ui", get(crate::ui::ui_handler).layer(CorsLayer::permissive()))
+        .route(
+            "/health",
+            get(move |State(state): State<AppState>| async move {
+                axum::Json(serde_json::json!({
+                    "status": "ok",
+                    "caldav_allow_writes": state.caldav_allow_writes
+                }))
+            })
+            .layer(CorsLayer::permissive()),
+        )
         .route("/refresh", post(move |State(state): State<AppState>| async move {
             state.refresh_all().await;
             "refresh triggered"
