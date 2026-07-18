@@ -346,6 +346,9 @@ pub fn build_propfind_calendar(prefix: &str, display_name: &str) -> String {
         <C:supported-calendar-component-set>
           <C:comp name="VEVENT"/>
         </C:supported-calendar-component-set>
+        <D:current-user-principal>
+          <D:href>/principals/</D:href>
+        </D:current-user-principal>
       </D:prop>
       <D:status>HTTP/1.1 200 OK</D:status>
     </D:propstat>
@@ -652,6 +655,30 @@ pub async fn handle_host_calendar(
         let res = handle_calendar_impl(method, headers, state, db_id, prefix).await.into_response();
         add_caldav_headers(res)
     } else {
+        if method == axum::http::Method::OPTIONS {
+            return axum::http::StatusCode::OK.into_response();
+        }
+        if method.as_str() == "PROPFIND" {
+            let body = r#"<?xml version="1.0" encoding="utf-8" ?>
+<D:multistatus xmlns:D="DAV:">
+  <D:response>
+    <D:href>/</D:href>
+    <D:propstat>
+      <D:prop>
+        <D:current-user-principal>
+          <D:href>/principals/</D:href>
+        </D:current-user-principal>
+      </D:prop>
+      <D:status>HTTP/1.1 200 OK</D:status>
+    </D:propstat>
+  </D:response>
+</D:multistatus>"#;
+            return (
+                axum::http::StatusCode::MULTI_STATUS,
+                [(header::CONTENT_TYPE, "application/xml; charset=utf-8")],
+                body,
+            ).into_response();
+        }
         axum::http::StatusCode::NOT_FOUND.into_response()
     }
 }
@@ -810,7 +837,76 @@ async fn handle_calendars_propfind(
             body,
         ).into_response();
     }
+    if method.as_str() == "REPORT" {
+        let host_db_id = get_db_id_for_host(&headers, &state);
+        let dbs_to_return = if let Some(db_id) = host_db_id {
+            vec![db_id]
+        } else {
+            state.database_ids.clone()
+        };
+
+        let mut xml = String::new();
+        xml.push_str(r#"<?xml version="1.0" encoding="utf-8" ?>
+<D:multistatus xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:caldav">"#);
+
+        let cache = state.cache.read().await;
+        for db_id in dbs_to_return {
+            let name = state.get_calendar_name(&db_id).await;
+            let prefix = if get_db_id_for_host(&headers, &state).is_some() {
+                "/".to_string()
+            } else {
+                format!("/cal/{}/", db_id)
+            };
+            let pages = cache.get(&db_id).cloned().unwrap_or_default();
+            for page in pages {
+                let clean_id = page.id.replace("-", "");
+                let etag = &page.last_edited;
+                let ics_body = build_ics(&db_id, &name, std::slice::from_ref(&page));
+                let href = format!("{}{}.ics", prefix, clean_id);
+                xml.push_str(&format!(
+                    r#"
+  <D:response>
+    <D:href>{href}</D:href>
+    <D:propstat>
+      <D:prop>
+        <D:getetag>"{etag}"</D:getetag>
+        <C:calendar-data><![CDATA[{ics_body}]]></C:calendar-data>
+      </D:prop>
+      <D:status>HTTP/1.1 200 OK</D:status>
+    </D:propstat>
+  </D:response>"#,
+                    href = href,
+                    etag = etag,
+                    ics_body = ics_body
+                ));
+            }
+        }
+        xml.push_str("\n</D:multistatus>");
+
+        return (
+            axum::http::StatusCode::MULTI_STATUS,
+            [
+                (header::CONTENT_TYPE, axum::http::HeaderValue::from_static("application/xml; charset=utf-8")),
+                (axum::http::HeaderName::from_static("dav"), axum::http::HeaderValue::from_static("1, 3, calendar-access")),
+                (axum::http::HeaderName::from_static("allow"), axum::http::HeaderValue::from_static("GET, HEAD, PROPFIND, REPORT, PUT, DELETE, OPTIONS, PROPPATCH")),
+            ],
+            xml,
+        ).into_response();
+    }
     axum::http::StatusCode::METHOD_NOT_ALLOWED.into_response()
+}
+
+fn extract_username(headers: &axum::http::HeaderMap) -> Option<String> {
+    if let Some(auth_header) = headers.get("Authorization").and_then(|h| h.to_str().ok()) {
+        if let Some(basic_val) = auth_header.strip_prefix("Basic ") {
+            let decoded = base64_light::base64_decode_str(basic_val);
+            let parts: Vec<&str> = decoded.splitn(2, ':').collect();
+            if !parts.is_empty() {
+                return Some(parts[0].to_string());
+            }
+        }
+    }
+    None
 }
 
 // Authentication middleware wrapper
@@ -819,8 +915,71 @@ async fn auth_middleware(
     request: axum::extract::Request,
     next: axum::middleware::Next,
 ) -> impl IntoResponse {
-    if !check_auth(&headers) {
-        return (
+    let method = request.method().clone();
+    let path = request.uri().path().to_string();
+    let host = headers.get("host").and_then(|h| h.to_str().ok()).unwrap_or("").to_string();
+    let query = request.uri().query().unwrap_or("").to_string();
+
+    info!(
+        method = ?method,
+        path = %path,
+        host = %host,
+        query = %query,
+        "Incoming CalDAV request"
+    );
+
+    if path == "/.well-known/caldav" {
+        info!("Discovery flow step: /.well-known/caldav redirect");
+    } else if path.starts_with("/principals") {
+        info!("Discovery flow step: /principals/");
+    } else if path.starts_with("/calendars") {
+        info!("Discovery flow step: /calendars/");
+    }
+
+    let start = std::time::Instant::now();
+
+    if method == axum::http::Method::OPTIONS {
+        let mut response = next.run(request).await;
+        response = add_caldav_headers(response);
+        let duration = start.elapsed();
+        info!(
+            method = ?method,
+            path = %path,
+            status = response.status().as_u16(),
+            duration_ms = duration.as_millis(),
+            "CalDAV request completed"
+        );
+        return response;
+    }
+
+    let is_authed = check_auth(&headers);
+    let username = extract_username(&headers);
+
+    let username_env = std::env::var("CALDAV_USERNAME").unwrap_or_default();
+    let password_env = std::env::var("CALDAV_PASSWORD").unwrap_or_default();
+    let auth_enabled = !username_env.is_empty() && !password_env.is_empty();
+
+    if auth_enabled {
+        if is_authed {
+            info!(
+                username = ?username.as_deref().unwrap_or(""),
+                "Authentication success"
+            );
+        } else {
+            info!(
+                username = ?username.as_deref().unwrap_or(""),
+                "Authentication failure"
+            );
+        }
+    } else {
+        info!(
+            username = ?username.as_deref().unwrap_or(""),
+            "Authentication bypassed (auth disabled)"
+        );
+    }
+
+    if !is_authed {
+        let mut response = (
             axum::http::StatusCode::UNAUTHORIZED,
             [
                 (header::WWW_AUTHENTICATE, "Basic realm=\"CalDAV Server\""),
@@ -828,9 +987,28 @@ async fn auth_middleware(
             ],
             "Unauthorized",
         ).into_response();
+        response = add_caldav_headers(response);
+        let duration = start.elapsed();
+        info!(
+            method = ?method,
+            path = %path,
+            status = response.status().as_u16(),
+            duration_ms = duration.as_millis(),
+            "CalDAV request completed"
+        );
+        return response;
     }
+
     let mut response = next.run(request).await;
     response = add_caldav_headers(response);
+    let duration = start.elapsed();
+    info!(
+        method = ?method,
+        path = %path,
+        status = response.status().as_u16(),
+        duration_ms = duration.as_millis(),
+        "CalDAV request completed"
+    );
     response
 }
 
@@ -895,8 +1073,8 @@ pub fn create_app(state: AppState) -> Router {
                 ([(header::CONTENT_TYPE, "text/calendar; charset=utf-8")], body).into_response()
             }),
         )
-        .merge(caldav_routes)
         .layer(CorsLayer::permissive())
+        .merge(caldav_routes)
         .with_state(state)
 }
 

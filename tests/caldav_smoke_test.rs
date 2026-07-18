@@ -286,6 +286,21 @@ async fn test_caldav_new_endpoints_and_auth() {
         "Date".to_string(),
     );
 
+    // Seed mock event
+    let event_id = "event-abc-98765".to_string();
+    let initial_event = PageInfo {
+        id: event_id.clone(),
+        title: "Initial Sync Event".to_string(),
+        start: "2026-07-18T10:00:00Z".to_string(),
+        end: Some("2026-07-18T11:00:00Z".to_string()),
+        url: "https://notion.so/event-abc-98765".to_string(),
+        last_edited: "2026-07-18T00:00:00Z".to_string(),
+    };
+    {
+        let mut cache = state.cache.write().await;
+        cache.insert(db_id.clone(), vec![initial_event]);
+    }
+
     let app = create_app(state);
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
@@ -350,6 +365,38 @@ async fn test_caldav_new_endpoints_and_auth() {
     assert!(cal_body.contains("<D:displayname>"));
     assert!(cal_body.contains("<C:calendar/>"));
     assert!(cal_body.contains("<C:comp name=\"VEVENT\"/>"));
+
+    // 5. Test PROPFIND / (Root probe, unmapped host)
+    let root_propfind_res = client
+        .request(reqwest::Method::from_bytes(b"PROPFIND").unwrap(), &format!("{}/", base_url))
+        .header("Authorization", &auth_header_val)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(root_propfind_res.status(), 207);
+    let root_propfind_body = root_propfind_res.text().await.unwrap();
+    assert!(root_propfind_body.contains("<D:href>/</D:href>"));
+    assert!(root_propfind_body.contains("<D:current-user-principal>"));
+
+    // 6. Test REPORT /calendars/testuser/
+    let report_cal_res = client
+        .request(reqwest::Method::from_bytes(b"REPORT").unwrap(), &format!("{}/calendars/testuser/", base_url))
+        .header("Authorization", &auth_header_val)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(report_cal_res.status(), 207);
+    let report_cal_body = report_cal_res.text().await.unwrap();
+    assert!(report_cal_body.contains("BEGIN:VCALENDAR"));
+
+    // 7. Test OPTIONS / (Auth bypass)
+    let options_res = client
+        .request(reqwest::Method::OPTIONS, &format!("{}/", base_url))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(options_res.status(), 200);
+    assert!(options_res.headers().contains_key("dav"));
 
     // Clean up env
     std::env::remove_var("CALDAV_USERNAME");
