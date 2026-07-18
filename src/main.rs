@@ -52,10 +52,10 @@ async fn main() -> anyhow::Result<()> {
     // Initial refresh
     state.refresh_all().await;
 
-    // Periodic refresh: every 5 minutes
+    // Periodic refresh: every 10s
     let state2 = state.clone();
     tokio::spawn(async move {
-        let mut interval = tokio::time::interval(Duration::from_secs(300));
+        let mut interval = tokio::time::interval(Duration::from_secs(10));
         loop {
             interval.tick().await;
             state2.refresh_all().await;
