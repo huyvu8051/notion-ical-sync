@@ -495,6 +495,7 @@ pub async fn handle_calendar_impl(
     state: AppState,
     db_id: String,
     prefix: String,
+    body: String,
 ) -> impl IntoResponse {
     let host = headers
         .get("host")
@@ -529,6 +530,31 @@ pub async fn handle_calendar_impl(
         } else {
             build_propfind_calendar(&prefix, &name)
         };
+        return (
+            axum::http::StatusCode::MULTI_STATUS,
+            [(header::CONTENT_TYPE, "application/xml; charset=utf-8")],
+            body,
+        ).into_response();
+    }
+
+    if method.as_str() == "PROPPATCH" {
+        let body = format!(
+            r#"<?xml version="1.0" encoding="utf-8" ?>
+<D:multistatus xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:caldav">
+  <D:response>
+    <D:href>{prefix}</D:href>
+    <D:propstat>
+      <D:prop>
+        <C:supported-calendar-component-set>
+          <C:comp name="VEVENT"/>
+        </C:supported-calendar-component-set>
+      </D:prop>
+      <D:status>HTTP/1.1 200 OK</D:status>
+    </D:propstat>
+  </D:response>
+</D:multistatus>"#,
+            prefix = prefix
+        );
         return (
             axum::http::StatusCode::MULTI_STATUS,
             [(header::CONTENT_TYPE, "application/xml; charset=utf-8")],
@@ -649,9 +675,10 @@ pub async fn handle_path_calendar(
     headers: axum::http::HeaderMap,
     State(state): State<AppState>,
     Path(db_id): Path<String>,
+    body: String,
 ) -> impl IntoResponse {
     let prefix = format!("/cal/{}/", db_id);
-    let res = handle_calendar_impl(method, headers, state, db_id, prefix).await.into_response();
+    let res = handle_calendar_impl(method, headers, state, db_id, prefix, body).await.into_response();
     add_caldav_headers(res)
 }
 
@@ -670,6 +697,7 @@ pub async fn handle_host_calendar(
     method: axum::http::Method,
     headers: axum::http::HeaderMap,
     State(state): State<AppState>,
+    body: String,
 ) -> impl IntoResponse {
     let host = headers
         .get("host")
@@ -686,7 +714,7 @@ pub async fn handle_host_calendar(
     );
     if let Some(db_id) = host_db_id {
         let prefix = "/".to_string();
-        let res = handle_calendar_impl(method, headers, state, db_id, prefix).await.into_response();
+        let res = handle_calendar_impl(method, headers, state, db_id, prefix, body).await.into_response();
         add_caldav_headers(res)
     } else {
         if method == axum::http::Method::OPTIONS {
@@ -1125,11 +1153,23 @@ pub fn create_app(state: AppState) -> Router {
             axum::routing::any(handle_path_calendar),
         )
         .route(
+            "/cal/{db_id}/",
+            axum::routing::any(handle_path_calendar),
+        )
+        .route(
             "/cal/{db_id}/{event_id}",
             axum::routing::any(handle_path_calendar_event),
         )
         .route(
+            "/cal/{db_id}/{event_id}/",
+            axum::routing::any(handle_path_calendar_event),
+        )
+        .route(
             "/.well-known/caldav",
+            axum::routing::any(handle_well_known),
+        )
+        .route(
+            "/.well-known/caldav/",
             axum::routing::any(handle_well_known),
         )
         .route(
@@ -1154,6 +1194,10 @@ pub fn create_app(state: AppState) -> Router {
         )
         .route(
             "/{event_id}",
+            axum::routing::any(handle_host_calendar_event),
+        )
+        .route(
+            "/{event_id}/",
             axum::routing::any(handle_host_calendar_event),
         )
         .route_layer(axum::middleware::from_fn(auth_middleware));
