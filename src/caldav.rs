@@ -1058,11 +1058,12 @@ pub fn create_app(state: AppState) -> Router {
         .route_layer(axum::middleware::from_fn(auth_middleware));
 
     Router::new()
-        .route("/health", get(|| async { "ok" }))
+        .route("/health", get(|| async { "ok" }).layer(CorsLayer::permissive()))
+        .route("/caldav-ui", get(crate::ui::ui_handler).layer(CorsLayer::permissive()))
         .route("/refresh", post(move |State(state): State<AppState>| async move {
             state.refresh_all().await;
             "refresh triggered"
-        }))
+        }).layer(CorsLayer::permissive()))
         .route(
             "/cal.ics",
             get(move |State(state): State<AppState>| async move {
@@ -1076,10 +1077,8 @@ pub fn create_app(state: AppState) -> Router {
                 let name = names.join(", ");
                 let body = build_ics("all", &name, &all_pages);
                 ([(header::CONTENT_TYPE, "text/calendar; charset=utf-8")], body).into_response()
-            }),
+            }).layer(CorsLayer::permissive()),
         )
-        .layer(CorsLayer::permissive())
         .merge(caldav_routes)
         .with_state(state)
 }
-

@@ -1,0 +1,32 @@
+{
+  "name": "notion-ical-sync",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "directories": {
+    "test": "tests"
+  },
+  "scripts": {
+    "test": "playwright test",
+    "test:headless": "playwright test",
+    "e2e": "playwright test",
+    "e2e:ui": "playwright test --ui"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/huyvu8051/notion-ical-sync.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/huyvu8051/notion-ical-sync/issues"
+  },
+  "homepage": "https://github.com/huyvu8051/notion-ical-sync#readme",
+  "devDependencies": {
+    "@playwright/test": "^1.61.1",
+    "@types/node": "^26.1.1",
+    "typescript": "^7.0.2"
+  }
+}

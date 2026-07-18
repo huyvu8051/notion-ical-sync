@@ -17,7 +17,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 dotenvy = "0.15"
 anyhow = "1"
 uuid = { version = "1", features = ["v4"] }
-icalendar = "0.17"
+icalendar = { version = "0.17", features = ["parser"] }
 futures-util = "0.3"
 url = "2"
 bytes = "1"
@@ -26,3 +26,4 @@ parking_lot = "0.12"
 dyn-clone = "1"
 axum = "0.8.9"
 base64_light = "0.1.6"
+leptos = { version = "0.8", features = ["ssr"] }
