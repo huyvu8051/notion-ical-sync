@@ -226,6 +226,130 @@ impl AppState {
         }
     }
 
+    /// Find the data_source_id paired with a configured database_id, if any.
+    pub fn ds_id_for_db(&self, db_id: &str) -> Option<String> {
+        self.database_ids
+            .iter()
+            .position(|id| id == db_id)
+            .map(|idx| self.data_source_ids[idx].clone())
+    }
+
+    fn date_property_value(&self, start: &str, end: Option<&str>) -> serde_json::Value {
+        let mut date = serde_json::Map::new();
+        date.insert("start".into(), serde_json::json!(start));
+        if let Some(e) = end {
+            date.insert("end".into(), serde_json::json!(e));
+        }
+        serde_json::Value::Object(date)
+    }
+
+    /// Create a new Notion page under `data_source_id` with a title and the
+    /// configured date property set, mirroring what the webview's "add
+    /// event" flow needs. Notion is always the source of truth: this writes
+    /// through to it directly rather than touching our own cache, which the
+    /// caller refreshes afterward from the real Notion state.
+    pub async fn notion_create_event(
+        &self,
+        data_source_id: &str,
+        title: &str,
+        start: &str,
+        end: Option<&str>,
+    ) -> Result<String, String> {
+        let mut properties = serde_json::Map::new();
+        properties.insert(
+            "Name".into(),
+            serde_json::json!({ "title": [{ "text": { "content": title } }] }),
+        );
+        properties.insert(
+            self.date_property.clone(),
+            serde_json::json!({ "date": self.date_property_value(start, end) }),
+        );
+
+        let body = serde_json::json!({
+            "parent": { "type": "data_source_id", "data_source_id": data_source_id },
+            "properties": properties,
+        });
+
+        let resp = self
+            .client
+            .post("https://api.notion.com/v1/pages")
+            .header("Authorization", format!("Bearer {}", self.notion_token))
+            .header("Notion-Version", "2025-09-03")
+            .header("Content-Type", "application/json")
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| format!("Request failed: {}", e))?;
+
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let txt = resp.text().await.unwrap_or_default();
+            return Err(format!("Notion error {}: {}", status, txt));
+        }
+
+        let data: serde_json::Value = resp.json().await.map_err(|e| format!("Parse failed: {}", e))?;
+        data.get("id")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string())
+            .ok_or_else(|| "Notion response missing page id".to_string())
+    }
+
+    /// Patch title and/or the date property on an existing page. Any field
+    /// left as `None` is left untouched on the Notion side.
+    pub async fn notion_update_event(
+        &self,
+        page_id: &str,
+        title: Option<&str>,
+        start: Option<&str>,
+        end: Option<Option<&str>>,
+    ) -> Result<(), String> {
+        let mut properties = serde_json::Map::new();
+        if let Some(t) = title {
+            properties.insert(
+                "Name".into(),
+                serde_json::json!({ "title": [{ "text": { "content": t } }] }),
+            );
+        }
+        if let Some(s) = start {
+            properties.insert(
+                self.date_property.clone(),
+                serde_json::json!({ "date": self.date_property_value(s, end.flatten()) }),
+            );
+        }
+
+        if properties.is_empty() {
+            return Ok(());
+        }
+
+        let body = serde_json::json!({ "properties": properties });
+        self.patch_page(page_id, &body).await
+    }
+
+    /// Move a page to trash (Notion has no hard-delete via the public API).
+    pub async fn notion_delete_event(&self, page_id: &str) -> Result<(), String> {
+        self.patch_page(page_id, &serde_json::json!({ "in_trash": true })).await
+    }
+
+    async fn patch_page(&self, page_id: &str, body: &serde_json::Value) -> Result<(), String> {
+        let resp = self
+            .client
+            .patch(format!("https://api.notion.com/v1/pages/{}", page_id))
+            .header("Authorization", format!("Bearer {}", self.notion_token))
+            .header("Notion-Version", "2025-09-03")
+            .header("Content-Type", "application/json")
+            .json(body)
+            .send()
+            .await
+            .map_err(|e| format!("Request failed: {}", e))?;
+
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let txt = resp.text().await.unwrap_or_default();
+            return Err(format!("Notion error {}: {}", status, txt));
+        }
+        Ok(())
+    }
+
     pub async fn get_calendar_name(&self, db_id: &str) -> String {
         if self.notion_token == "mock-notion-token" {
             return format!("Notion {}", if db_id.len() >= 8 { &db_id[..8] } else { db_id });
@@ -1294,6 +1418,15 @@ pub fn create_app(state: AppState) -> Router {
                 let body = build_ics("all", &name, &all_pages);
                 ([(header::CONTENT_TYPE, "text/calendar; charset=utf-8")], body).into_response()
             }),
+        )
+        // Webview: server-rendered FullCalendar page + its JSON CRUD API,
+        // writing straight through to Notion (see notion_create/update/
+        // delete_event on AppState). Same auth as everything else here.
+        .route("/app/{db_id}", get(crate::webview::handle_webview_page))
+        .route("/app/{db_id}/api/events", get(crate::webview::handle_list_events).post(crate::webview::handle_create_event))
+        .route(
+            "/app/{db_id}/api/events/{event_id}",
+            axum::routing::patch(crate::webview::handle_update_event).delete(crate::webview::handle_delete_event),
         )
         .route_layer(axum::middleware::from_fn(auth_middleware));
 
