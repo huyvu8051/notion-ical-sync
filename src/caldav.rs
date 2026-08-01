@@ -1139,10 +1139,11 @@ async fn auth_middleware(
 
     let start = std::time::Instant::now();
 
-    let is_bypass = method == axum::http::Method::OPTIONS
-        || method == axum::http::Method::GET
-        || method.as_str() == "PROPFIND"
-        || method.as_str() == "REPORT";
+    // Only OPTIONS (CORS preflight, no calendar data in the response) skips
+    // auth. GET/PROPFIND/REPORT used to bypass here too, which meant every
+    // "protected" CalDAV route was actually readable by anyone — reads are
+    // exactly what needs protecting, not just writes.
+    let is_bypass = method == axum::http::Method::OPTIONS;
 
     if is_bypass {
         let mut response = next.run(request).await;
@@ -1272,27 +1273,13 @@ pub fn create_app(state: AppState) -> Router {
             "/{event_id}/",
             axum::routing::any(handle_host_calendar_event),
         )
-        .route_layer(axum::middleware::from_fn(auth_middleware));
-
-    Router::new()
-        .route(
-            "/health",
-            get(move |State(state): State<AppState>| async move {
-                axum::Json(serde_json::json!({
-                    "status": "ok",
-                    "caldav_allow_writes": state.caldav_allow_writes
-                }))
-            })
-            .layer(CorsLayer::permissive()),
-        )
+        // Both moved here (from the unauthenticated router below) since they
+        // either leak calendar data (/cal.ics) or let anyone force a Notion
+        // API call (/refresh) — same auth requirement as the CalDAV routes.
         .route("/refresh", post(move |State(state): State<AppState>| async move {
             state.refresh_all().await;
             "refresh triggered"
-        }).layer(CorsLayer::permissive()))
-        .route(
-            "/webhook/notion-test",
-            post(crate::webhook::handle_notion_webhook),
-        )
+        }))
         .route(
             "/cal.ics",
             get(move |State(state): State<AppState>| async move {
@@ -1306,7 +1293,27 @@ pub fn create_app(state: AppState) -> Router {
                 let name = names.join(", ");
                 let body = build_ics("all", &name, &all_pages);
                 ([(header::CONTENT_TYPE, "text/calendar; charset=utf-8")], body).into_response()
-            }).layer(CorsLayer::permissive()),
+            }),
+        )
+        .route_layer(axum::middleware::from_fn(auth_middleware));
+
+    Router::new()
+        .route(
+            "/health",
+            get(move |State(state): State<AppState>| async move {
+                axum::Json(serde_json::json!({
+                    "status": "ok",
+                    "caldav_allow_writes": state.caldav_allow_writes
+                }))
+            })
+            .layer(CorsLayer::permissive()),
+        )
+        // Not auth-protected: Notion can't send Basic Auth credentials, so
+        // this is instead authenticated via HMAC signature verification
+        // inside the handler itself (see webhook.rs).
+        .route(
+            "/webhook/notion-test",
+            post(crate::webhook::handle_notion_webhook),
         )
         .merge(caldav_routes)
         .with_state(state)
