@@ -2,9 +2,13 @@ use std::{
     env,
     time::Duration,
 };
+use tower_sessions::cookie::time::Duration as CookieDuration;
+use tower_sessions::cookie::SameSite;
+use tower_sessions::{Expiry, SessionManagerLayer};
+use tower_sessions_sqlx_store::PostgresStore;
 use tracing::info;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
-use notion_ical_sync::{AppState, CaldavAllowWrites, create_app};
+use notion_ical_sync::{auth, AppState, CaldavAllowWrites, create_app};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -40,7 +44,7 @@ async fn main() -> anyhow::Result<()> {
         .expect("failed to run migrations");
 
     let caldav_allow_writes = CaldavAllowWrites::from_env();
-    let state = AppState::new(pool, caldav_allow_writes, webhook_secret);
+    let state = AppState::new(pool.clone(), caldav_allow_writes, webhook_secret);
 
     // Initial refresh
     state.refresh_all().await;
@@ -57,7 +61,34 @@ async fn main() -> anyhow::Result<()> {
         }
     });
 
-    let app = create_app(state);
+    // SaaS login (Keycloak) — separate from the per-tenant Notion OAuth
+    // tokens already sitting in Postgres. Sessions are Postgres-backed (not
+    // MemoryStore) since this app is multi-tenant from day one.
+    let app_base_url = env::var("APP_BASE_URL").unwrap_or_else(|_| format!("http://localhost:{port}"));
+    let keycloak_issuer_url = env::var("KEYCLOAK_ISSUER_URL")
+        .unwrap_or_else(|_| "http://localhost:8081/realms/notion-caldav-saas".to_string());
+    let keycloak_client_id =
+        env::var("KEYCLOAK_CLIENT_ID").unwrap_or_else(|_| "notion-caldav-saas-app".to_string());
+    let keycloak_client_secret = env::var("KEYCLOAK_CLIENT_SECRET").ok();
+
+    let oidc_client = auth::build_oidc_client(
+        keycloak_issuer_url,
+        keycloak_client_id,
+        keycloak_client_secret,
+        format!("{app_base_url}/oidc"),
+    )
+    .await;
+
+    let session_store = PostgresStore::new(pool);
+    session_store.migrate().await.expect("failed to run session store migrations");
+    let session_layer = SessionManagerLayer::new(session_store)
+        .with_secure(app_base_url.starts_with("https://"))
+        .with_same_site(SameSite::Lax)
+        .with_expiry(Expiry::OnInactivity(CookieDuration::days(7)));
+
+    let app_config = auth::AppConfig { base_url: app_base_url };
+
+    let app = create_app(state, oidc_client, app_config).layer(session_layer);
 
     let addr: std::net::SocketAddr = format!("0.0.0.0:{}", port).parse()?;
     info!("notion-ical-sync listening on {}", addr);

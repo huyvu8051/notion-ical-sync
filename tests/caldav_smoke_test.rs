@@ -1,8 +1,39 @@
-use notion_ical_sync::{AppState, CaldavAllowWrites, PageInfo, create_app};
+use notion_ical_sync::{auth, AppState, CaldavAllowWrites, PageInfo, create_app};
+use axum::Router;
 use tokio::net::TcpListener;
 use std::sync::Mutex;
 
 static TEST_MUTEX: Mutex<()> = Mutex::new(());
+
+/// create_app now also wires the SaaS's own Keycloak login, which needs a
+/// real OidcClient (built by discovering a live issuer). These CalDAV
+/// protocol tests don't exercise login at all, but still have to hand one
+/// in — point it at the same local dev Keycloak realm Terraform provisioned
+/// (`terraform apply` in terraform/, against the docker-compose Keycloak).
+async fn test_create_app(state: AppState) -> Router {
+    let issuer = std::env::var("TEST_KEYCLOAK_ISSUER_URL")
+        .unwrap_or_else(|_| "http://localhost:8081/realms/notion-caldav-saas".to_string());
+    // The realm's client is confidential (see terraform/main.tf) — Keycloak
+    // rejects unauthenticated requests from it without this, which showed up
+    // as a 400 (Keycloak's own error page body) on *every* request once
+    // oidc_auth_service tried to use the client, not just login attempts.
+    let client_secret = std::env::var("TEST_KEYCLOAK_CLIENT_SECRET").ok();
+    let oidc_client = auth::build_oidc_client(
+        issuer,
+        "notion-caldav-saas-app".to_string(),
+        client_secret,
+        "http://localhost:0/oidc".to_string(),
+    )
+    .await;
+    let app_config = auth::AppConfig { base_url: "http://localhost:0".to_string() };
+    // oidc_auth_service (applied inside create_app, wrapping every route
+    // including the plain CalDAV/Basic-Auth ones) needs a live
+    // tower_sessions::Session to be extractable on every request, or it
+    // 500s instead of passing through — a real session store, not just
+    // required for actual login flows.
+    let session_layer = tower_sessions::SessionManagerLayer::new(tower_sessions::MemoryStore::default());
+    create_app(state, oidc_client, app_config).layer(session_layer)
+}
 
 /// Builds a real DB-backed AppState against a test Postgres, seeding a
 /// user/notion_connection/calendar row so DB-backed lookups (calendar_by_db_id
@@ -86,7 +117,7 @@ async fn test_caldav_server_operations() {
     }
 
     // 2. Start the router on a random port
-    let app = create_app(state);
+    let app = test_create_app(state).await;
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
 
@@ -234,7 +265,7 @@ async fn test_caldav_host_based_routing() {
     }
 
     // 2. Start the router on a random port
-    let app = create_app(state);
+    let app = test_create_app(state).await;
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
 
@@ -347,7 +378,7 @@ async fn test_caldav_new_endpoints_and_auth() {
         cache.insert(db_id.clone(), vec![initial_event]);
     }
 
-    let app = create_app(state);
+    let app = test_create_app(state).await;
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
 
@@ -457,7 +488,7 @@ async fn test_caldav_readonly_mode() {
     let db_id = "test-db-readonly".to_string();
     let state = test_state(&db_id, "mock-ds-id", CaldavAllowWrites::False).await;
 
-    let app = create_app(state);
+    let app = test_create_app(state).await;
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
 

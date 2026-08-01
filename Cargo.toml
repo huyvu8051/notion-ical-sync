@@ -33,3 +33,9 @@ sqlx = { version = "0.8", default-features = false, features = ["postgres", "run
 axum-oidc = "=1.0.0-dev-2"
 tower-sessions = "0.15"
 rand = "0.8"
+# Pinned to a specific commit rather than the published 0.15.0: that crates.io
+# release still depends on tower-sessions-core 0.14, which conflicts with our
+# tower-sessions 0.15 (two different SessionStore trait definitions, doesn't
+# compile). This commit has the fix (core bumped to 0.15) merged but not yet
+# published as a new version.
+tower-sessions-sqlx-store = { git = "https://github.com/maxcountryman/tower-sessions-stores", rev = "be0f230fadb4", features = ["postgres"] }

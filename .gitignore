@@ -1,2 +1,8 @@
 target
 logs/
+
+# terraform state holds resource attributes in plaintext, including the
+# Keycloak client_secret output — must never be committed.
+terraform/.terraform/
+terraform/*.tfstate
+terraform/*.tfstate.*

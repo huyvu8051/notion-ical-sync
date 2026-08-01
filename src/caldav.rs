@@ -1414,7 +1414,24 @@ async fn auth_middleware(
     response
 }
 
-pub fn create_app(state: AppState) -> Router {
+pub fn create_app(
+    state: AppState,
+    oidc_client: axum_oidc::OidcClient<axum_oidc::EmptyAdditionalClaims>,
+    app_config: crate::auth::AppConfig,
+) -> Router {
+    use axum::error_handling::HandleErrorLayer;
+    use axum_oidc::{error::MiddlewareError, handle_oidc_redirect, EmptyAdditionalClaims, OidcAuthLayer, OidcLoginLayer};
+    use crate::auth::SessionWrapper;
+    use tower::ServiceBuilder;
+
+    let oidc_login_service = ServiceBuilder::new()
+        .layer(HandleErrorLayer::new(|e: MiddlewareError| async move { e.into_response() }))
+        .layer(OidcLoginLayer::<EmptyAdditionalClaims, SessionWrapper>::new());
+
+    let oidc_auth_service = ServiceBuilder::new()
+        .layer(HandleErrorLayer::new(|e: MiddlewareError| async move { e.into_response() }))
+        .layer(OidcAuthLayer::<_, SessionWrapper>::new(oidc_client));
+
     let caldav_routes = Router::new()
         .route(
             "/cal/{db_id}",
@@ -1502,6 +1519,16 @@ pub fn create_app(state: AppState) -> Router {
         )
         .route_layer(axum::middleware::from_fn(auth_middleware));
 
+    // Built as its own router (not chained onto the others before calling
+    // .layer()) because Router::layer() wraps *every* route already
+    // registered on that router, not just the one added right before it —
+    // chaining this after /health and /webhook/notion-test made those force
+    // a Keycloak login redirect too, which isn't what "/me forces login" was
+    // supposed to mean.
+    let me_route = Router::new()
+        .route("/me", get(crate::auth::me))
+        .layer(oidc_login_service);
+
     Router::new()
         .route(
             "/health",
@@ -1520,6 +1547,21 @@ pub fn create_app(state: AppState) -> Router {
             "/webhook/notion-test",
             post(crate::webhook::handle_notion_webhook),
         )
+        // SaaS login (Keycloak) — separate identity from the CalDAV Basic
+        // Auth / Notion OAuth above. /me forces login via oidc_login_service;
+        // /oidc (callback) and /logout must NOT themselves force a redirect,
+        // so they sit outside that layer.
+        .merge(me_route)
+        .route(
+            "/oidc",
+            axum::routing::any(handle_oidc_redirect::<EmptyAdditionalClaims, SessionWrapper>),
+        )
+        .route("/logout", get(crate::auth::logout))
         .merge(caldav_routes)
+        // Applied last so it wraps everything above — only populates claims
+        // when a session exists, never forces a redirect itself (that's
+        // oidc_login_service's job, scoped to /me only).
+        .layer(oidc_auth_service)
+        .layer(axum::Extension(app_config))
         .with_state(state)
 }
