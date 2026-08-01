@@ -10,6 +10,44 @@ use tracing::error;
 
 use crate::AppState;
 
+/// `/app` — lists every configured database (by its real Notion calendar
+/// name) so you don't have to know/type a database_id by hand.
+pub async fn handle_webview_index(State(state): State<AppState>) -> impl IntoResponse {
+    let mut items = Vec::new();
+    for db_id in &state.database_ids {
+        items.push((db_id.clone(), state.get_calendar_name(db_id).await));
+    }
+
+    let html = view! {
+        <!DOCTYPE html>
+        <html lang="en">
+            <head>
+                <meta charset="utf-8"/>
+                <title>"Notion Calendars"</title>
+                <style>
+                    "body { font-family: sans-serif; margin: 2rem; max-width: 600px; }
+                    li { line-height: 2.2; font-size: 1.1rem; }
+                    a { color: #2563eb; text-decoration: none; }
+                    a:hover { text-decoration: underline; }"
+                </style>
+            </head>
+            <body>
+                <h1>"Notion Calendars"</h1>
+                <ul>
+                    {items
+                        .into_iter()
+                        .map(|(db_id, name)| {
+                            let href = format!("/app/{}", db_id);
+                            view! { <li><a href=href>{name}</a></li> }
+                        })
+                        .collect_view()}
+                </ul>
+            </body>
+        </html>
+    };
+    Html(leptos::prelude::RenderHtml::to_html(html))
+}
+
 /// Server-rendered page shell (no client-side hydration/wasm — Leptos here
 /// is just producing the static HTML; all interactivity is FullCalendar's
 /// own JS, loaded from a CDN, talking to the JSON API below).
@@ -27,10 +65,12 @@ pub async fn handle_webview_page(Path(db_id): Path<String>) -> impl IntoResponse
                 />
                 <style>
                     "body { font-family: sans-serif; margin: 2rem; }
-                    #calendar { max-width: 1000px; margin: 0 auto; }"
+                    #calendar { max-width: 1000px; margin: 0 auto; }
+                    nav { max-width: 1000px; margin: 0 auto 1rem; }"
                 </style>
             </head>
             <body>
+                <nav><a href="/app">"← All calendars"</a></nav>
                 <div id="calendar"></div>
                 <script src="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.15/index.global.min.js"></script>
                 <script>{webview_js(&events_url)}</script>

@@ -1422,6 +1422,7 @@ pub fn create_app(state: AppState) -> Router {
         // Webview: server-rendered FullCalendar page + its JSON CRUD API,
         // writing straight through to Notion (see notion_create/update/
         // delete_event on AppState). Same auth as everything else here.
+        .route("/app", get(crate::webview::handle_webview_index))
         .route("/app/{db_id}", get(crate::webview::handle_webview_page))
         .route("/app/{db_id}/api/events", get(crate::webview::handle_list_events).post(crate::webview::handle_create_event))
         .route(
