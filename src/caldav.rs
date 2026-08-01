@@ -13,6 +13,7 @@ use axum::{
 };
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
+use sqlx::PgPool;
 use tower_http::cors::CorsLayer;
 use tracing::{error, info};
 
@@ -59,10 +60,7 @@ impl CaldavAllowWrites {
 #[derive(Clone)]
 pub struct AppState {
     pub client: Client,
-    pub notion_token: String,
-    pub database_ids: Vec<String>,
-    pub data_source_ids: Vec<String>,
-    pub date_property: String,
+    pub db: PgPool,
     pub cache: Arc<RwLock<HashMap<String, Vec<PageInfo>>>>,
     pub caldav_allow_writes: CaldavAllowWrites,
     /// The `verification_token` Notion issued for the webhook subscription,
@@ -78,12 +76,23 @@ struct NotionQueryResponse {
     results: Vec<serde_json::Value>,
 }
 
+/// A tracked calendar joined with its owning Notion connection's access
+/// token — everything a request needs to talk to Notion on that user's
+/// behalf. Looked up per-request from Postgres rather than held as flat
+/// AppState fields, since (post multi-tenancy) each row can belong to a
+/// different user with a different token.
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct CalendarRow {
+    pub database_id: String,
+    pub data_source_id: String,
+    pub date_property: String,
+    pub display_name: String,
+    pub notion_access_token: String,
+}
+
 impl AppState {
     pub fn new(
-        notion_token: String,
-        database_ids: Vec<String>,
-        data_source_ids: Vec<String>,
-        date_property: String,
+        db: PgPool,
         caldav_allow_writes: CaldavAllowWrites,
         webhook_secret: Option<String>,
     ) -> Self {
@@ -92,33 +101,73 @@ impl AppState {
                 .timeout(Duration::from_secs(30))
                 .build()
                 .unwrap(),
-            notion_token,
-            database_ids,
-            data_source_ids,
-            date_property,
+            db,
             cache: Arc::new(RwLock::new(HashMap::new())),
             caldav_allow_writes,
             webhook_secret,
         }
     }
 
-    pub async fn refresh_db(&self, _db_id: &str, ds_id: &str) -> Result<Vec<PageInfo>, String> {
+    pub async fn all_calendars(&self) -> Vec<CalendarRow> {
+        sqlx::query_as::<_, CalendarRow>(
+            "SELECT c.database_id, c.data_source_id, c.date_property, c.display_name, nc.notion_access_token
+             FROM calendars c JOIN notion_connections nc ON nc.id = c.notion_connection_id",
+        )
+        .fetch_all(&self.db)
+        .await
+        .unwrap_or_else(|e| {
+            error!("failed to list calendars from db: {}", e);
+            Vec::new()
+        })
+    }
+
+    pub async fn calendar_by_db_id(&self, db_id: &str) -> Option<CalendarRow> {
+        sqlx::query_as::<_, CalendarRow>(
+            "SELECT c.database_id, c.data_source_id, c.date_property, c.display_name, nc.notion_access_token
+             FROM calendars c JOIN notion_connections nc ON nc.id = c.notion_connection_id
+             WHERE c.database_id = $1",
+        )
+        .bind(db_id)
+        .fetch_optional(&self.db)
+        .await
+        .unwrap_or_else(|e| {
+            error!("failed to look up calendar {}: {}", db_id, e);
+            None
+        })
+    }
+
+    pub async fn calendar_by_data_source_id(&self, ds_id: &str) -> Option<CalendarRow> {
+        sqlx::query_as::<_, CalendarRow>(
+            "SELECT c.database_id, c.data_source_id, c.date_property, c.display_name, nc.notion_access_token
+             FROM calendars c JOIN notion_connections nc ON nc.id = c.notion_connection_id
+             WHERE c.data_source_id = $1",
+        )
+        .bind(ds_id)
+        .fetch_optional(&self.db)
+        .await
+        .unwrap_or_else(|e| {
+            error!("failed to look up calendar by data source {}: {}", ds_id, e);
+            None
+        })
+    }
+
+    pub async fn refresh_db(&self, ds_id: &str, date_property: &str, notion_token: &str) -> Result<Vec<PageInfo>, String> {
         let url = format!("https://api.notion.com/v1/data_sources/{}/query", ds_id);
 
         let body = serde_json::json!({
             "filter": {
-                "property": &self.date_property,
+                "property": date_property,
                 "date": { "is_not_empty": true }
             },
             "sorts": [
-                { "property": &self.date_property, "direction": "descending" }
+                { "property": date_property, "direction": "descending" }
             ]
         });
 
         let resp = self
             .client
             .post(&url)
-            .header("Authorization", format!("Bearer {}", self.notion_token))
+            .header("Authorization", format!("Bearer {}", notion_token))
             .header("Notion-Version", "2025-09-03")
             .header("Content-Type", "application/json")
             .json(&body)
@@ -158,7 +207,7 @@ impl AppState {
                 .unwrap_or("(untitled)")
                 .to_string();
 
-            let date_val = match props.get(&self.date_property).and_then(|v| v.get("date")) {
+            let date_val = match props.get(date_property).and_then(|v| v.get("date")) {
                 Some(d) => d,
                 None => continue,
             };
@@ -197,14 +246,15 @@ impl AppState {
     }
 
     pub async fn refresh_all(&self) {
+        let calendars = self.all_calendars().await;
         let mut cache = self.cache.write().await;
-        for (db_id, ds_id) in self.database_ids.iter().zip(&self.data_source_ids) {
-            match self.refresh_db(db_id, ds_id).await {
+        for cal in calendars {
+            match self.refresh_db(&cal.data_source_id, &cal.date_property, &cal.notion_access_token).await {
                 Ok(pages) => {
-                    info!("DB {} synced: {} events", db_id, pages.len());
-                    cache.insert(db_id.clone(), pages);
+                    info!("DB {} synced: {} events", cal.database_id, pages.len());
+                    cache.insert(cal.database_id, pages);
                 }
-                Err(e) => error!("DB {} refresh failed: {}", db_id, e),
+                Err(e) => error!("DB {} refresh failed: {}", cal.database_id, e),
             }
         }
     }
@@ -212,26 +262,17 @@ impl AppState {
     /// Refresh just the one database matching `data_source_id`, used to react
     /// to a webhook event immediately instead of waiting for the next poll.
     pub async fn refresh_by_data_source(&self, data_source_id: &str) {
-        let Some(idx) = self.data_source_ids.iter().position(|id| id == data_source_id) else {
+        let Some(cal) = self.calendar_by_data_source_id(data_source_id).await else {
             info!(data_source_id, "webhook event for untracked data source, ignoring");
             return;
         };
-        let db_id = self.database_ids[idx].clone();
-        match self.refresh_db(&db_id, data_source_id).await {
+        match self.refresh_db(&cal.data_source_id, &cal.date_property, &cal.notion_access_token).await {
             Ok(pages) => {
-                info!("DB {} synced via webhook: {} events", db_id, pages.len());
-                self.cache.write().await.insert(db_id, pages);
+                info!("DB {} synced via webhook: {} events", cal.database_id, pages.len());
+                self.cache.write().await.insert(cal.database_id, pages);
             }
-            Err(e) => error!("DB {} webhook-triggered refresh failed: {}", db_id, e),
+            Err(e) => error!("DB {} webhook-triggered refresh failed: {}", cal.database_id, e),
         }
-    }
-
-    /// Find the data_source_id paired with a configured database_id, if any.
-    pub fn ds_id_for_db(&self, db_id: &str) -> Option<String> {
-        self.database_ids
-            .iter()
-            .position(|id| id == db_id)
-            .map(|idx| self.data_source_ids[idx].clone())
     }
 
     fn date_property_value(&self, start: &str, end: Option<&str>) -> serde_json::Value {
@@ -251,6 +292,8 @@ impl AppState {
     pub async fn notion_create_event(
         &self,
         data_source_id: &str,
+        date_property: &str,
+        notion_token: &str,
         title: &str,
         start: &str,
         end: Option<&str>,
@@ -261,7 +304,7 @@ impl AppState {
             serde_json::json!({ "title": [{ "text": { "content": title } }] }),
         );
         properties.insert(
-            self.date_property.clone(),
+            date_property.to_string(),
             serde_json::json!({ "date": self.date_property_value(start, end) }),
         );
 
@@ -273,7 +316,7 @@ impl AppState {
         let resp = self
             .client
             .post("https://api.notion.com/v1/pages")
-            .header("Authorization", format!("Bearer {}", self.notion_token))
+            .header("Authorization", format!("Bearer {}", notion_token))
             .header("Notion-Version", "2025-09-03")
             .header("Content-Type", "application/json")
             .json(&body)
@@ -299,6 +342,8 @@ impl AppState {
     pub async fn notion_update_event(
         &self,
         page_id: &str,
+        date_property: &str,
+        notion_token: &str,
         title: Option<&str>,
         start: Option<&str>,
         end: Option<Option<&str>>,
@@ -312,7 +357,7 @@ impl AppState {
         }
         if let Some(s) = start {
             properties.insert(
-                self.date_property.clone(),
+                date_property.to_string(),
                 serde_json::json!({ "date": self.date_property_value(s, end.flatten()) }),
             );
         }
@@ -322,19 +367,19 @@ impl AppState {
         }
 
         let body = serde_json::json!({ "properties": properties });
-        self.patch_page(page_id, &body).await
+        self.patch_page(page_id, notion_token, &body).await
     }
 
     /// Move a page to trash (Notion has no hard-delete via the public API).
-    pub async fn notion_delete_event(&self, page_id: &str) -> Result<(), String> {
-        self.patch_page(page_id, &serde_json::json!({ "in_trash": true })).await
+    pub async fn notion_delete_event(&self, page_id: &str, notion_token: &str) -> Result<(), String> {
+        self.patch_page(page_id, notion_token, &serde_json::json!({ "in_trash": true })).await
     }
 
-    async fn patch_page(&self, page_id: &str, body: &serde_json::Value) -> Result<(), String> {
+    async fn patch_page(&self, page_id: &str, notion_token: &str, body: &serde_json::Value) -> Result<(), String> {
         let resp = self
             .client
             .patch(format!("https://api.notion.com/v1/pages/{}", page_id))
-            .header("Authorization", format!("Bearer {}", self.notion_token))
+            .header("Authorization", format!("Bearer {}", notion_token))
             .header("Notion-Version", "2025-09-03")
             .header("Content-Type", "application/json")
             .json(body)
@@ -350,13 +395,10 @@ impl AppState {
         Ok(())
     }
 
-    pub async fn get_calendar_name(&self, db_id: &str) -> String {
-        if self.notion_token == "mock-notion-token" {
-            return format!("Notion {}", if db_id.len() >= 8 { &db_id[..8] } else { db_id });
-        }
+    pub async fn get_calendar_name(&self, db_id: &str, notion_token: &str) -> String {
         match self.client
             .get(format!("https://api.notion.com/v1/databases/{}", db_id))
-            .header("Authorization", format!("Bearer {}", self.notion_token))
+            .header("Authorization", format!("Bearer {}", notion_token))
             .header("Notion-Version", "2025-09-03")
             .send()
             .await
@@ -664,7 +706,7 @@ pub fn build_report_response(db_id: &str, prefix: &str, calendar_name: &str, pag
     xml
 }
 
-pub fn get_db_id_for_host(headers: &axum::http::HeaderMap, state: &AppState) -> Option<String> {
+pub async fn get_db_id_for_host(headers: &axum::http::HeaderMap, state: &AppState) -> Option<String> {
     let host = headers.get("host").and_then(|h| h.to_str().ok()).unwrap_or("");
     let host_name = host.split(':').next().unwrap_or("").trim();
     let db_id = match host_name {
@@ -672,7 +714,10 @@ pub fn get_db_id_for_host(headers: &axum::http::HeaderMap, state: &AppState) -> 
         "mytime.opendiy.vn" => Some("39e6a94a90a680da85d2c29e3c52ed8e".to_string()),
         _ => None,
     };
-    db_id.filter(|id| state.database_ids.contains(id))
+    match db_id {
+        Some(id) if state.calendar_by_db_id(&id).await.is_some() => Some(id),
+        _ => None,
+    }
 }
 
 pub async fn handle_calendar_impl(
@@ -688,7 +733,14 @@ pub async fn handle_calendar_impl(
         .and_then(|h| h.to_str().ok())
         .unwrap_or("")
         .to_string();
-    let name = state.get_calendar_name(&db_id).await;
+    let Some(cal) = state.calendar_by_db_id(&db_id).await else {
+        return axum::http::StatusCode::NOT_FOUND.into_response();
+    };
+    let name = if cal.display_name.is_empty() {
+        state.get_calendar_name(&db_id, &cal.notion_access_token).await
+    } else {
+        cal.display_name.clone()
+    };
     if method == axum::http::Method::PUT || method == axum::http::Method::DELETE || method.as_str() == "PROPPATCH" {
         if state.caldav_allow_writes != CaldavAllowWrites::True {
             return axum::http::StatusCode::FORBIDDEN.into_response();
@@ -775,7 +827,14 @@ pub async fn handle_calendar_event_impl(
     prefix: String,
     body: String,
 ) -> impl IntoResponse {
-    let name = state.get_calendar_name(&db_id).await;
+    let Some(cal) = state.calendar_by_db_id(&db_id).await else {
+        return axum::http::StatusCode::NOT_FOUND.into_response();
+    };
+    let name = if cal.display_name.is_empty() {
+        state.get_calendar_name(&db_id, &cal.notion_access_token).await
+    } else {
+        cal.display_name.clone()
+    };
     let event_id_clean = event_id.strip_suffix(".ics").unwrap_or(&event_id).to_string();
     if method == axum::http::Method::PUT || method == axum::http::Method::DELETE || method.as_str() == "PROPPATCH" {
         if state.caldav_allow_writes != CaldavAllowWrites::True {
@@ -900,7 +959,7 @@ pub async fn handle_host_calendar(
         .and_then(|h| h.to_str().ok())
         .unwrap_or("")
         .to_string();
-    let host_db_id = get_db_id_for_host(&headers, &state);
+    let host_db_id = get_db_id_for_host(&headers, &state).await;
     info!(
         method = ?method,
         path = "/",
@@ -953,7 +1012,7 @@ pub async fn handle_host_calendar_event(
         .and_then(|h| h.to_str().ok())
         .unwrap_or("")
         .to_string();
-    if let Some(db_id) = get_db_id_for_host(&headers, &state) {
+    if let Some(db_id) = get_db_id_for_host(&headers, &state).await {
         let prefix = "/".to_string();
         let event_id_clean = event_id.strip_suffix(".ics").unwrap_or(&event_id);
         info!(
@@ -1107,17 +1166,23 @@ async fn handle_calendars_propfind(
         ).into_response();
     }
     if method.as_str() == "PROPFIND" {
-        let host_db_id = get_db_id_for_host(&headers, &state);
-        let dbs_to_return = if let Some(db_id) = host_db_id {
-            vec![db_id]
+        let host_db_id = get_db_id_for_host(&headers, &state).await;
+        let all_cals = state.all_calendars().await;
+        let cals_to_return: Vec<CalendarRow> = if let Some(db_id) = &host_db_id {
+            all_cals.into_iter().filter(|c| &c.database_id == db_id).collect()
         } else {
-            state.database_ids.clone()
+            all_cals
         };
 
         let mut responses_xml = String::new();
-        for db_id in dbs_to_return {
-            let name = state.get_calendar_name(&db_id).await;
-            let href = if get_db_id_for_host(&headers, &state).is_some() {
+        for cal in cals_to_return {
+            let db_id = cal.database_id.clone();
+            let name = if cal.display_name.is_empty() {
+                state.get_calendar_name(&db_id, &cal.notion_access_token).await
+            } else {
+                cal.display_name.clone()
+            };
+            let href = if host_db_id.is_some() {
                 "/".to_string()
             } else {
                 format!("/cal/{}/", db_id)
@@ -1163,11 +1228,12 @@ async fn handle_calendars_propfind(
         ).into_response();
     }
     if method.as_str() == "REPORT" {
-        let host_db_id = get_db_id_for_host(&headers, &state);
-        let dbs_to_return = if let Some(db_id) = host_db_id {
-            vec![db_id]
+        let host_db_id = get_db_id_for_host(&headers, &state).await;
+        let all_cals = state.all_calendars().await;
+        let cals_to_return: Vec<CalendarRow> = if let Some(db_id) = &host_db_id {
+            all_cals.into_iter().filter(|c| &c.database_id == db_id).collect()
         } else {
-            state.database_ids.clone()
+            all_cals
         };
 
         let mut xml = String::new();
@@ -1175,9 +1241,14 @@ async fn handle_calendars_propfind(
 <D:multistatus xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:caldav">"#);
 
         let cache = state.cache.read().await;
-        for db_id in dbs_to_return {
-            let name = state.get_calendar_name(&db_id).await;
-            let prefix = if get_db_id_for_host(&headers, &state).is_some() {
+        for cal in cals_to_return {
+            let db_id = cal.database_id.clone();
+            let name = if cal.display_name.is_empty() {
+                state.get_calendar_name(&db_id, &cal.notion_access_token).await
+            } else {
+                cal.display_name.clone()
+            };
+            let prefix = if host_db_id.is_some() {
                 "/".to_string()
             } else {
                 format!("/cal/{}/", db_id)

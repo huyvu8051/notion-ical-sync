@@ -14,30 +14,6 @@ async fn main() -> anyhow::Result<()> {
         .with(tracing_subscriber::fmt::layer())
         .init();
 
-    let notion_token = env::var("NOTION_TOKEN").expect("NOTION_TOKEN required");
-    let database_ids = env::var("DATABASE_IDS")
-        .unwrap_or_default()
-        .split(',')
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty())
-        .collect::<Vec<_>>();
-
-    if database_ids.is_empty() {
-        tracing::warn!("DATABASE_IDS env var empty; set comma-separated Notion database IDs");
-    }
-
-    let data_source_ids = env::var("DATA_SOURCE_IDS")
-        .unwrap_or_default()
-        .split(',')
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty())
-        .collect::<Vec<_>>();
-
-    if data_source_ids.is_empty() {
-        tracing::warn!("DATA_SOURCE_IDS env var empty; set comma-separated Notion data source IDs");
-    }
-
-    let date_property = env::var("DATE_PROPERTY").unwrap_or_else(|_| "Date".to_string());
     let port = env::var("PORT").unwrap_or_else(|_| "8080".to_string());
 
     let webhook_secret = env::var("NOTION_WEBHOOK_SECRET").ok();
@@ -48,15 +24,23 @@ async fn main() -> anyhow::Result<()> {
         );
     }
 
+    // Notion credentials/database selection are no longer flat env vars —
+    // each tenant's own token + calendar list lives in Postgres (see
+    // migrations/0001_init.sql: users -> notion_connections -> calendars).
+    let database_url = env::var("DATABASE_URL")
+        .unwrap_or_else(|_| "postgres://biolink:biolink@localhost:5433/notion_saas".to_string());
+    let pool = sqlx::postgres::PgPoolOptions::new()
+        .max_connections(10)
+        .connect(&database_url)
+        .await
+        .expect("failed to connect to postgres");
+    sqlx::migrate!("./migrations")
+        .run(&pool)
+        .await
+        .expect("failed to run migrations");
+
     let caldav_allow_writes = CaldavAllowWrites::from_env();
-    let state = AppState::new(
-        notion_token,
-        database_ids,
-        data_source_ids,
-        date_property,
-        caldav_allow_writes,
-        webhook_secret,
-    );
+    let state = AppState::new(pool, caldav_allow_writes, webhook_secret);
 
     // Initial refresh
     state.refresh_all().await;

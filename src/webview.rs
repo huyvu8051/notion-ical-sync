@@ -14,8 +14,13 @@ use crate::AppState;
 /// name) so you don't have to know/type a database_id by hand.
 pub async fn handle_webview_index(State(state): State<AppState>) -> impl IntoResponse {
     let mut items = Vec::new();
-    for db_id in &state.database_ids {
-        items.push((db_id.clone(), state.get_calendar_name(db_id).await));
+    for cal in state.all_calendars().await {
+        let name = if cal.display_name.is_empty() {
+            state.get_calendar_name(&cal.database_id, &cal.notion_access_token).await
+        } else {
+            cal.display_name.clone()
+        };
+        items.push((cal.database_id, name));
     }
 
     let html = view! {
@@ -188,15 +193,22 @@ pub async fn handle_create_event(
     Path(db_id): Path<String>,
     Json(body): Json<CreateEventBody>,
 ) -> impl IntoResponse {
-    let Some(ds_id) = state.ds_id_for_db(&db_id) else {
+    let Some(cal) = state.calendar_by_db_id(&db_id).await else {
         return (StatusCode::NOT_FOUND, "unknown database").into_response();
     };
     match state
-        .notion_create_event(&ds_id, &body.title, &body.start, body.end.as_deref())
+        .notion_create_event(
+            &cal.data_source_id,
+            &cal.date_property,
+            &cal.notion_access_token,
+            &body.title,
+            &body.start,
+            body.end.as_deref(),
+        )
         .await
     {
         Ok(page_id) => {
-            state.refresh_by_data_source(&ds_id).await;
+            state.refresh_by_data_source(&cal.data_source_id).await;
             (StatusCode::CREATED, Json(serde_json::json!({ "id": page_id }))).into_response()
         }
         Err(e) => {
@@ -228,12 +240,14 @@ pub async fn handle_update_event(
     Path((db_id, event_id)): Path<(String, String)>,
     Json(body): Json<UpdateEventBody>,
 ) -> impl IntoResponse {
-    let Some(ds_id) = state.ds_id_for_db(&db_id) else {
+    let Some(cal) = state.calendar_by_db_id(&db_id).await else {
         return (StatusCode::NOT_FOUND, "unknown database").into_response();
     };
     match state
         .notion_update_event(
             &event_id,
+            &cal.date_property,
+            &cal.notion_access_token,
             body.title.as_deref(),
             body.start.as_deref(),
             body.end.as_ref().map(|o| o.as_deref()),
@@ -241,7 +255,7 @@ pub async fn handle_update_event(
         .await
     {
         Ok(()) => {
-            state.refresh_by_data_source(&ds_id).await;
+            state.refresh_by_data_source(&cal.data_source_id).await;
             StatusCode::NO_CONTENT.into_response()
         }
         Err(e) => {
@@ -255,12 +269,12 @@ pub async fn handle_delete_event(
     State(state): State<AppState>,
     Path((db_id, event_id)): Path<(String, String)>,
 ) -> impl IntoResponse {
-    let Some(ds_id) = state.ds_id_for_db(&db_id) else {
+    let Some(cal) = state.calendar_by_db_id(&db_id).await else {
         return (StatusCode::NOT_FOUND, "unknown database").into_response();
     };
-    match state.notion_delete_event(&event_id).await {
+    match state.notion_delete_event(&event_id, &cal.notion_access_token).await {
         Ok(()) => {
-            state.refresh_by_data_source(&ds_id).await;
+            state.refresh_by_data_source(&cal.data_source_id).await;
             StatusCode::NO_CONTENT.into_response()
         }
         Err(e) => {

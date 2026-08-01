@@ -4,6 +4,63 @@ use std::sync::Mutex;
 
 static TEST_MUTEX: Mutex<()> = Mutex::new(());
 
+/// Builds a real DB-backed AppState against a test Postgres, seeding a
+/// user/notion_connection/calendar row so DB-backed lookups (calendar_by_db_id
+/// etc.) resolve `db_id`/`ds_id` the same way the pre-multi-tenant AppState's
+/// flat notion_token/database_ids fields used to provide directly. Event data
+/// itself is still seeded straight into `state.cache` by each test, same as
+/// before — only calendar *identity* now comes from Postgres.
+async fn test_state(db_id: &str, ds_id: &str, allow_writes: CaldavAllowWrites) -> AppState {
+    test_state_multi(&[(db_id, ds_id)], allow_writes).await
+}
+
+async fn test_state_multi(calendars: &[(&str, &str)], allow_writes: CaldavAllowWrites) -> AppState {
+    let db_url = std::env::var("TEST_DATABASE_URL")
+        .unwrap_or_else(|_| "postgres://biolink:biolink@localhost:5433/notion_saas".to_string());
+    let pool = sqlx::PgPool::connect(&db_url).await.expect("connect to test db");
+    sqlx::migrate!("./migrations").run(&pool).await.expect("run migrations");
+
+    for (db_id, ds_id) in calendars {
+        let user_id: i64 = sqlx::query_scalar(
+            "INSERT INTO users (keycloak_sub, email) VALUES ($1, '')
+             ON CONFLICT (keycloak_sub) DO UPDATE SET email = users.email
+             RETURNING id",
+        )
+        .bind(format!("test-sub-{}", db_id))
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+
+        let conn_id: i64 = sqlx::query_scalar(
+            "INSERT INTO notion_connections (user_id, notion_access_token, workspace_id)
+             VALUES ($1, 'mock-notion-token', 'mock-workspace')
+             RETURNING id",
+        )
+        .bind(user_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+
+        sqlx::query(
+            "INSERT INTO calendars (user_id, notion_connection_id, database_id, data_source_id, date_property, caldav_username, caldav_password_hash)
+             VALUES ($1, $2, $3, $4, 'Date', $5, 'x')
+             ON CONFLICT (database_id) DO UPDATE SET
+                data_source_id = EXCLUDED.data_source_id,
+                notion_connection_id = EXCLUDED.notion_connection_id",
+        )
+        .bind(user_id)
+        .bind(conn_id)
+        .bind(*db_id)
+        .bind(*ds_id)
+        .bind(format!("caldav-{}", db_id))
+        .execute(&pool)
+        .await
+        .unwrap();
+    }
+
+    AppState::new(pool, allow_writes, None)
+}
+
 #[tokio::test]
 async fn test_caldav_server_operations() {
     let _lock = TEST_MUTEX.lock().unwrap();
@@ -11,13 +68,7 @@ async fn test_caldav_server_operations() {
     std::env::remove_var("CALDAV_PASSWORD");
     // 1. Create a mocked AppState with pre-populated cache
     let db_id = "test-db-12345".to_string();
-    let state = AppState::new(
-        "mock-notion-token".to_string(),
-        vec![db_id.clone()],
-        vec!["mock-ds-id".to_string()],
-        "Date".to_string(),
-        CaldavAllowWrites::True,
-    );
+    let state = test_state(&db_id, "mock-ds-id", CaldavAllowWrites::True).await;
 
     // Seed mock event
     let event_id = "event-abc-98765".to_string();
@@ -148,13 +199,11 @@ async fn test_caldav_host_based_routing() {
     let db_id_cal = "4cb38c7656ae483d8ee5650d9fb02108".to_string();
     let db_id_time = "39e6a94a90a680da85d2c29e3c52ed8e".to_string();
 
-    let state = AppState::new(
-        "mock-notion-token".to_string(),
-        vec![db_id_cal.clone(), db_id_time.clone()],
-        vec!["mock-ds-1".to_string(), "mock-ds-2".to_string()],
-        "Date".to_string(),
+    let state = test_state_multi(
+        &[(&db_id_cal, "mock-ds-1"), (&db_id_time, "mock-ds-2")],
         CaldavAllowWrites::True,
-    );
+    )
+    .await;
 
     // Seed mock event for calendar.opendiy.vn
     let event_id_cal = "event-cal-111".to_string();
@@ -281,13 +330,7 @@ async fn test_caldav_new_endpoints_and_auth() {
     std::env::set_var("CALDAV_PASSWORD", "testpass");
 
     let db_id = "4cb38c7656ae483d8ee5650d9fb02108".to_string();
-    let state = AppState::new(
-        "mock-notion-token".to_string(),
-        vec![db_id.clone()],
-        vec!["mock-ds-id".to_string()],
-        "Date".to_string(),
-        CaldavAllowWrites::True,
-    );
+    let state = test_state(&db_id, "mock-ds-id", CaldavAllowWrites::True).await;
 
     // Seed mock event
     let event_id = "event-abc-98765".to_string();
@@ -412,13 +455,7 @@ async fn test_caldav_readonly_mode() {
     let _lock = TEST_MUTEX.lock().unwrap();
 
     let db_id = "test-db-readonly".to_string();
-    let state = AppState::new(
-        "mock-notion-token".to_string(),
-        vec![db_id.clone()],
-        vec!["mock-ds-id".to_string()],
-        "Date".to_string(),
-        CaldavAllowWrites::False,
-    );
+    let state = test_state(&db_id, "mock-ds-id", CaldavAllowWrites::False).await;
 
     let app = create_app(state);
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
