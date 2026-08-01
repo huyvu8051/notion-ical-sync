@@ -40,6 +40,14 @@ async fn main() -> anyhow::Result<()> {
     let date_property = env::var("DATE_PROPERTY").unwrap_or_else(|_| "Date".to_string());
     let port = env::var("PORT").unwrap_or_else(|_| "8080".to_string());
 
+    let webhook_secret = env::var("NOTION_WEBHOOK_SECRET").ok();
+    if webhook_secret.is_none() {
+        tracing::warn!(
+            "NOTION_WEBHOOK_SECRET not set; webhook events will be logged but ignored \
+             (signature can't be verified) until it's configured"
+        );
+    }
+
     let caldav_allow_writes = CaldavAllowWrites::from_env();
     let state = AppState::new(
         notion_token,
@@ -47,15 +55,18 @@ async fn main() -> anyhow::Result<()> {
         data_source_ids,
         date_property,
         caldav_allow_writes,
+        webhook_secret,
     );
 
     // Initial refresh
     state.refresh_all().await;
 
-    // Periodic refresh: every 10s
+    // Periodic refresh: every 10 minutes. Webhooks (see webhook.rs) cover the
+    // realtime case by refreshing the affected database immediately, so this
+    // poll is now just the fallback/catch-up path for anything a webhook missed.
     let state2 = state.clone();
     tokio::spawn(async move {
-        let mut interval = tokio::time::interval(Duration::from_secs(10));
+        let mut interval = tokio::time::interval(Duration::from_secs(600));
         loop {
             interval.tick().await;
             state2.refresh_all().await;

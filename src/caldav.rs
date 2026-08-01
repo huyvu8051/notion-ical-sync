@@ -65,6 +65,11 @@ pub struct AppState {
     pub date_property: String,
     pub cache: Arc<RwLock<HashMap<String, Vec<PageInfo>>>>,
     pub caldav_allow_writes: CaldavAllowWrites,
+    /// The `verification_token` Notion issued for the webhook subscription,
+    /// reused as the HMAC key to authenticate `X-Notion-Signature` on every
+    /// subsequent event. None disables signature checking (events are
+    /// still logged but not applied) until it's configured.
+    pub webhook_secret: Option<String>,
 }
 
 // Notion API response types
@@ -80,6 +85,7 @@ impl AppState {
         data_source_ids: Vec<String>,
         date_property: String,
         caldav_allow_writes: CaldavAllowWrites,
+        webhook_secret: Option<String>,
     ) -> Self {
         Self {
             client: Client::builder()
@@ -92,6 +98,7 @@ impl AppState {
             date_property,
             cache: Arc::new(RwLock::new(HashMap::new())),
             caldav_allow_writes,
+            webhook_secret,
         }
     }
 
@@ -199,6 +206,23 @@ impl AppState {
                 }
                 Err(e) => error!("DB {} refresh failed: {}", db_id, e),
             }
+        }
+    }
+
+    /// Refresh just the one database matching `data_source_id`, used to react
+    /// to a webhook event immediately instead of waiting for the next poll.
+    pub async fn refresh_by_data_source(&self, data_source_id: &str) {
+        let Some(idx) = self.data_source_ids.iter().position(|id| id == data_source_id) else {
+            info!(data_source_id, "webhook event for untracked data source, ignoring");
+            return;
+        };
+        let db_id = self.database_ids[idx].clone();
+        match self.refresh_db(&db_id, data_source_id).await {
+            Ok(pages) => {
+                info!("DB {} synced via webhook: {} events", db_id, pages.len());
+                self.cache.write().await.insert(db_id, pages);
+            }
+            Err(e) => error!("DB {} webhook-triggered refresh failed: {}", db_id, e),
         }
     }
 
@@ -1267,7 +1291,7 @@ pub fn create_app(state: AppState) -> Router {
         }).layer(CorsLayer::permissive()))
         .route(
             "/webhook/notion-test",
-            post(crate::webhook::handle_notion_webhook_test),
+            post(crate::webhook::handle_notion_webhook),
         )
         .route(
             "/cal.ics",
