@@ -1266,6 +1266,10 @@ pub fn create_app(state: AppState) -> Router {
             "refresh triggered"
         }).layer(CorsLayer::permissive()))
         .route(
+            "/webhook/notion-test",
+            post(crate::webhook::handle_notion_webhook_test),
+        )
+        .route(
             "/cal.ics",
             get(move |State(state): State<AppState>| async move {
                 let cache = state.cache.read().await;
