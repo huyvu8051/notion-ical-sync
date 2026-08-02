@@ -67,27 +67,113 @@ fn error_page(message: &str) -> axum::response::Response {
     .into_response()
 }
 
-/// Step 1 confirmation screen (matches the Stitch "Connect Notion" design) —
+/// Shared Tailwind head for both onboarding screens — ports the exact
+/// design-token config from the Stitch "Kết nối Notion" / "Chọn cơ sở dữ
+/// liệu" mockups (project 7966553897766226544).
+const ONBOARDING_HEAD: &str = r##"
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Geist:wght@400;500&family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap" rel="stylesheet">
+<script id="tailwind-config">
+tailwind.config = {
+  theme: {
+    extend: {
+      colors: {
+        "outline-variant": "#c4c7c7", "outline": "#747878", "on-surface": "#1b1c1c",
+        "primary": "#000000", "on-primary": "#ffffff", "background": "#fbf9f9", "surface": "#fbf9f9",
+        "error": "#ba1a1a", "error-container": "#ffdad6", "on-error-container": "#93000a",
+        "surface-container-low": "#f5f3f3", "surface-container-high": "#e9e8e7", "surface-container-highest": "#e3e2e2",
+        "surface-container": "#efeded", "surface-container-lowest": "#ffffff",
+        "on-surface-variant": "#444748", "secondary": "#0058be"
+      },
+      spacing: { "md": "16px", "lg": "24px", "sm": "8px", "xs": "4px", "margin-desktop": "32px", "margin-mobile": "16px", "xl": "40px", "gutter": "16px" },
+      fontFamily: { "sans": ["Inter"], "code": ["Geist"] },
+      fontSize: {
+        "h1": ["24px", { lineHeight: "1.3", letterSpacing: "-0.015em", fontWeight: "600" }],
+        "h2": ["20px", { lineHeight: "1.4", letterSpacing: "-0.01em", fontWeight: "600" }],
+        "h3": ["16px", { lineHeight: "1.5", letterSpacing: "-0.01em", fontWeight: "600" }],
+        "body-lg": ["16px", { lineHeight: "1.6", fontWeight: "400" }],
+        "body-md": ["14px", { lineHeight: "1.5", fontWeight: "400" }],
+        "label-md": ["13px", { lineHeight: "1", letterSpacing: "0.02em", fontWeight: "500" }]
+      }
+    }
+  }
+}
+</script>
+<style>
+body { background-color: #fbf9f9; color: #1b1c1c; -webkit-font-smoothing: antialiased; }
+.material-symbols-outlined { font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24; vertical-align: middle; }
+.custom-checkbox:checked { background-color: #000000; border-color: #000000; }
+.card-shadow { box-shadow: 0px 4px 12px rgba(0, 0, 0, 0.05); }
+</style>
+"##;
+
+fn onboarding_top_nav(email: &str) -> String {
+    format!(
+        r#"<header class="bg-surface border-b border-outline-variant fixed top-0 left-0 right-0 z-50">
+<nav class="flex justify-between items-center w-full px-margin-desktop h-[56px] max-w-[1280px] mx-auto">
+<span class="text-h2 font-semibold text-primary">Notion CalDAV SaaS</span>
+<div class="flex items-center gap-lg">
+<span class="text-on-surface-variant text-label-md">{}</span>
+<a class="text-primary hover:bg-surface-container-low transition-colors px-sm py-xs rounded-lg text-label-md" href="/logout">Đăng xuất</a>
+</div>
+</nav>
+</header>"#,
+        html_escape(email)
+    )
+}
+
+/// Step 1 confirmation screen (matches the Stitch "Kết nối Notion" design) —
 /// shown before we actually redirect away to Notion's consent screen.
-pub async fn connect_notion_page(_claims: OidcClaims<EmptyAdditionalClaims>) -> impl IntoResponse {
+pub async fn connect_notion_page(claims: OidcClaims<EmptyAdditionalClaims>) -> impl IntoResponse {
+    let email = claims.email().map(|e| e.as_str()).unwrap_or("");
     Html(format!(
         r#"<!doctype html>
 <html lang="vi"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Kết nối Notion — Notion CalDAV SaaS</title>{AUTH_STYLE}</head>
-<body>
-<div class="top-nav"><strong>Notion CalDAV SaaS</strong><a class="logout" href="/logout">Đăng xuất</a></div>
-<div class="connect-card">
-  <h1>Kết nối không gian làm việc Notion của bạn</h1>
-  <p class="hint">Chúng tôi cần quyền truy cập vào không gian làm việc Notion của bạn để tìm và đồng bộ hóa các cơ sở dữ liệu bạn chọn. Bạn sẽ chọn chính xác trang nào cần chia sẻ ở bước tiếp theo trên Notion.</p>
-  <a class="connect-btn" href="/connect/notion/start">Kết nối với Notion</a>
-  <ul class="reassure-list">
-    <li>Chỉ đọc và ghi vào các trang bạn cho phép</li>
-    <li>Có thể ngắt kết nối bất cứ lúc nào</li>
-    <li>Không bao giờ chia sẻ dữ liệu của bạn với bên thứ ba</li>
-  </ul>
-  <p class="hint" style="margin-top:1.5rem"><a href="/privacy">Privacy Policy</a> · <a href="/terms">Terms of Service</a></p>
+<title>Kết nối Notion — Notion CalDAV SaaS</title>{ONBOARDING_HEAD}</head>
+<body class="min-h-screen flex flex-col">
+{top_nav}
+<main class="flex-grow flex items-center justify-center pt-[56px] px-margin-mobile md:px-margin-desktop">
+<div class="w-full max-w-[480px] bg-surface-container-lowest border border-outline-variant p-xl rounded-lg card-shadow">
+<div class="flex justify-center items-center gap-md mb-lg">
+<div class="w-12 h-12 flex items-center justify-center bg-surface-container border border-outline-variant rounded-xl">
+<span class="material-symbols-outlined text-[28px]">link</span>
 </div>
-</body></html>"#
+<div class="w-2 h-[1px] bg-outline-variant"></div>
+<div class="w-12 h-12 flex items-center justify-center bg-primary rounded-xl">
+<svg class="w-7 h-7 text-white fill-current" viewBox="0 0 24 24"><path d="M4.459 4.208c.673-.51 1.258-.69 2.067-.69h11.974c.421 0 .762.341.762.762v15.44c0 .421-.341.762-.762.762H5.539c-.588 0-1.026-.411-1.127-1.002L3.13 10.985C3.01 10.378 3.167 9.754 3.56 9.27L4.459 4.208zM17.15 17.61V6.63h-.04l-3.32 4.45h-.04V6.63h-1.28v10.98h.04l3.32-4.44h.04v4.44h1.28z"></path></svg>
+</div>
+</div>
+<div class="text-center mb-xl">
+<h1 class="text-h1 mb-sm tracking-tight text-primary">Kết nối không gian làm việc Notion của bạn</h1>
+<p class="text-body-md text-on-surface-variant leading-relaxed">Chúng tôi cần quyền truy cập vào không gian làm việc Notion của bạn để tìm và đồng bộ hóa các cơ sở dữ liệu bạn chọn. Bạn sẽ chọn chính xác trang nào cần chia sẻ ở bước tiếp theo trên Notion.</p>
+</div>
+<a class="w-full h-12 bg-primary text-white text-label-md flex items-center justify-center gap-sm rounded-lg hover:bg-zinc-800 transition-all active:scale-[0.98] mb-lg" href="/connect/notion/start">
+<svg class="w-5 h-5 fill-current" viewBox="0 0 24 24"><path d="M4.459 4.208c.673-.51 1.258-.69 2.067-.69h11.974c.421 0 .762.341.762.762v15.44c0 .421-.341.762-.762.762H5.539c-.588 0-1.026-.411-1.127-1.002L3.13 10.985C3.01 10.378 3.167 9.754 3.56 9.27L4.459 4.208zM17.15 17.61V6.63h-.04l-3.32 4.45h-.04V6.63h-1.28v10.98h.04l3.32-4.44h.04v4.44h1.28z"></path></svg>
+Kết nối với Notion
+</a>
+<div class="border-t border-outline-variant pt-lg space-y-md">
+<div class="flex items-start gap-md">
+<span class="material-symbols-outlined text-[20px] text-secondary mt-0.5" style="font-variation-settings: 'FILL' 1;">check_circle</span>
+<span class="text-body-md text-on-surface-variant">Chỉ đọc và ghi vào các trang bạn cho phép</span>
+</div>
+<div class="flex items-start gap-md">
+<span class="material-symbols-outlined text-[20px] text-secondary mt-0.5" style="font-variation-settings: 'FILL' 1;">check_circle</span>
+<span class="text-body-md text-on-surface-variant">Có thể ngắt kết nối bất cứ lúc nào</span>
+</div>
+<div class="flex items-start gap-md">
+<span class="material-symbols-outlined text-[20px] text-secondary mt-0.5" style="font-variation-settings: 'FILL' 1;">check_circle</span>
+<span class="text-body-md text-on-surface-variant">Không bao giờ chia sẻ dữ liệu của bạn với bên thứ ba</span>
+</div>
+</div>
+<div class="mt-xl text-center">
+<a class="text-label-md text-on-surface-variant hover:text-primary transition-colors underline underline-offset-4" href="/privacy">Chính sách bảo mật</a>
+<span class="text-outline-variant mx-2">·</span>
+<a class="text-label-md text-on-surface-variant hover:text-primary transition-colors underline underline-offset-4" href="/terms">Điều khoản dịch vụ</a>
+</div>
+</div>
+</main>
+</body></html>"#,
+        top_nav = onboarding_top_nav(email),
     ))
 }
 
@@ -357,12 +443,15 @@ pub async fn pick_databases_page(
     if candidates.is_empty() {
         return Html(format!(
             r#"<!doctype html>
-<html lang="vi"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">{AUTH_STYLE}</head>
-<body>
-<div class="top-nav"><strong>Notion CalDAV SaaS</strong><a class="logout" href="/logout">Đăng xuất</a></div>
-<h1>Chọn cơ sở dữ liệu để đồng bộ</h1>
-<p class="hint">Không tìm thấy cơ sở dữ liệu nào bạn đã cấp quyền. <a href="/connect/notion/start">Cấp thêm quyền truy cập trên Notion</a>.</p>
-</body></html>"#
+<html lang="vi"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">{ONBOARDING_HEAD}</head>
+<body class="min-h-screen flex flex-col">
+{top_nav}
+<main class="flex-grow flex flex-col items-center justify-center pt-[56px] px-margin-mobile text-center">
+<h1 class="text-h1 text-primary mb-sm">Chọn cơ sở dữ liệu để đồng bộ</h1>
+<p class="text-on-surface-variant text-body-lg">Không tìm thấy cơ sở dữ liệu nào bạn đã cấp quyền. <a class="text-secondary underline" href="/connect/notion/start">Cấp thêm quyền truy cập trên Notion</a>.</p>
+</main>
+</body></html>"#,
+            top_nav = onboarding_top_nav(&email),
         ))
         .into_response();
     }
@@ -373,14 +462,37 @@ pub async fn pick_databases_page(
             let icon = c.icon_emoji.clone().unwrap_or_else(|| "📄".to_string());
             match &c.date_property {
                 Some(date_prop) => format!(
-                    r#"<label class="db-card"><input type="checkbox" name="db_ids" value="{db_id}" checked> <span class="db-icon">{icon}</span> <span class="db-name">{title}</span><span class="db-meta">Có thuộc tính ngày: {date_prop}</span></label>"#,
+                    r#"<label class="group flex items-center gap-md p-md bg-white border border-outline-variant rounded-lg cursor-pointer hover:border-primary transition-all duration-200 card-shadow">
+<input type="checkbox" name="db_ids" value="{db_id}" checked class="w-5 h-5 border-2 border-outline-variant rounded-sm text-primary focus:ring-0 focus:ring-offset-0 custom-checkbox">
+<div class="flex items-center justify-center w-10 h-10 bg-surface-container rounded-lg text-xl">{icon}</div>
+<div class="flex-grow">
+<h3 class="text-h3 text-primary">{title}</h3>
+<p class="text-on-surface-variant text-label-md flex items-center gap-xs">
+<span class="material-symbols-outlined text-[14px]">calendar_today</span>
+Có thuộc tính ngày: {date_prop}
+</p>
+</div>
+</label>"#,
                     db_id = html_escape(&c.database_id),
                     icon = html_escape(&icon),
                     title = html_escape(&c.title),
                     date_prop = html_escape(date_prop),
                 ),
                 None => format!(
-                    r#"<div class="db-card db-card-disabled"><input type="checkbox" disabled> <span class="db-icon">{icon}</span> <span class="db-name">{title}</span><span class="db-warning">Không tìm thấy thuộc tính ngày</span></div>"#,
+                    r#"<div class="flex items-center gap-md p-md bg-surface-container-low border border-outline-variant opacity-60 rounded-lg grayscale cursor-not-allowed">
+<input type="checkbox" disabled class="w-5 h-5 border-2 border-outline-variant rounded-sm bg-surface-container-highest cursor-not-allowed">
+<div class="flex items-center justify-center w-10 h-10 bg-surface-container-high rounded-lg text-xl">{icon}</div>
+<div class="flex-grow">
+<div class="flex items-center gap-sm">
+<h3 class="text-h3 text-on-surface-variant">{title}</h3>
+<span class="bg-error-container text-on-error-container text-[10px] px-xs py-[2px] rounded font-bold uppercase tracking-wider">Lỗi</span>
+</div>
+<p class="text-error text-label-md flex items-center gap-xs mt-1">
+<span class="material-symbols-outlined text-[14px]">warning</span>
+Không tìm thấy thuộc tính ngày
+</p>
+</div>
+</div>"#,
                     icon = html_escape(&icon),
                     title = html_escape(&c.title),
                 ),
@@ -391,28 +503,47 @@ pub async fn pick_databases_page(
     Html(format!(
         r#"<!doctype html>
 <html lang="vi"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Chọn cơ sở dữ liệu — Notion CalDAV SaaS</title>{AUTH_STYLE}</head>
-<body>
-<div class="top-nav"><strong>Notion CalDAV SaaS</strong><a class="logout" href="/logout">Đăng xuất</a></div>
-<h1>Chọn cơ sở dữ liệu để đồng bộ</h1>
-<p class="hint">Chúng tôi đã tìm thấy các cơ sở dữ liệu sau trong không gian làm việc Notion của bạn. Chọn (các) cơ sở dữ liệu bạn muốn biến thành lịch.</p>
+<title>Chọn cơ sở dữ liệu — Notion CalDAV SaaS</title>{ONBOARDING_HEAD}</head>
+<body class="min-h-screen flex flex-col">
+{top_nav}
+<main class="flex-grow flex flex-col pt-[80px] pb-32">
+<div class="max-w-[720px] mx-auto w-full px-margin-mobile md:px-0">
+<section class="mb-xl">
+<h1 class="text-h1 text-primary mb-sm">Chọn cơ sở dữ liệu để đồng bộ</h1>
+<p class="text-on-surface-variant text-body-lg">Chúng tôi đã tìm thấy các cơ sở dữ liệu sau trong không gian làm việc Notion của bạn. Chọn (các) cơ sở dữ liệu bạn muốn biến thành lịch.</p>
+</section>
 <form method="post" action="/connect/notion/databases">
-  <input type="hidden" name="connection_id" value="{connection_id}">
-  <div class="db-list">{rows}</div>
-  <p class="hint"><a href="/connect/notion/start">Không thấy cơ sở dữ liệu bạn cần? Cấp thêm quyền truy cập trên Notion</a></p>
-  <div class="action-bar">
-    <a class="connect-btn-secondary" href="/me">Quay lại</a>
-    <button type="submit" id="continue-btn" class="connect-btn">Tiếp tục</button>
-  </div>
+<input type="hidden" name="connection_id" value="{connection_id}">
+<div class="space-y-md">{rows}</div>
+<div class="mt-xl text-center">
+<a class="text-on-surface-variant hover:text-primary transition-colors text-label-md" href="/connect/notion/start">Không thấy cơ sở dữ liệu bạn cần? Cấp thêm quyền truy cập trên Notion</a>
+</div>
+<div class="fixed bottom-0 left-0 right-0 bg-white/80 backdrop-blur-md border-t border-outline-variant py-md z-40">
+<div class="max-w-[1280px] mx-auto px-margin-desktop flex justify-between items-center">
+<a class="px-lg h-[40px] border border-outline-variant text-primary text-label-md rounded hover:bg-surface-container-low transition-colors flex items-center gap-sm" href="/me">
+<span class="material-symbols-outlined text-[18px]">arrow_back</span>
+Quay lại
+</a>
+<button type="submit" id="continue-btn" class="px-lg h-[40px] bg-primary text-white text-label-md rounded hover:opacity-90 transition-all flex items-center gap-sm active:scale-95 shadow-sm">
+Tiếp tục
+<span class="material-symbols-outlined text-[18px]">arrow_forward</span>
+</button>
+</div>
+</div>
 </form>
+</div>
+</main>
 <script>
 document.addEventListener('change', function () {{
   var n = document.querySelectorAll('input[name="db_ids"]:checked').length;
   var btn = document.getElementById('continue-btn');
-  btn.textContent = n > 0 ? 'Tiếp tục với ' + n + ' cơ sở dữ liệu' : 'Tiếp tục';
+  btn.innerHTML = n > 0
+    ? 'Tiếp tục với ' + n + ' cơ sở dữ liệu <span class="material-symbols-outlined text-[18px]">arrow_forward</span>'
+    : 'Chọn ít nhất 1 cơ sở dữ liệu <span class="material-symbols-outlined text-[18px]">error</span>';
 }});
 </script>
 </body></html>"#,
+        top_nav = onboarding_top_nav(&email),
         connection_id = params.connection_id,
     ))
     .into_response()
