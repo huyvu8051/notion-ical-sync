@@ -289,6 +289,7 @@ impl AppState {
             ]
         });
 
+        info!(notion_method = "POST", notion_url = %url, "-> Notion API request");
         let resp = self
             .client
             .post(&url)
@@ -298,18 +299,23 @@ impl AppState {
             .json(&body)
             .send()
             .await
-            .map_err(|e| format!("Request failed: {}", e))?;
+            .map_err(|e| {
+                error!(notion_url = %url, error = %e, "<- Notion API request failed (transport)");
+                format!("Request failed: {}", e)
+            })?;
 
-        if !resp.status().is_success() {
-            let status = resp.status();
+        let resp_status = resp.status();
+        if !resp_status.is_success() {
             let txt = resp.text().await.unwrap_or_default();
-            return Err(format!("Notion error {}: {}", status, txt));
+            error!(notion_url = %url, status = %resp_status, body = %txt, "<- Notion API error response");
+            return Err(format!("Notion error {}: {}", resp_status, txt));
         }
 
         let data: NotionQueryResponse = resp
             .json()
             .await
             .map_err(|e| format!("Parse failed: {}", e))?;
+        info!(notion_url = %url, status = %resp_status, page_count = data.results.len(), "<- Notion API response");
 
         let mut events = Vec::new();
         for page in data.results {
@@ -445,6 +451,7 @@ impl AppState {
             "properties": properties,
         });
 
+        info!(notion_method = "POST", notion_url = "https://api.notion.com/v1/pages", title = %title, "-> Notion API request (create event)");
         let resp = self
             .client
             .post("https://api.notion.com/v1/pages")
@@ -454,18 +461,22 @@ impl AppState {
             .json(&body)
             .send()
             .await
-            .map_err(|e| format!("Request failed: {}", e))?;
+            .map_err(|e| {
+                error!(error = %e, "<- Notion API request failed (transport)");
+                format!("Request failed: {}", e)
+            })?;
 
-        if !resp.status().is_success() {
-            let status = resp.status();
+        let resp_status = resp.status();
+        if !resp_status.is_success() {
             let txt = resp.text().await.unwrap_or_default();
-            return Err(format!("Notion error {}: {}", status, txt));
+            error!(status = %resp_status, body = %txt, "<- Notion API error response (create event)");
+            return Err(format!("Notion error {}: {}", resp_status, txt));
         }
 
         let data: serde_json::Value = resp.json().await.map_err(|e| format!("Parse failed: {}", e))?;
-        data.get("id")
-            .and_then(|v| v.as_str())
-            .map(|s| s.to_string())
+        let page_id = data.get("id").and_then(|v| v.as_str()).map(|s| s.to_string());
+        info!(status = %resp_status, page_id = ?page_id, "<- Notion API response (create event)");
+        page_id
             .ok_or_else(|| "Notion response missing page id".to_string())
     }
 
@@ -508,35 +519,45 @@ impl AppState {
     }
 
     async fn patch_page(&self, page_id: &str, notion_token: &str, body: &serde_json::Value) -> Result<(), String> {
+        let url = format!("https://api.notion.com/v1/pages/{}", page_id);
+        info!(notion_method = "PATCH", notion_url = %url, body = %body, "-> Notion API request");
         let resp = self
             .client
-            .patch(format!("https://api.notion.com/v1/pages/{}", page_id))
+            .patch(&url)
             .header("Authorization", format!("Bearer {}", notion_token))
             .header("Notion-Version", "2025-09-03")
             .header("Content-Type", "application/json")
             .json(body)
             .send()
             .await
-            .map_err(|e| format!("Request failed: {}", e))?;
+            .map_err(|e| {
+                error!(notion_url = %url, error = %e, "<- Notion API request failed (transport)");
+                format!("Request failed: {}", e)
+            })?;
 
-        if !resp.status().is_success() {
-            let status = resp.status();
+        let resp_status = resp.status();
+        if !resp_status.is_success() {
             let txt = resp.text().await.unwrap_or_default();
-            return Err(format!("Notion error {}: {}", status, txt));
+            error!(notion_url = %url, status = %resp_status, body = %txt, "<- Notion API error response");
+            return Err(format!("Notion error {}: {}", resp_status, txt));
         }
+        info!(notion_url = %url, status = %resp_status, "<- Notion API response");
         Ok(())
     }
 
     pub async fn get_calendar_name(&self, db_id: &str, notion_token: &str) -> String {
+        let url = format!("https://api.notion.com/v1/databases/{}", db_id);
+        info!(notion_method = "GET", notion_url = %url, "-> Notion API request (calendar name)");
         match self.client
-            .get(format!("https://api.notion.com/v1/databases/{}", db_id))
+            .get(&url)
             .header("Authorization", format!("Bearer {}", notion_token))
             .header("Notion-Version", "2025-09-03")
             .send()
             .await
         {
             Ok(r) if r.status().is_success() => {
-                r.json::<serde_json::Value>().await
+                let status = r.status();
+                let name = r.json::<serde_json::Value>().await
                     .ok()
                     .and_then(|v| v.get("title").cloned())
                     .and_then(|t| {
@@ -545,9 +566,18 @@ impl AppState {
                         let txt = item.get("plain_text")?;
                         txt.as_str().map(|s| s.to_string())
                     })
-                    .unwrap_or_else(|| format!("Notion {}", &db_id[..8]))
+                    .unwrap_or_else(|| format!("Notion {}", &db_id[..8]));
+                info!(notion_url = %url, status = %status, name = %name, "<- Notion API response");
+                name
             }
-            _ => format!("Notion {}", &db_id[..8]),
+            Ok(r) => {
+                error!(notion_url = %url, status = %r.status(), "<- Notion API error response (calendar name)");
+                format!("Notion {}", &db_id[..8])
+            }
+            Err(e) => {
+                error!(notion_url = %url, error = %e, "<- Notion API request failed (transport)");
+                format!("Notion {}", &db_id[..8])
+            }
         }
     }
 }
@@ -1019,27 +1049,80 @@ pub async fn handle_calendar_event_impl(
     }
 
     if method == axum::http::Method::PUT {
+        // Writes through to Notion (create or update, mirroring the
+        // webview's handle_create_event/handle_update_event) instead of
+        // just mutating the local cache — a cache-only write used to get
+        // silently discarded on the very next refresh_all()/webhook-driven
+        // refresh, since Notion is the source of truth for that cache.
+        // Known limitation: a brand-new event's resource URL (based on the
+        // CalDAV client's own generated UID) won't match the href the
+        // server advertises on the next PROPFIND (based on the real Notion
+        // page id) — the client may see it as a second, separate resource
+        // until it next fetches the full listing.
         let new_page = parse_ics_to_page_info(&body, &event_id_clean);
-        let mut cache = state.cache.write().await;
-        let pages = cache.entry(cal.database_id).or_default();
-        if let Some(pos) = pages.iter().position(|p| matches_id(&p.id, &event_id_clean)) {
-            pages[pos] = new_page;
-            return axum::http::StatusCode::NO_CONTENT.into_response();
+        let existing_id = {
+            let cache = state.cache.read().await;
+            cache
+                .get(&cal.database_id)
+                .and_then(|pages| pages.iter().find(|p| matches_id(&p.id, &event_id_clean)).map(|p| p.id.clone()))
+        };
+        let result = if let Some(page_id) = existing_id {
+            state
+                .notion_update_event(
+                    &page_id,
+                    &cal.date_property,
+                    &cal.notion_access_token,
+                    Some(&new_page.title),
+                    Some(&new_page.start),
+                    Some(new_page.end.as_deref()),
+                )
+                .await
+                .map(|_| axum::http::StatusCode::NO_CONTENT)
         } else {
-            pages.push(new_page);
-            return axum::http::StatusCode::CREATED.into_response();
-        }
+            state
+                .notion_create_event(
+                    &cal.data_source_id,
+                    &cal.date_property,
+                    &cal.notion_access_token,
+                    &new_page.title,
+                    &new_page.start,
+                    new_page.end.as_deref(),
+                )
+                .await
+                .map(|_page_id| axum::http::StatusCode::CREATED)
+        };
+        return match result {
+            Ok(status) => {
+                state.refresh_by_data_source(&cal.data_source_id).await;
+                status.into_response()
+            }
+            Err(e) => {
+                error!("CalDAV PUT event {} failed to sync to Notion: {}", event_id_clean, e);
+                axum::http::StatusCode::BAD_GATEWAY.into_response()
+            }
+        };
     }
 
     if method == axum::http::Method::DELETE {
-        let mut cache = state.cache.write().await;
-        if let Some(pages) = cache.get_mut(&cal.database_id) {
-            if let Some(pos) = pages.iter().position(|p| matches_id(&p.id, &event_id_clean)) {
-                pages.remove(pos);
-                return axum::http::StatusCode::NO_CONTENT.into_response();
+        let existing_id = {
+            let cache = state.cache.read().await;
+            cache
+                .get(&cal.database_id)
+                .and_then(|pages| pages.iter().find(|p| matches_id(&p.id, &event_id_clean)).map(|p| p.id.clone()))
+        };
+        let Some(page_id) = existing_id else {
+            return axum::http::StatusCode::NOT_FOUND.into_response();
+        };
+        return match state.notion_delete_event(&page_id, &cal.notion_access_token).await {
+            Ok(()) => {
+                state.refresh_by_data_source(&cal.data_source_id).await;
+                axum::http::StatusCode::NO_CONTENT.into_response()
             }
-        }
-        return axum::http::StatusCode::NOT_FOUND.into_response();
+            Err(e) => {
+                error!("CalDAV DELETE event {} failed to sync to Notion: {}", event_id_clean, e);
+                axum::http::StatusCode::BAD_GATEWAY.into_response()
+            }
+        };
     }
 
     axum::http::StatusCode::METHOD_NOT_ALLOWED.into_response()
