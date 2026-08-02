@@ -8,7 +8,7 @@ use tower_sessions::{Expiry, SessionManagerLayer};
 use tower_sessions_sqlx_store::PostgresStore;
 use tracing::info;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
-use notion_ical_sync::{auth, AppState, CaldavAllowWrites, create_app};
+use notion_ical_sync::{auth, oauth, AppState, CaldavAllowWrites, create_app};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -43,8 +43,17 @@ async fn main() -> anyhow::Result<()> {
         .await
         .expect("failed to run migrations");
 
+    let app_base_url = env::var("APP_BASE_URL").unwrap_or_else(|_| format!("http://localhost:{port}"));
+    let notion_oauth = oauth::NotionOAuthConfig::from_env(&app_base_url);
+    if notion_oauth.is_none() {
+        tracing::warn!(
+            "NOTION_OAUTH_CLIENT_ID/NOTION_OAUTH_CLIENT_SECRET not set; the \"Connect Notion\" \
+             onboarding flow will show a not-configured page until they're set"
+        );
+    }
+
     let caldav_allow_writes = CaldavAllowWrites::from_env();
-    let state = AppState::new(pool.clone(), caldav_allow_writes, webhook_secret);
+    let state = AppState::new(pool.clone(), caldav_allow_writes, webhook_secret, notion_oauth);
 
     // Initial refresh
     state.refresh_all().await;
@@ -64,7 +73,6 @@ async fn main() -> anyhow::Result<()> {
     // SaaS login (Keycloak) — separate from the per-tenant Notion OAuth
     // tokens already sitting in Postgres. Sessions are Postgres-backed (not
     // MemoryStore) since this app is multi-tenant from day one.
-    let app_base_url = env::var("APP_BASE_URL").unwrap_or_else(|_| format!("http://localhost:{port}"));
     let keycloak_issuer_url = env::var("KEYCLOAK_ISSUER_URL")
         .unwrap_or_else(|_| "http://localhost:8081/realms/notion-caldav-saas".to_string());
     let keycloak_client_id =

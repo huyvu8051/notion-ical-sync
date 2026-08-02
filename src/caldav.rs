@@ -68,6 +68,11 @@ pub struct AppState {
     /// subsequent event. None disables signature checking (events are
     /// still logged but not applied) until it's configured.
     pub webhook_secret: Option<String>,
+    /// Notion Public Integration OAuth credentials (see oauth.rs). None
+    /// disables the "Connect Notion" flow — /connect/notion renders a
+    /// "not configured" page instead of panicking, same posture as
+    /// `webhook_secret`.
+    pub notion_oauth: Option<crate::oauth::NotionOAuthConfig>,
 }
 
 // Notion API response types
@@ -95,6 +100,7 @@ impl AppState {
         db: PgPool,
         caldav_allow_writes: CaldavAllowWrites,
         webhook_secret: Option<String>,
+        notion_oauth: Option<crate::oauth::NotionOAuthConfig>,
     ) -> Self {
         Self {
             client: Client::builder()
@@ -105,6 +111,7 @@ impl AppState {
             cache: Arc::new(RwLock::new(HashMap::new())),
             caldav_allow_writes,
             webhook_secret,
+            notion_oauth,
         }
     }
 
@@ -1527,6 +1534,13 @@ pub fn create_app(
     // supposed to mean.
     let me_route = Router::new()
         .route("/me", get(crate::auth::me))
+        .route("/connect/notion", get(crate::oauth::connect_notion_page))
+        .route("/connect/notion/start", get(crate::oauth::connect_notion_start))
+        .route(
+            "/connect/notion/databases",
+            get(crate::oauth::pick_databases_page).post(crate::oauth::create_calendars),
+        )
+        .route("/oauth/notion/callback", get(crate::oauth::notion_oauth_callback))
         .layer(oidc_login_service);
 
     Router::new()

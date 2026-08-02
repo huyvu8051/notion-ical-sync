@@ -85,28 +85,56 @@ pub async fn find_or_create_user(pool: &sqlx::PgPool, keycloak_sub: &str, email:
     .await
 }
 
-fn html_escape(s: &str) -> String {
+pub(crate) fn html_escape(s: &str) -> String {
     s.replace('&', "&amp;")
         .replace('<', "&lt;")
         .replace('>', "&gt;")
         .replace('"', "&quot;")
 }
 
-const AUTH_STYLE: &str = r#"
+pub(crate) const AUTH_STYLE: &str = r#"
 <style>
   * { box-sizing: border-box; }
   body { font-family: -apple-system, sans-serif; max-width: 480px; margin: 3rem auto; padding: 0 1.25rem; line-height: 1.5; }
   .top-nav { display: flex; justify-content: space-between; align-items: center; margin-bottom: 2rem; }
   .top-nav a.logout { font-size: 0.85rem; color: #666; text-decoration: none; }
   .cal-list { list-style: none; padding: 0; display: flex; flex-direction: column; gap: 0.75rem; }
-  .cal-card { display: block; padding: 0.9rem 1rem; background: #f6f6f6; border-radius: 12px; text-decoration: none; color: inherit; }
+  .cal-card { display: block; padding: 0.9rem 1rem; background: #f6f6f6; border-radius: 12px; }
+  .cal-card-title { font-weight: 600; margin-bottom: 0.4rem; }
+  .cal-card a { color: #2563eb; text-decoration: none; }
   .hint { color: #666; font-size: 0.9rem; }
+  .header-row { display: flex; justify-content: space-between; align-items: center; gap: 1rem; margin-bottom: 1.5rem; }
+  .header-row h1 { margin: 0; }
+  .connect-btn, .connect-btn-secondary { display: inline-block; padding: 0.55rem 1.1rem; border-radius: 8px; text-decoration: none; font-size: 0.9rem; cursor: pointer; border: none; font-family: inherit; }
+  .connect-btn { background: #171717; color: #fff; margin-top: 1rem; }
+  .connect-btn-secondary { border: 1px solid #ddd; color: #171717; background: #fff; white-space: nowrap; }
+  .cred-row { font-size: 0.85rem; color: #444; margin: 0.15rem 0; }
+  .cred-label { color: #888; margin-right: 0.35rem; }
+  .banner-success { background: #dcfce7; color: #166534; padding: 0.75rem 1rem; border-radius: 8px; margin-bottom: 1.25rem; font-size: 0.9rem; }
+  code { font-family: ui-monospace, monospace; background: #eee; padding: 0.1rem 0.35rem; border-radius: 4px; font-size: 0.85rem; }
+  .connect-card { margin-top: 2rem; }
+  .reassure-list { list-style: none; padding: 0; margin-top: 1.5rem; font-size: 0.85rem; color: #555; }
+  .reassure-list li { margin: 0.35rem 0; }
+  .reassure-list li::before { content: "✓ "; color: #16a34a; }
+  .db-list { display: flex; flex-direction: column; gap: 0.6rem; margin: 1.25rem 0; }
+  .db-card { display: flex; align-items: center; gap: 0.6rem; padding: 0.75rem 1rem; border: 1px solid #e5e5e5; border-radius: 8px; cursor: pointer; font-size: 0.95rem; }
+  .db-card-disabled { opacity: 0.5; cursor: not-allowed; }
+  .db-name { font-weight: 500; }
+  .db-meta { color: #888; font-size: 0.8rem; margin-left: auto; }
+  .db-warning { color: #ba1a1a; font-size: 0.8rem; margin-left: auto; }
+  .action-bar { display: flex; justify-content: space-between; margin-top: 1.5rem; }
 </style>
 "#;
 
-/// Post-login landing: lists the user's own calendars (empty for now until
-/// Phase 3's Notion OAuth connect flow exists to actually create any).
-pub async fn me(claims: OidcClaims<EmptyAdditionalClaims>, State(state): State<AppState>) -> impl IntoResponse {
+/// Post-login landing: lists the user's own calendars, with a CTA to connect
+/// more Notion databases (see oauth.rs). Doubles as the "onboarding
+/// complete" screen right after `create_calendars` redirects here.
+pub async fn me(
+    claims: OidcClaims<EmptyAdditionalClaims>,
+    State(state): State<AppState>,
+    session: tower_sessions::Session,
+    cfg: axum::Extension<AppConfig>,
+) -> impl IntoResponse {
     let sub = claims.subject().as_str();
     let email = claims.email().map(|e| e.as_str()).unwrap_or("").to_string();
 
@@ -115,28 +143,54 @@ pub async fn me(claims: OidcClaims<EmptyAdditionalClaims>, State(state): State<A
         Err(_) => return (axum::http::StatusCode::INTERNAL_SERVER_ERROR, "Có lỗi xảy ra.").into_response(),
     };
 
-    let calendars: Vec<(String, String)> = sqlx::query_as(
-        "SELECT database_id, display_name FROM calendars WHERE user_id = $1 ORDER BY created_at",
+    let calendars: Vec<(String, String, String)> = sqlx::query_as(
+        "SELECT database_id, display_name, caldav_username FROM calendars WHERE user_id = $1 ORDER BY created_at",
     )
     .bind(user_id)
     .fetch_all(&state.db)
     .await
     .unwrap_or_default();
 
+    // Plaintext CalDAV passwords only ever exist for one request — we store
+    // just a hash — so a calendar just created by create_calendars stashes
+    // its password here in the session for this one render.
+    let new_passwords = crate::oauth::take_new_calendar_credentials(&session).await;
+    let banner = if !new_passwords.is_empty() {
+        r#"<div class="banner-success">Đã kết nối thành công! Lịch của bạn đã sẵn sàng. Lưu lại mật khẩu CalDAV bên dưới — chúng tôi sẽ không hiển thị lại.</div>"#
+    } else {
+        ""
+    };
+
     let items: String = calendars
         .iter()
-        .map(|(db_id, name)| {
+        .map(|(db_id, name, caldav_username)| {
             let label = if name.is_empty() { db_id.as_str() } else { name.as_str() };
+            let caldav_url = format!("{}/cal/{}", cfg.base_url, db_id);
+            let password_row = match new_passwords.get(caldav_username) {
+                Some(pw) => format!(
+                    r#"<div class="cred-row"><span class="cred-label">Mật khẩu (chỉ hiện 1 lần):</span> <code>{}</code></div>"#,
+                    html_escape(pw)
+                ),
+                None => String::new(),
+            };
             format!(
-                r#"<li><a class="cal-card" href="/app/{}">{}</a></li>"#,
-                html_escape(db_id),
-                html_escape(label)
+                r#"<li class="cal-card">
+                    <div class="cal-card-title">{label}</div>
+                    <div class="cred-row"><span class="cred-label">URL:</span> <code>{url}</code></div>
+                    <div class="cred-row"><span class="cred-label">Username:</span> <code>{username}</code></div>
+                    {password_row}
+                    <a href="/app/{db_id}">Mở lịch</a>
+                </li>"#,
+                label = html_escape(label),
+                url = html_escape(&caldav_url),
+                username = html_escape(caldav_username),
+                db_id = html_escape(db_id),
             )
         })
         .collect();
 
-    let body = if calendars.is_empty() {
-        r#"<p class="hint">Chưa có calendar nào — kết nối Notion để bắt đầu (sắp có).</p>"#.to_string()
+    let content = if calendars.is_empty() {
+        r#"<p class="hint">Chưa có calendar nào — kết nối Notion để bắt đầu.</p>"#.to_string()
     } else {
         format!(r#"<ul class="cal-list">{items}</ul>"#)
     };
@@ -147,8 +201,9 @@ pub async fn me(claims: OidcClaims<EmptyAdditionalClaims>, State(state): State<A
 <title>Trang của bạn — Notion CalDAV SaaS</title>{AUTH_STYLE}</head>
 <body>
 <div class="top-nav"><strong>Notion CalDAV SaaS</strong><a class="logout" href="/logout">Đăng xuất</a></div>
-<h1>Calendar của bạn</h1>
-{body}
+{banner}
+<div class="header-row"><h1>Calendar của bạn</h1><a class="connect-btn-secondary" href="/connect/notion">+ Kết nối thêm cơ sở dữ liệu</a></div>
+{content}
 </body></html>"#
     ))
     .into_response()

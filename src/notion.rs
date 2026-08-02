@@ -50,14 +50,6 @@ impl CalendarInfo {
     }
 }
 
-/// Calendar metadata pairing used internally
-#[derive(Debug, Clone)]
-pub struct CalendarMeta {
-    pub db_id: String,
-    pub data_source_id: String,
-    pub title: String,
-}
-
 // ─────────────────────────────────────────────
 // NotionFsTree: cached Notion calendars/events
 // ─────────────────────────────────────────────
@@ -114,69 +106,3 @@ pub struct NotionTitleItem {
     pub plain_text: String,
 }
 
-// ─────────────────────────────────────────────
-// Env config
-// ─────────────────────────────────────────────
-
-#[derive(Debug, Clone)]
-pub struct AppConfig {
-    pub notion_token: String,
-    pub calendars: Vec<CalendarMeta>,
-    pub date_property: String,
-    pub refresh_secs: u64,
-    pub listen_addr: String,
-}
-
-impl AppConfig {
-    pub fn from_env() -> Self {
-        dotenvy::dotenv().ok();
-
-        let notion_token = std::env::var("NOTION_TOKEN")
-            .expect("NOTION_TOKEN environment variable required");
-
-        // Read cal list in CSV format: db_id=ds_id pairs (one per line)
-        // or via DATABASE_IDS + DATA_SOURCE_IDS comma-separated
-        let database_ids: Vec<String> = std::env::var("DATABASE_IDS")
-            .unwrap_or_default()
-            .split(',')
-            .map(|s| s.trim().to_string())
-            .filter(|s| !s.is_empty())
-            .collect();
-
-        let data_source_ids: Vec<String> = std::env::var("DATA_SOURCE_IDS")
-            .unwrap_or_default()
-            .split(',')
-            .map(|s| s.trim().to_string())
-            .filter(|s| !s.is_empty())
-            .collect();
-
-        let date_property = std::env::var("DATE_PROPERTY")
-            .unwrap_or_else(|_| "Date".to_string());
-
-        let calendars: Vec<CalendarMeta> = database_ids
-            .into_iter()
-            .zip(data_source_ids)
-            .map(|(db_id, ds_id)| CalendarMeta {
-                db_id,
-                data_source_id: ds_id,
-                title: String::new(),
-            })
-            .collect();
-
-        let refresh_secs = std::env::var("REFRESH_SECS")
-            .ok()
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(300);
-
-        let listen_addr = std::env::var("LISTEN_ADDR")
-            .unwrap_or_else(|_| "0.0.0.0:8080".to_string());
-
-        Self {
-            notion_token,
-            calendars,
-            date_property,
-            refresh_secs,
-            listen_addr,
-        }
-    }
-}

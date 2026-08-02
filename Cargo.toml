@@ -39,3 +39,4 @@ rand = "0.8"
 # compile). This commit has the fix (core bumped to 0.15) merged but not yet
 # published as a new version.
 tower-sessions-sqlx-store = { git = "https://github.com/maxcountryman/tower-sessions-stores", rev = "be0f230fadb4", features = ["postgres"] }
+argon2 = "0.5"

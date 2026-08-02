@@ -65,6 +65,7 @@ async fn test_state_multi(calendars: &[(&str, &str)], allow_writes: CaldavAllowW
         let conn_id: i64 = sqlx::query_scalar(
             "INSERT INTO notion_connections (user_id, notion_access_token, workspace_id)
              VALUES ($1, 'mock-notion-token', 'mock-workspace')
+             ON CONFLICT (user_id, workspace_id) DO UPDATE SET notion_access_token = EXCLUDED.notion_access_token
              RETURNING id",
         )
         .bind(user_id)
@@ -89,7 +90,7 @@ async fn test_state_multi(calendars: &[(&str, &str)], allow_writes: CaldavAllowW
         .unwrap();
     }
 
-    AppState::new(pool, allow_writes, None)
+    AppState::new(pool, allow_writes, None, None)
 }
 
 #[tokio::test]
