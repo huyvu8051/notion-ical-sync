@@ -36,6 +36,78 @@ async fn require_owned_calendar(
     }
 }
 
+struct WebviewLabels {
+    html_lang: &'static str,
+    back_to_all: &'static str,
+    add_event_btn: &'static str,
+    modal_title_add: &'static str,
+    event_name_label: &'static str,
+    event_name_placeholder: &'static str,
+    start_label: &'static str,
+    end_label: &'static str,
+    allday_label: &'static str,
+    open_in_notion: &'static str,
+    delete_btn: &'static str,
+    cancel_btn: &'static str,
+    save_btn: &'static str,
+    modal_title_edit: &'static str,
+    alert_enter_title: &'static str,
+    alert_pick_start: &'static str,
+    alert_update_failed: &'static str,
+    alert_create_failed: &'static str,
+    confirm_delete_event: &'static str,
+    alert_delete_failed: &'static str,
+    alert_update_date_failed: &'static str,
+}
+
+const WEBVIEW_LABELS_VI: WebviewLabels = WebviewLabels {
+    html_lang: "vi",
+    back_to_all: "Tất cả lịch",
+    add_event_btn: "Thêm sự kiện",
+    modal_title_add: "Thêm sự kiện",
+    event_name_label: "Tên sự kiện",
+    event_name_placeholder: "Nhập tên sự kiện...",
+    start_label: "Bắt đầu",
+    end_label: "Kết thúc",
+    allday_label: "Cả ngày",
+    open_in_notion: "Mở trong Notion",
+    delete_btn: "Xoá",
+    cancel_btn: "Huỷ",
+    save_btn: "Lưu",
+    modal_title_edit: "Chỉnh sửa sự kiện",
+    alert_enter_title: "Nhập tên sự kiện",
+    alert_pick_start: "Chọn ngày bắt đầu",
+    alert_update_failed: "Cập nhật thất bại",
+    alert_create_failed: "Tạo event thất bại",
+    confirm_delete_event: "Xoá sự kiện này?",
+    alert_delete_failed: "Xoá thất bại",
+    alert_update_date_failed: "Cập nhật ngày thất bại",
+};
+
+const WEBVIEW_LABELS_EN: WebviewLabels = WebviewLabels {
+    html_lang: "en",
+    back_to_all: "All calendars",
+    add_event_btn: "Add event",
+    modal_title_add: "Add event",
+    event_name_label: "Event name",
+    event_name_placeholder: "Enter event name...",
+    start_label: "Start",
+    end_label: "End",
+    allday_label: "All day",
+    open_in_notion: "Open in Notion",
+    delete_btn: "Delete",
+    cancel_btn: "Cancel",
+    save_btn: "Save",
+    modal_title_edit: "Edit event",
+    alert_enter_title: "Enter an event name",
+    alert_pick_start: "Pick a start date",
+    alert_update_failed: "Update failed",
+    alert_create_failed: "Failed to create event",
+    confirm_delete_event: "Delete this event?",
+    alert_delete_failed: "Delete failed",
+    alert_update_date_failed: "Failed to update date",
+};
+
 /// Server-rendered page shell (no client-side hydration/wasm — Leptos here
 /// is just producing the static HTML; FullCalendar (CDN) is still the actual
 /// calendar engine — this only restyles the surrounding chrome/nav and
@@ -46,17 +118,23 @@ pub async fn handle_webview_page(
     State(state): State<AppState>,
     claims: OidcClaims<EmptyAdditionalClaims>,
     Path(public_id): Path<String>,
+    lang: crate::i18n::Lang,
 ) -> impl IntoResponse {
     let cal = match require_owned_calendar(&state, &claims, &public_id).await {
         Ok(cal) => cal,
         Err(status) => return status.into_response(),
     };
+    let l = match lang {
+        crate::i18n::Lang::En => &WEBVIEW_LABELS_EN,
+        crate::i18n::Lang::Vi => &WEBVIEW_LABELS_VI,
+    };
     let calendar_name = if cal.display_name.is_empty() { "Notion Calendar".to_string() } else { cal.display_name.clone() };
+    let lang_toggle = crate::i18n::lang_toggle(lang, &format!("/app/{}", public_id));
 
     let events_url = format!("/app/{}/api/events", public_id);
     Html(format!(
         r##"<!doctype html>
-<html lang="vi"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<html lang="{html_lang}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{title} — NotionCal</title>
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.15/index.global.min.css">
 <script src="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.15/index.global.min.js"></script>
@@ -96,55 +174,58 @@ body {{ background-color: #fbf9f9; color: #1b1c1c; -webkit-font-smoothing: antia
 <div class="flex items-center gap-md">
 <a class="flex items-center gap-xs text-on-surface-variant hover:text-primary transition-colors text-label-md" href="/me">
 <span class="material-symbols-outlined">arrow_back</span>
-Tất cả lịch
+{back_to_all}
 </a>
 <div class="h-6 w-[1px] bg-outline-variant mx-sm"></div>
 <h1 class="text-h1 tracking-tight">{title}</h1>
 </div>
+<div class="flex items-center gap-md">
+{lang_toggle}
 <button class="bg-primary text-on-primary px-md h-10 flex items-center gap-xs text-label-md rounded-lg hover:opacity-90 transition-opacity" onclick="openCreateModal()">
 <span class="material-symbols-outlined">add</span>
-Thêm sự kiện
+{add_event_btn}
 </button>
+</div>
 </header>
 <div id="calendar"></div>
 
 <div class="fixed inset-0 bg-black/40 z-50 hidden items-center justify-center" id="modal-backdrop">
 <div class="bg-white w-full max-w-lg mx-4 rounded-xl modal-shadow overflow-hidden" id="modal-content">
 <div class="px-lg py-md border-b border-outline-variant flex items-center justify-between">
-<h2 class="text-h2" id="modal-title">Thêm sự kiện</h2>
+<h2 class="text-h2" id="modal-title">{modal_title_add}</h2>
 <button class="p-1 hover:bg-surface-container-low rounded-lg transition-colors" onclick="closeModal()">
 <span class="material-symbols-outlined">close</span>
 </button>
 </div>
 <div class="p-lg space-y-lg">
 <div class="space-y-xs">
-<label class="text-label-md text-on-surface-variant">Tên sự kiện</label>
-<input class="w-full h-10 px-md border border-outline-variant rounded-lg focus:border-secondary focus:ring-1 focus:ring-secondary/10 outline-none transition-all" id="modal-field-title" placeholder="Nhập tên sự kiện..." type="text">
+<label class="text-label-md text-on-surface-variant">{event_name_label}</label>
+<input class="w-full h-10 px-md border border-outline-variant rounded-lg focus:border-secondary focus:ring-1 focus:ring-secondary/10 outline-none transition-all" id="modal-field-title" placeholder="{event_name_placeholder}" type="text">
 </div>
 <div class="grid grid-cols-2 gap-md">
 <div class="space-y-xs">
-<label class="text-label-md text-on-surface-variant">Bắt đầu</label>
+<label class="text-label-md text-on-surface-variant">{start_label}</label>
 <input class="w-full h-10 px-md border border-outline-variant rounded-lg focus:border-secondary focus:ring-1 focus:ring-secondary/10 outline-none transition-all" id="modal-field-start" type="datetime-local">
 </div>
 <div class="space-y-xs">
-<label class="text-label-md text-on-surface-variant">Kết thúc</label>
+<label class="text-label-md text-on-surface-variant">{end_label}</label>
 <input class="w-full h-10 px-md border border-outline-variant rounded-lg focus:border-secondary focus:ring-1 focus:ring-secondary/10 outline-none transition-all" id="modal-field-end" type="datetime-local">
 </div>
 </div>
 <div class="flex items-center gap-sm">
 <input class="w-4 h-4 rounded text-primary focus:ring-primary border-outline-variant" id="modal-field-allday" type="checkbox">
-<label class="cursor-pointer" for="modal-field-allday">Cả ngày</label>
+<label class="cursor-pointer" for="modal-field-allday">{allday_label}</label>
 </div>
 <a class="hidden items-center gap-xs text-secondary hover:underline text-label-md" href="#" id="modal-notion-link" target="_blank" rel="noopener">
-Mở trong Notion
+{open_in_notion}
 <span class="material-symbols-outlined text-[14px]">open_in_new</span>
 </a>
 </div>
 <div class="px-lg py-md bg-surface-container-low flex items-center justify-between">
-<button class="text-error text-label-md hover:underline hidden" id="modal-delete-btn" onclick="deleteFromModal()">Xoá</button>
+<button class="text-error text-label-md hover:underline hidden" id="modal-delete-btn" onclick="deleteFromModal()">{delete_btn}</button>
 <div class="flex items-center gap-md ml-auto">
-<button class="px-md h-10 border border-outline-variant rounded-lg bg-white hover:bg-surface-container-low text-label-md transition-colors" onclick="closeModal()">Huỷ</button>
-<button class="bg-primary text-on-primary px-lg h-10 rounded-lg text-label-md hover:opacity-90 transition-opacity" onclick="saveFromModal()">Lưu</button>
+<button class="px-md h-10 border border-outline-variant rounded-lg bg-white hover:bg-surface-container-low text-label-md transition-colors" onclick="closeModal()">{cancel_btn}</button>
+<button class="bg-primary text-on-primary px-lg h-10 rounded-lg text-label-md hover:opacity-90 transition-opacity" onclick="saveFromModal()">{save_btn}</button>
 </div>
 </div>
 </div>
@@ -152,13 +233,27 @@ Mở trong Notion
 
 <script>{js}</script>
 </body></html>"##,
+        html_lang = l.html_lang,
         title = html_escape(&calendar_name),
-        js = webview_js(&events_url),
+        lang_toggle = lang_toggle,
+        back_to_all = l.back_to_all,
+        add_event_btn = l.add_event_btn,
+        modal_title_add = l.modal_title_add,
+        event_name_label = l.event_name_label,
+        event_name_placeholder = l.event_name_placeholder,
+        start_label = l.start_label,
+        end_label = l.end_label,
+        allday_label = l.allday_label,
+        open_in_notion = l.open_in_notion,
+        delete_btn = l.delete_btn,
+        cancel_btn = l.cancel_btn,
+        save_btn = l.save_btn,
+        js = webview_js(&events_url, l),
     ))
     .into_response()
 }
 
-fn webview_js(events_url: &str) -> String {
+fn webview_js(events_url: &str, l: &WebviewLabels) -> String {
     format!(
         r#"
 var calendar;
@@ -173,7 +268,7 @@ function toLocalInputValue(dateStr) {{
 
 function openCreateModal(startStr, endStr, allDay) {{
   editingEventId = null;
-  document.getElementById('modal-title').textContent = 'Thêm sự kiện';
+  document.getElementById('modal-title').textContent = '{modal_title_add}';
   document.getElementById('modal-field-title').value = '';
   document.getElementById('modal-field-start').value = startStr ? toLocalInputValue(startStr) : '';
   document.getElementById('modal-field-end').value = endStr ? toLocalInputValue(endStr) : '';
@@ -185,7 +280,7 @@ function openCreateModal(startStr, endStr, allDay) {{
 
 function openEditModal(info) {{
   editingEventId = info.event.id;
-  document.getElementById('modal-title').textContent = 'Chỉnh sửa sự kiện';
+  document.getElementById('modal-title').textContent = '{modal_title_edit}';
   document.getElementById('modal-field-title').value = info.event.title;
   document.getElementById('modal-field-start').value = toLocalInputValue(info.event.startStr);
   document.getElementById('modal-field-end').value = info.event.endStr ? toLocalInputValue(info.event.endStr) : '';
@@ -217,11 +312,11 @@ function closeModal() {{
 
 function saveFromModal() {{
   var title = document.getElementById('modal-field-title').value.trim();
-  if (!title) {{ alert('Nhập tên sự kiện'); return; }}
+  if (!title) {{ alert('{alert_enter_title}'); return; }}
   var allDay = document.getElementById('modal-field-allday').checked;
   var startVal = document.getElementById('modal-field-start').value;
   var endVal = document.getElementById('modal-field-end').value;
-  if (!startVal) {{ alert('Chọn ngày bắt đầu'); return; }}
+  if (!startVal) {{ alert('{alert_pick_start}'); return; }}
   var start = allDay ? startVal.slice(0, 10) : startVal;
   var end = endVal ? (allDay ? endVal.slice(0, 10) : endVal) : null;
 
@@ -231,7 +326,7 @@ function saveFromModal() {{
       headers: {{ 'Content-Type': 'application/json' }},
       body: JSON.stringify({{ title: title, start: start, end: end }})
     }}).then(function(r) {{
-      if (!r.ok) {{ alert('Cập nhật thất bại'); return; }}
+      if (!r.ok) {{ alert('{alert_update_failed}'); return; }}
       closeModal();
       calendar.refetchEvents();
     }});
@@ -241,7 +336,7 @@ function saveFromModal() {{
       headers: {{ 'Content-Type': 'application/json' }},
       body: JSON.stringify({{ title: title, start: start, end: end }})
     }}).then(function(r) {{
-      if (!r.ok) {{ alert('Tạo event thất bại'); return; }}
+      if (!r.ok) {{ alert('{alert_create_failed}'); return; }}
       closeModal();
       calendar.refetchEvents();
     }});
@@ -250,10 +345,10 @@ function saveFromModal() {{
 
 function deleteFromModal() {{
   if (!editingEventId) return;
-  if (!confirm('Xoá sự kiện này?')) return;
+  if (!confirm('{confirm_delete_event}')) return;
   fetch('{events_url}/' + encodeURIComponent(editingEventId), {{ method: 'DELETE' }})
     .then(function(r) {{
-      if (!r.ok) {{ alert('Xoá thất bại'); return; }}
+      if (!r.ok) {{ alert('{alert_delete_failed}'); return; }}
       closeModal();
       calendar.refetchEvents();
     }});
@@ -295,14 +390,23 @@ document.addEventListener('DOMContentLoaded', function() {{
         end: info.event.endStr || null
       }})
     }}).then(function(r) {{
-      if (!r.ok) {{ alert('Cập nhật ngày thất bại'); info.revert(); }}
+      if (!r.ok) {{ alert('{alert_update_date_failed}'); info.revert(); }}
     }});
   }}
 
   calendar.render();
 }});
 "#,
-        events_url = events_url
+        events_url = events_url,
+        modal_title_add = l.modal_title_add,
+        modal_title_edit = l.modal_title_edit,
+        alert_enter_title = l.alert_enter_title,
+        alert_pick_start = l.alert_pick_start,
+        alert_update_failed = l.alert_update_failed,
+        alert_create_failed = l.alert_create_failed,
+        confirm_delete_event = l.confirm_delete_event,
+        alert_delete_failed = l.alert_delete_failed,
+        alert_update_date_failed = l.alert_update_date_failed,
     )
 }
 
@@ -448,6 +552,48 @@ pub async fn handle_delete_event(
             error!("webview delete event failed: {}", e);
             state.log_sync(cal.id, "webview", "delete", &event_id, &event_id, "error", &e).await;
             (StatusCode::BAD_GATEWAY, e).into_response()
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Regression guard for the exact class of bug that shipped a blank
+    /// webview page to production (2026-08-02): embedded JS inside a Rust
+    /// `format!` string can be syntactically invalid JavaScript while still
+    /// compiling fine as Rust, since `cargo build` never parses the string
+    /// contents. Shells out to `node --check` on the actual rendered output
+    /// for both languages; skips (doesn't fail) if node isn't installed,
+    /// since it's not required for `cargo build`/CI, just a local dev aid.
+    #[test]
+    fn webview_js_is_valid_javascript_in_both_languages() {
+        use std::io::Write;
+        use std::process::{Command, Stdio};
+
+        if Command::new("node").arg("--version").output().is_err() {
+            eprintln!("skipping: node not installed");
+            return;
+        }
+
+        for labels in [&WEBVIEW_LABELS_VI, &WEBVIEW_LABELS_EN] {
+            let js = webview_js("/app/test-public-id/api/events", labels);
+            let mut child = Command::new("node")
+                .arg("--check")
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .spawn()
+                .expect("failed to spawn node");
+            child.stdin.take().unwrap().write_all(js.as_bytes()).unwrap();
+            let output = child.wait_with_output().unwrap();
+            assert!(
+                output.status.success(),
+                "webview_js produced invalid JavaScript for lang={}: {}",
+                labels.html_lang,
+                String::from_utf8_lossy(&output.stderr)
+            );
         }
     }
 }

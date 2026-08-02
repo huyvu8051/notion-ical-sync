@@ -1304,7 +1304,7 @@ pub async fn handle_host_calendar(
         add_caldav_headers(res)
     } else {
         if method == axum::http::Method::GET || method == axum::http::Method::HEAD {
-            return crate::auth::landing_page().await.into_response();
+            return crate::auth::landing_page(crate::i18n::Lang::detect(&headers)).await.into_response();
         }
         if method == axum::http::Method::OPTIONS {
             return axum::http::StatusCode::OK.into_response();
@@ -1966,6 +1966,7 @@ pub fn create_app(
         // Marketplace submission.
         .route("/privacy", get(crate::legal::privacy_policy_page))
         .route("/terms", get(crate::legal::terms_of_service_page))
+        .route("/lang/{code}", get(crate::i18n::set_lang))
         // SaaS login (Keycloak) — separate identity from the CalDAV Basic
         // Auth / Notion OAuth above. /me forces login via oidc_login_service;
         // /oidc (callback) and /logout must NOT themselves force a redirect,

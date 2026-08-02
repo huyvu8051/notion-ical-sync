@@ -169,18 +169,102 @@ tailwind.config = {
 /// Post-login landing: lists the user's own calendars, with a CTA to connect
 /// more Notion databases (see oauth.rs). Doubles as the "onboarding
 /// complete" screen right after `create_calendars` redirects here.
+/// `/me`'s copy in both languages — a plain struct of `&'static str` fields
+/// rather than a translation-string crate, since this is the only page with
+/// this much dynamic-content-interleaved-with-copy; see i18n.rs for the
+/// detection/toggle machinery this plugs into.
+struct MeLabels {
+    html_lang: &'static str,
+    error_generic: &'static str,
+    new_password_notice: &'static str,
+    already_connected_suffix: &'static str,
+    caldav_password_label: &'static str,
+    caldav_url_label: &'static str,
+    username_label: &'static str,
+    active_badge: &'static str,
+    open_calendar: &'static str,
+    paste_hint: &'static str,
+    reveal_password: &'static str,
+    regenerate_password: &'static str,
+    regenerate_confirm: &'static str,
+    view_log: &'static str,
+    delete: &'static str,
+    delete_confirm: &'static str,
+    empty_state: &'static str,
+    page_title: &'static str,
+    logout_title: &'static str,
+    heading: &'static str,
+    subheading: &'static str,
+    connect_more: &'static str,
+}
+
+const ME_LABELS_VI: MeLabels = MeLabels {
+    html_lang: "vi",
+    error_generic: "Có lỗi xảy ra.",
+    new_password_notice: "Mật khẩu CalDAV bên dưới sẽ không tự động hiển thị lại — lưu lại hoặc copy ngay.",
+    already_connected_suffix: "đã được kết nối trong tài khoản của bạn rồi — không có gì thay đổi.",
+    caldav_password_label: "Mật khẩu CalDAV",
+    caldav_url_label: "CalDAV URL",
+    username_label: "Username",
+    active_badge: "Đang hoạt động",
+    open_calendar: "Mở lịch",
+    paste_hint: "Dán link này vào Apple Calendar, Google Calendar hoặc bất kỳ ứng dụng CalDAV nào",
+    reveal_password: "Hiện mật khẩu",
+    regenerate_password: "Tạo lại mật khẩu",
+    regenerate_confirm: "Tạo mật khẩu mới? Mật khẩu cũ sẽ ngừng hoạt động ngay.",
+    view_log: "Xem log đồng bộ",
+    delete: "Xoá",
+    delete_confirm: "Xoá calendar này? Dữ liệu trên Notion không bị ảnh hưởng, nhưng lịch sẽ ngừng đồng bộ.",
+    empty_state: "Chưa có calendar nào — kết nối Notion để bắt đầu.",
+    page_title: "Trang của bạn — NotionCal",
+    logout_title: "Đăng xuất",
+    heading: "Calendar của bạn",
+    subheading: "Quản lý và đồng bộ hóa các cơ sở dữ liệu Notion với ứng dụng lịch yêu thích của bạn.",
+    connect_more: "Kết nối thêm cơ sở dữ liệu",
+};
+
+const ME_LABELS_EN: MeLabels = MeLabels {
+    html_lang: "en",
+    error_generic: "Something went wrong.",
+    new_password_notice: "The CalDAV password below won't be shown again automatically — save or copy it now.",
+    already_connected_suffix: "is already connected to your account — nothing changed.",
+    caldav_password_label: "CalDAV password",
+    caldav_url_label: "CalDAV URL",
+    username_label: "Username",
+    active_badge: "Active",
+    open_calendar: "Open calendar",
+    paste_hint: "Paste this link into Apple Calendar, Google Calendar, or any CalDAV app",
+    reveal_password: "Show password",
+    regenerate_password: "Regenerate password",
+    regenerate_confirm: "Generate a new password? The old one will stop working immediately.",
+    view_log: "View sync log",
+    delete: "Delete",
+    delete_confirm: "Delete this calendar? Your Notion data is untouched, but it will stop syncing.",
+    empty_state: "No calendars yet — connect Notion to get started.",
+    page_title: "Your calendars — NotionCal",
+    logout_title: "Log out",
+    heading: "Your calendars",
+    subheading: "Manage and sync your Notion databases with your favorite calendar app.",
+    connect_more: "Connect another database",
+};
+
 pub async fn me(
     claims: OidcClaims<EmptyAdditionalClaims>,
     State(state): State<AppState>,
     session: tower_sessions::Session,
     cfg: axum::Extension<AppConfig>,
+    lang: crate::i18n::Lang,
 ) -> impl IntoResponse {
+    let l = match lang {
+        crate::i18n::Lang::En => &ME_LABELS_EN,
+        crate::i18n::Lang::Vi => &ME_LABELS_VI,
+    };
     let sub = claims.subject().as_str();
     let email = claims.email().map(|e| e.as_str()).unwrap_or("").to_string();
 
     let user_id = match find_or_create_user(&state.db, sub, &email).await {
         Ok(id) => id,
-        Err(_) => return (axum::http::StatusCode::INTERNAL_SERVER_ERROR, "Có lỗi xảy ra.").into_response(),
+        Err(_) => return (axum::http::StatusCode::INTERNAL_SERVER_ERROR, l.error_generic).into_response(),
     };
 
     let calendars: Vec<(String, String, String)> = sqlx::query_as(
@@ -197,12 +281,15 @@ pub async fn me(
     // one render.
     let new_passwords = crate::oauth::take_new_calendar_credentials(&session).await;
     let banner = if !new_passwords.is_empty() {
-        r#"<div class="flex items-center gap-sm p-md success-banner-gradient border border-[#DCFCE7] rounded-lg" id="success-banner">
+        format!(
+            r#"<div class="flex items-center gap-sm p-md success-banner-gradient border border-[#DCFCE7] rounded-lg" id="success-banner">
 <div class="flex items-center justify-center w-6 h-6 bg-[#DCFCE7] text-[#166534] rounded-full shrink-0">
 <span class="material-symbols-outlined !text-[16px]" style="font-variation-settings: 'FILL' 1;">check_circle</span>
 </div>
-<p class="text-[#166534] font-medium text-body-md">Mật khẩu CalDAV bên dưới sẽ không tự động hiển thị lại — lưu lại hoặc copy ngay.</p>
-</div>"#.to_string()
+<p class="text-[#166534] font-medium text-body-md">{}</p>
+</div>"#,
+            l.new_password_notice
+        )
     } else {
         String::new()
     };
@@ -221,8 +308,9 @@ pub async fn me(
 <div class="flex items-center justify-center w-6 h-6 bg-[#fecaca] text-error rounded-full shrink-0">
 <span class="material-symbols-outlined !text-[16px]" style="font-variation-settings: 'FILL' 1;">error</span>
 </div>
-<p class="text-error font-medium text-body-md"><strong>{names}</strong> đã được kết nối trong tài khoản của bạn rồi — không có gì thay đổi.</p>
-</div>"#
+<p class="text-error font-medium text-body-md"><strong>{names}</strong> {suffix}</p>
+</div>"#,
+            suffix = l.already_connected_suffix
         )
     };
 
@@ -247,7 +335,7 @@ pub async fn me(
             let label = if name.is_empty() { public_id.as_str() } else { name.as_str() };
             let caldav_url = format!("{}/cal/{}", cfg.base_url, public_id);
             let password_row = match new_passwords.get(caldav_username) {
-                Some(pw) => copy_row("Mật khẩu CalDAV", pw),
+                Some(pw) => copy_row(l.caldav_password_label, pw),
                 None => String::new(),
             };
             let public_id = html_escape(public_id);
@@ -257,55 +345,69 @@ pub async fn me(
 <div class="flex items-center gap-sm">
 <span class="text-h2">🗓️</span>
 <h2 class="font-semibold text-h2">{label}</h2>
-<span class="bg-[#DCFCE7] text-[#166534] px-xs py-[2px] rounded font-label-md text-[10px] uppercase tracking-wider">Đang hoạt động</span>
+<span class="bg-[#DCFCE7] text-[#166534] px-xs py-[2px] rounded font-label-md text-[10px] uppercase tracking-wider">{active_badge}</span>
 </div>
-<a class="px-md h-8 border border-outline-variant hover:bg-surface-container-low font-label-md text-label-md transition-all flex items-center" href="/app/{public_id}">Mở lịch</a>
+<a class="px-md h-8 border border-outline-variant hover:bg-surface-container-low font-label-md text-label-md transition-all flex items-center" href="/app/{public_id}">{open_calendar}</a>
 </div>
 {url_row}
 {username_row}
 {password_row}
-<p class="text-on-surface-variant text-[13px] mt-sm">Dán link này vào Apple Calendar, Google Calendar hoặc bất kỳ ứng dụng CalDAV nào</p>
+<p class="text-on-surface-variant text-[13px] mt-sm">{paste_hint}</p>
 <div class="flex items-center gap-md mt-md pt-md border-t border-outline-variant">
 <form method="post" action="/me/calendars/{public_id}/reveal-password">
-<button type="submit" class="text-label-md text-secondary hover:underline">Hiện mật khẩu</button>
+<button type="submit" class="text-label-md text-secondary hover:underline">{reveal_password}</button>
 </form>
-<form method="post" action="/me/calendars/{public_id}/regenerate-password" onsubmit="return confirm('Tạo mật khẩu mới? Mật khẩu cũ sẽ ngừng hoạt động ngay.');">
-<button type="submit" class="text-label-md text-secondary hover:underline">Tạo lại mật khẩu</button>
+<form method="post" action="/me/calendars/{public_id}/regenerate-password" onsubmit="return confirm('{regenerate_confirm}');">
+<button type="submit" class="text-label-md text-secondary hover:underline">{regenerate_password}</button>
 </form>
-<a href="/me/calendars/{public_id}/log" class="text-label-md text-secondary hover:underline">Xem log đồng bộ</a>
-<form method="post" action="/me/calendars/{public_id}/delete" onsubmit="return confirm('Xoá calendar này? Dữ liệu trên Notion không bị ảnh hưởng, nhưng lịch sẽ ngừng đồng bộ.');" class="ml-auto">
-<button type="submit" class="text-label-md text-error hover:underline">Xoá</button>
+<a href="/me/calendars/{public_id}/log" class="text-label-md text-secondary hover:underline">{view_log}</a>
+<form method="post" action="/me/calendars/{public_id}/delete" onsubmit="return confirm('{delete_confirm}');" class="ml-auto">
+<button type="submit" class="text-label-md text-error hover:underline">{delete}</button>
 </form>
 </div>
 </div>"#,
                 label = html_escape(label),
-                url_row = copy_row("CalDAV URL", &caldav_url),
-                username_row = copy_row("Username", caldav_username),
+                url_row = copy_row(l.caldav_url_label, &caldav_url),
+                username_row = copy_row(l.username_label, caldav_username),
+                active_badge = l.active_badge,
+                open_calendar = l.open_calendar,
+                paste_hint = l.paste_hint,
+                reveal_password = l.reveal_password,
+                regenerate_confirm = l.regenerate_confirm,
+                regenerate_password = l.regenerate_password,
+                view_log = l.view_log,
+                delete_confirm = l.delete_confirm,
+                delete = l.delete,
             )
         })
         .collect();
 
     let content = if calendars.is_empty() {
-        r#"<div class="flex flex-col items-center justify-center py-xl text-center border border-dashed border-outline-variant rounded-lg">
+        format!(
+            r#"<div class="flex flex-col items-center justify-center py-xl text-center border border-dashed border-outline-variant rounded-lg">
 <span class="material-symbols-outlined !text-[48px] text-outline mb-md">calendar_add_on</span>
-<p class="text-body-lg text-on-surface-variant max-w-sm">Chưa có calendar nào — kết nối Notion để bắt đầu.</p>
-</div>"#
-            .to_string()
+<p class="text-body-lg text-on-surface-variant max-w-sm">{}</p>
+</div>"#,
+            l.empty_state
+        )
     } else {
         format!(r#"<div class="space-y-md">{items}</div>"#)
     };
 
+    let lang_toggle = crate::i18n::lang_toggle(lang, "/me");
+
     Html(format!(
         r#"<!doctype html>
-<html lang="vi"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Trang của bạn — NotionCal</title>{DASHBOARD_HEAD}</head>
+<html lang="{html_lang}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{page_title}</title>{DASHBOARD_HEAD}</head>
 <body class="bg-background text-on-surface font-body-md min-h-screen">
 <header class="bg-surface border-b border-outline-variant sticky top-0 z-50">
 <div class="flex justify-between items-center h-16 px-lg w-full max-w-[1280px] mx-auto">
 <span class="text-h1 font-semibold tracking-tighter text-primary">NotionCal</span>
 <div class="flex items-center space-x-md">
+{lang_toggle}
 <span class="text-on-surface-variant font-label-md text-label-md">{email}</span>
-<a class="flex items-center justify-center w-8 h-8 hover:bg-surface-container-low transition-colors duration-200 rounded" href="/logout" title="Đăng xuất">
+<a class="flex items-center justify-center w-8 h-8 hover:bg-surface-container-low transition-colors duration-200 rounded" href="/logout" title="{logout_title}">
 <span class="material-symbols-outlined">logout</span>
 </a>
 </div>
@@ -316,12 +418,12 @@ pub async fn me(
 {error_banner}
 <div class="flex flex-col md:flex-row md:items-end justify-between gap-md border-b border-outline-variant pb-md">
 <div>
-<h1 class="text-h1 font-semibold">Calendar của bạn</h1>
-<p class="text-on-surface-variant mt-1">Quản lý và đồng bộ hóa các cơ sở dữ liệu Notion với ứng dụng lịch yêu thích của bạn.</p>
+<h1 class="text-h1 font-semibold">{heading}</h1>
+<p class="text-on-surface-variant mt-1">{subheading}</p>
 </div>
 <a class="bg-surface border border-outline-variant text-primary px-md h-10 font-label-md text-label-md flex items-center justify-center gap-sm hover:border-outline transition-all active:scale-95" href="/connect/notion">
 <span class="material-symbols-outlined">add</span>
-<span>Kết nối thêm cơ sở dữ liệu</span>
+<span>{connect_more}</span>
 </a>
 </div>
 {content}
@@ -339,6 +441,13 @@ function copyToClipboard(text, btn) {{
 }}
 </script>
 </body></html>"#,
+        html_lang = l.html_lang,
+        page_title = l.page_title,
+        lang_toggle = lang_toggle,
+        logout_title = l.logout_title,
+        heading = l.heading,
+        subheading = l.subheading,
+        connect_more = l.connect_more,
         email = html_escape(&email),
     ))
     .into_response()
@@ -368,11 +477,14 @@ pub async fn redirect_root_to_me() -> Redirect {
 /// caldav.rs's `auth_middleware`/`handle_host_calendar`) — this only renders
 /// for unauthenticated GET/HEAD requests on hosts with no personal calendar
 /// alias, so calendar.opendiy.vn / mytime.opendiy.vn are unaffected.
-pub async fn landing_page() -> impl IntoResponse {
-    Html(LANDING_PAGE_HTML)
+pub async fn landing_page(lang: crate::i18n::Lang) -> impl IntoResponse {
+    Html(match lang {
+        crate::i18n::Lang::En => LANDING_PAGE_HTML_EN,
+        crate::i18n::Lang::Vi => LANDING_PAGE_HTML_VI,
+    })
 }
 
-const LANDING_PAGE_HTML: &str = r##"<!doctype html>
+const LANDING_PAGE_HTML_VI: &str = r##"<!doctype html>
 <html class="light" lang="vi"><head>
 <meta charset="utf-8"/>
 <meta content="width=device-width, initial-scale=1.0" name="viewport"/>
@@ -427,6 +539,7 @@ NotionCal
 </nav>
 </div>
 <div class="flex items-center gap-4">
+<a class="text-label-md text-on-surface-variant hover:text-primary transition-colors px-2 py-2" href="/lang/en?next=/">EN</a>
 <a class="text-label-md text-on-surface-variant hover:text-primary transition-colors px-4 py-2" href="/me">Đăng nhập</a>
 <a class="bg-primary text-on-primary text-label-md px-4 py-2 rounded transition-transform active:scale-95 duration-100" href="/me">Đăng ký</a>
 </div>
@@ -548,6 +661,188 @@ notion-caldav.opendiy.vn/cal/...
 <div class="flex items-center gap-6">
 <a class="text-label-md text-on-surface-variant hover:text-primary transition-colors opacity-80 hover:opacity-100" href="/privacy">Chính sách bảo mật</a>
 <a class="text-label-md text-on-surface-variant hover:text-primary transition-colors opacity-80 hover:opacity-100" href="/terms">Điều khoản dịch vụ</a>
+</div>
+</div>
+</footer>
+</body></html>"##;
+
+const LANDING_PAGE_HTML_EN: &str = r##"<!doctype html>
+<html class="light" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>NotionCal - Sync Notion with your Calendar</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Geist:wght@400;500&family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+tailwind.config = {
+  theme: {
+    extend: {
+      colors: {
+        "outline-variant": "#c4c7c7", "outline": "#747878", "on-surface": "#1b1c1c",
+        "primary": "#000000", "on-primary": "#ffffff", "background": "#fbf9f9", "surface": "#fbf9f9",
+        "secondary": "#0058be", "secondary-container": "#2170e4",
+        "surface-container-low": "#f5f3f3", "surface-container": "#efeded"
+      },
+      spacing: { "md": "16px", "lg": "24px", "sm": "8px", "margin-desktop": "32px", "xs": "4px", "xl": "40px", "margin-mobile": "16px", "gutter": "16px" },
+      fontFamily: { "sans": ["Inter"], "code": ["Geist"] },
+      fontSize: {
+        "display": ["32px", { lineHeight: "1.2", letterSpacing: "-0.02em", fontWeight: "600" }],
+        "h1": ["24px", { lineHeight: "1.3", letterSpacing: "-0.015em", fontWeight: "600" }],
+        "h2": ["20px", { lineHeight: "1.4", letterSpacing: "-0.01em", fontWeight: "600" }],
+        "h3": ["16px", { lineHeight: "1.5", letterSpacing: "-0.01em", fontWeight: "600" }],
+        "body-lg": ["16px", { lineHeight: "1.6", fontWeight: "400" }],
+        "body-md": ["14px", { lineHeight: "1.5", fontWeight: "400" }],
+        "label-md": ["13px", { lineHeight: "1", letterSpacing: "0.02em", fontWeight: "500" }],
+        "code": ["13px", { lineHeight: "1.4", fontWeight: "400" }]
+      }
+    }
+  }
+}
+</script>
+<style>
+.material-symbols-outlined { font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24; vertical-align: middle; }
+body { font-family: 'Inter', sans-serif; -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; }
+.bento-grid { display: grid; grid-template-columns: repeat(12, 1fr); gap: 1rem; }
+.hairline-border { border: 1px solid #E5E5E5; }
+.hover-lift:hover { transform: translateY(-2px); transition: transform 0.2s ease-out; border-color: #D4D4D4; }
+.glass-header { backdrop-filter: blur(8px); background: rgba(251, 249, 249, 0.85); }
+</style>
+</head>
+<body class="bg-background text-on-surface">
+<header class="fixed top-0 left-0 right-0 z-50 glass-header border-b border-outline-variant">
+<div class="max-w-[1280px] mx-auto w-full px-margin-desktop h-[64px] flex justify-between items-center">
+<div class="flex items-center gap-8">
+<a class="text-h2 font-bold text-primary flex items-center gap-2" href="/">
+<span class="material-symbols-outlined text-primary">calendar_month</span>
+NotionCal
+</a>
+<nav class="hidden md:flex items-center gap-6">
+<a class="text-body-md text-on-surface-variant hover:text-primary transition-colors" href="#how-it-works">How it works</a>
+</nav>
+</div>
+<div class="flex items-center gap-4">
+<a class="text-label-md text-on-surface-variant hover:text-primary transition-colors px-2 py-2" href="/lang/vi?next=/">VI</a>
+<a class="text-label-md text-on-surface-variant hover:text-primary transition-colors px-4 py-2" href="/me">Log in</a>
+<a class="bg-primary text-on-primary text-label-md px-4 py-2 rounded transition-transform active:scale-95 duration-100" href="/me">Sign up</a>
+</div>
+</div>
+</header>
+<main class="pt-[64px]">
+<section class="max-w-[1280px] mx-auto px-margin-desktop py-xl md:py-[120px]">
+<div class="grid grid-cols-1 lg:grid-cols-2 gap-xl items-center">
+<div class="space-y-lg">
+<div class="inline-flex items-center gap-2 px-3 py-1 bg-surface-container rounded border border-outline-variant text-on-surface-variant">
+<span class="material-symbols-outlined text-[16px]">sync</span>
+<span class="text-[12px] uppercase tracking-wider font-bold">Two-way sync</span>
+</div>
+<h1 class="text-[48px] md:text-[64px] leading-tight text-primary font-extrabold tracking-tight">
+Turn your Notion database into an online calendar
+</h1>
+<p class="text-body-lg text-on-surface-variant max-w-[540px]">
+Sync your Notion workspace with Apple Calendar, Google Calendar, or any CalDAV app. Edit freely from either side.
+</p>
+<div class="pt-sm">
+<a class="bg-primary text-on-primary h-[48px] px-8 rounded-lg text-h3 inline-flex items-center gap-3 hover:opacity-90 transition-all active:scale-[0.98]" href="/me">
+<span class="material-symbols-outlined" style="font-variation-settings: 'FILL' 1;">login</span>
+Log in / Sign up
+</a>
+<p class="mt-4 text-label-md text-on-surface-variant flex items-center gap-2">
+<span class="material-symbols-outlined text-[16px] text-secondary">verified</span>
+Free. Set up in under 2 minutes.
+</p>
+</div>
+</div>
+<div class="relative group">
+<div class="absolute -inset-4 bg-gradient-to-r from-secondary-container/10 to-primary/5 rounded-xl blur-2xl group-hover:opacity-75 transition-opacity"></div>
+<div class="relative rounded-xl hairline-border overflow-hidden bg-white shadow-sm p-lg">
+<div class="flex items-center justify-center h-64 bg-surface-container rounded-lg border border-dashed border-outline-variant">
+<span class="material-symbols-outlined !text-[64px] text-outline opacity-40">calendar_month</span>
+</div>
+</div>
+</div>
+</div>
+</section>
+<section class="bg-surface-container-low py-xl border-y border-outline-variant" id="how-it-works">
+<div class="max-w-[1280px] mx-auto px-margin-desktop">
+<div class="text-center mb-xl">
+<h2 class="text-h1 text-primary">A simple process</h2>
+<p class="text-body-md text-on-surface-variant mt-2">Start syncing your data in just 3 steps</p>
+</div>
+<div class="grid grid-cols-1 md:grid-cols-3 gap-gutter">
+<div class="bg-white p-lg hairline-border rounded-lg hover-lift">
+<div class="w-10 h-10 bg-primary text-on-primary flex items-center justify-center rounded-md mb-md">
+<span class="material-symbols-outlined">link</span>
+</div>
+<h3 class="text-h3 text-primary mb-2">1. Connect Notion</h3>
+<p class="text-body-md text-on-surface-variant">Securely connect your Notion workspace via OAuth.</p>
+</div>
+<div class="bg-white p-lg hairline-border rounded-lg hover-lift">
+<div class="w-10 h-10 bg-primary text-on-primary flex items-center justify-center rounded-md mb-md">
+<span class="material-symbols-outlined">database</span>
+</div>
+<h3 class="text-h3 text-primary mb-2">2. Pick a database</h3>
+<p class="text-body-md text-on-surface-variant">Choose the database you want to sync. Requires a Date property.</p>
+</div>
+<div class="bg-white p-lg hairline-border rounded-lg hover-lift">
+<div class="w-10 h-10 bg-primary text-on-primary flex items-center justify-center rounded-md mb-md">
+<span class="material-symbols-outlined">event_available</span>
+</div>
+<h3 class="text-h3 text-primary mb-2">3. Sync your calendar</h3>
+<p class="text-body-md text-on-surface-variant">Subscribe from your calendar app (Apple, Google, Outlook) via the CalDAV link.</p>
+</div>
+</div>
+</div>
+</section>
+<section class="max-w-[1280px] mx-auto px-margin-desktop py-xl">
+<div class="bento-grid grid-rows-2">
+<div class="col-span-12 md:col-span-8 p-lg hairline-border rounded-xl bg-white flex flex-col justify-between">
+<div>
+<h4 class="text-h2 text-primary mb-2">Real-time two-way sync</h4>
+<p class="text-body-md text-on-surface-variant">Changes in Notion update your calendar instantly, and vice versa. Never miss a deadline.</p>
+</div>
+<div class="mt-xl h-32 bg-surface-container rounded-lg border border-dashed border-outline flex items-center justify-center">
+<span class="material-symbols-outlined text-[48px] text-outline opacity-40">sync_alt</span>
+</div>
+</div>
+<div class="col-span-12 md:col-span-4 p-lg hairline-border rounded-xl bg-surface-container flex flex-col justify-center items-center text-center">
+<span class="material-symbols-outlined text-[48px] mb-4 text-secondary">security</span>
+<h4 class="text-h3 text-primary">Your data, your control</h4>
+<p class="text-body-md text-on-surface-variant mt-2">Only reads/writes the pages you authorize. Disconnect anytime.</p>
+</div>
+<div class="col-span-12 md:col-span-4 p-lg hairline-border rounded-xl bg-white">
+<h4 class="text-h3 text-primary mb-2">Free, no limits</h4>
+<ul class="space-y-2">
+<li class="flex items-center gap-2 text-body-md text-on-surface-variant">
+<span class="material-symbols-outlined text-green-600 text-[18px]">check_circle</span> No credit card required
+</li>
+<li class="flex items-center gap-2 text-body-md text-on-surface-variant">
+<span class="material-symbols-outlined text-green-600 text-[18px]">check_circle</span> Connect multiple databases
+</li>
+<li class="flex items-center gap-2 text-body-md text-on-surface-variant">
+<span class="material-symbols-outlined text-green-600 text-[18px]">check_circle</span> Built-in webview to view/edit events
+</li>
+</ul>
+</div>
+<div class="col-span-12 md:col-span-8 p-lg hairline-border rounded-xl bg-primary text-on-primary flex items-center justify-between">
+<div>
+<h4 class="text-h2 mb-1">Works with any calendar app</h4>
+<p class="text-label-md opacity-80 uppercase tracking-widest">Standard CalDAV protocol</p>
+</div>
+<div class="text-code bg-white/10 p-3 rounded hairline-border border-white/20">
+notion-caldav.opendiy.vn/cal/...
+</div>
+</div>
+</div>
+</section>
+</main>
+<footer class="border-t border-outline-variant bg-surface mt-xl">
+<div class="max-w-[1280px] mx-auto w-full px-margin-desktop py-lg flex flex-col md:flex-row justify-between items-center gap-lg">
+<div class="flex flex-col md:flex-row items-center gap-md">
+<span class="text-h3 font-bold text-primary">NotionCal</span>
+</div>
+<div class="flex items-center gap-6">
+<a class="text-label-md text-on-surface-variant hover:text-primary transition-colors opacity-80 hover:opacity-100" href="/privacy">Privacy Policy</a>
+<a class="text-label-md text-on-surface-variant hover:text-primary transition-colors opacity-80 hover:opacity-100" href="/terms">Terms of Service</a>
 </div>
 </div>
 </footer>
