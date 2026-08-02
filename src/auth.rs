@@ -346,3 +346,196 @@ pub async fn logout(logout: OidcRpInitiatedLogout, State(state): State<AppState>
 pub async fn redirect_root_to_me() -> Redirect {
     Redirect::to("/me")
 }
+
+/// Public marketing landing page at `/` — ports the Stitch "Trang chủ" mockup
+/// (project 7966553897766226544, screen eceda80d9000472cbd5e362a94e1bde1)
+/// verbatim, with its placeholder nav/footer links (Tài liệu, Giá cả,
+/// Security, Status — pages that don't exist) trimmed down to links that
+/// actually go somewhere. `/` is otherwise the CalDAV protocol root (see
+/// caldav.rs's `auth_middleware`/`handle_host_calendar`) — this only renders
+/// for unauthenticated GET/HEAD requests on hosts with no personal calendar
+/// alias, so calendar.opendiy.vn / mytime.opendiy.vn are unaffected.
+pub async fn landing_page() -> impl IntoResponse {
+    Html(LANDING_PAGE_HTML)
+}
+
+const LANDING_PAGE_HTML: &str = r##"<!doctype html>
+<html class="light" lang="vi"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>Notion CalDAV SaaS - Đồng bộ hóa Notion với Calendar</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Geist:wght@400;500&family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+tailwind.config = {
+  theme: {
+    extend: {
+      colors: {
+        "outline-variant": "#c4c7c7", "outline": "#747878", "on-surface": "#1b1c1c",
+        "primary": "#000000", "on-primary": "#ffffff", "background": "#fbf9f9", "surface": "#fbf9f9",
+        "secondary": "#0058be", "secondary-container": "#2170e4",
+        "surface-container-low": "#f5f3f3", "surface-container": "#efeded"
+      },
+      spacing: { "md": "16px", "lg": "24px", "sm": "8px", "margin-desktop": "32px", "xs": "4px", "xl": "40px", "margin-mobile": "16px", "gutter": "16px" },
+      fontFamily: { "sans": ["Inter"], "code": ["Geist"] },
+      fontSize: {
+        "display": ["32px", { lineHeight: "1.2", letterSpacing: "-0.02em", fontWeight: "600" }],
+        "h1": ["24px", { lineHeight: "1.3", letterSpacing: "-0.015em", fontWeight: "600" }],
+        "h2": ["20px", { lineHeight: "1.4", letterSpacing: "-0.01em", fontWeight: "600" }],
+        "h3": ["16px", { lineHeight: "1.5", letterSpacing: "-0.01em", fontWeight: "600" }],
+        "body-lg": ["16px", { lineHeight: "1.6", fontWeight: "400" }],
+        "body-md": ["14px", { lineHeight: "1.5", fontWeight: "400" }],
+        "label-md": ["13px", { lineHeight: "1", letterSpacing: "0.02em", fontWeight: "500" }],
+        "code": ["13px", { lineHeight: "1.4", fontWeight: "400" }]
+      }
+    }
+  }
+}
+</script>
+<style>
+.material-symbols-outlined { font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24; vertical-align: middle; }
+body { font-family: 'Inter', sans-serif; -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; }
+.bento-grid { display: grid; grid-template-columns: repeat(12, 1fr); gap: 1rem; }
+.hairline-border { border: 1px solid #E5E5E5; }
+.hover-lift:hover { transform: translateY(-2px); transition: transform 0.2s ease-out; border-color: #D4D4D4; }
+.glass-header { backdrop-filter: blur(8px); background: rgba(251, 249, 249, 0.85); }
+</style>
+</head>
+<body class="bg-background text-on-surface">
+<header class="fixed top-0 left-0 right-0 z-50 glass-header border-b border-outline-variant">
+<div class="max-w-[1280px] mx-auto w-full px-margin-desktop h-[64px] flex justify-between items-center">
+<div class="flex items-center gap-8">
+<a class="text-h2 font-bold text-primary flex items-center gap-2" href="/">
+<span class="material-symbols-outlined text-primary">calendar_month</span>
+Notion CalDAV SaaS
+</a>
+<nav class="hidden md:flex items-center gap-6">
+<a class="text-body-md text-on-surface-variant hover:text-primary transition-colors" href="#how-it-works">Cách hoạt động</a>
+</nav>
+</div>
+<div class="flex items-center gap-4">
+<a class="text-label-md text-on-surface-variant hover:text-primary transition-colors px-4 py-2" href="/me">Đăng nhập</a>
+<a class="bg-primary text-on-primary text-label-md px-4 py-2 rounded transition-transform active:scale-95 duration-100" href="/me">Đăng ký</a>
+</div>
+</div>
+</header>
+<main class="pt-[64px]">
+<section class="max-w-[1280px] mx-auto px-margin-desktop py-xl md:py-[120px]">
+<div class="grid grid-cols-1 lg:grid-cols-2 gap-xl items-center">
+<div class="space-y-lg">
+<div class="inline-flex items-center gap-2 px-3 py-1 bg-surface-container rounded border border-outline-variant text-on-surface-variant">
+<span class="material-symbols-outlined text-[16px]">sync</span>
+<span class="text-[12px] uppercase tracking-wider font-bold">Đồng bộ hai chiều</span>
+</div>
+<h1 class="text-[48px] md:text-[64px] leading-tight text-primary font-extrabold tracking-tight">
+Biến cơ sở dữ liệu Notion thành lịch trực tuyến
+</h1>
+<p class="text-body-lg text-on-surface-variant max-w-[540px]">
+Đồng bộ hóa Notion của bạn với Apple Calendar, Google Calendar hoặc bất kỳ ứng dụng CalDAV nào. Chỉnh sửa linh hoạt từ cả hai phía.
+</p>
+<div class="pt-sm">
+<a class="bg-primary text-on-primary h-[48px] px-8 rounded-lg text-h3 inline-flex items-center gap-3 hover:opacity-90 transition-all active:scale-[0.98]" href="/me">
+<span class="material-symbols-outlined" style="font-variation-settings: 'FILL' 1;">login</span>
+Đăng nhập / Đăng ký
+</a>
+<p class="mt-4 text-label-md text-on-surface-variant flex items-center gap-2">
+<span class="material-symbols-outlined text-[16px] text-secondary">verified</span>
+Miễn phí. Thiết lập trong chưa đầy 2 phút.
+</p>
+</div>
+</div>
+<div class="relative group">
+<div class="absolute -inset-4 bg-gradient-to-r from-secondary-container/10 to-primary/5 rounded-xl blur-2xl group-hover:opacity-75 transition-opacity"></div>
+<div class="relative rounded-xl hairline-border overflow-hidden bg-white shadow-sm p-lg">
+<div class="flex items-center justify-center h-64 bg-surface-container rounded-lg border border-dashed border-outline-variant">
+<span class="material-symbols-outlined !text-[64px] text-outline opacity-40">calendar_month</span>
+</div>
+</div>
+</div>
+</div>
+</section>
+<section class="bg-surface-container-low py-xl border-y border-outline-variant" id="how-it-works">
+<div class="max-w-[1280px] mx-auto px-margin-desktop">
+<div class="text-center mb-xl">
+<h2 class="text-h1 text-primary">Quy trình đơn giản</h2>
+<p class="text-body-md text-on-surface-variant mt-2">Bắt đầu đồng bộ hóa dữ liệu của bạn chỉ với 3 bước</p>
+</div>
+<div class="grid grid-cols-1 md:grid-cols-3 gap-gutter">
+<div class="bg-white p-lg hairline-border rounded-lg hover-lift">
+<div class="w-10 h-10 bg-primary text-on-primary flex items-center justify-center rounded-md mb-md">
+<span class="material-symbols-outlined">link</span>
+</div>
+<h3 class="text-h3 text-primary mb-2">1. Kết nối Notion</h3>
+<p class="text-body-md text-on-surface-variant">Kết nối không gian làm việc Notion của bạn một cách bảo mật thông qua OAuth.</p>
+</div>
+<div class="bg-white p-lg hairline-border rounded-lg hover-lift">
+<div class="w-10 h-10 bg-primary text-on-primary flex items-center justify-center rounded-md mb-md">
+<span class="material-symbols-outlined">database</span>
+</div>
+<h3 class="text-h3 text-primary mb-2">2. Chọn cơ sở dữ liệu</h3>
+<p class="text-body-md text-on-surface-variant">Chọn cơ sở dữ liệu bạn muốn đồng bộ. Yêu cầu có thuộc tính kiểu Date.</p>
+</div>
+<div class="bg-white p-lg hairline-border rounded-lg hover-lift">
+<div class="w-10 h-10 bg-primary text-on-primary flex items-center justify-center rounded-md mb-md">
+<span class="material-symbols-outlined">event_available</span>
+</div>
+<h3 class="text-h3 text-primary mb-2">3. Đồng bộ lịch</h3>
+<p class="text-body-md text-on-surface-variant">Đăng ký trên ứng dụng lịch của bạn (Apple, Google, Outlook) thông qua link CalDAV.</p>
+</div>
+</div>
+</div>
+</section>
+<section class="max-w-[1280px] mx-auto px-margin-desktop py-xl">
+<div class="bento-grid grid-rows-2">
+<div class="col-span-12 md:col-span-8 p-lg hairline-border rounded-xl bg-white flex flex-col justify-between">
+<div>
+<h4 class="text-h2 text-primary mb-2">Đồng bộ hai chiều thời gian thực</h4>
+<p class="text-body-md text-on-surface-variant">Thay đổi trên Notion sẽ cập nhật ngay lập tức trên Lịch của bạn và ngược lại. Không bao giờ bỏ lỡ một deadline nào.</p>
+</div>
+<div class="mt-xl h-32 bg-surface-container rounded-lg border border-dashed border-outline flex items-center justify-center">
+<span class="material-symbols-outlined text-[48px] text-outline opacity-40">sync_alt</span>
+</div>
+</div>
+<div class="col-span-12 md:col-span-4 p-lg hairline-border rounded-xl bg-surface-container flex flex-col justify-center items-center text-center">
+<span class="material-symbols-outlined text-[48px] mb-4 text-secondary">security</span>
+<h4 class="text-h3 text-primary">Dữ liệu của bạn, do bạn kiểm soát</h4>
+<p class="text-body-md text-on-surface-variant mt-2">Chỉ đọc/ghi vào các trang bạn cho phép. Có thể ngắt kết nối bất cứ lúc nào.</p>
+</div>
+<div class="col-span-12 md:col-span-4 p-lg hairline-border rounded-xl bg-white">
+<h4 class="text-h3 text-primary mb-2">Miễn phí, không giới hạn</h4>
+<ul class="space-y-2">
+<li class="flex items-center gap-2 text-body-md text-on-surface-variant">
+<span class="material-symbols-outlined text-green-600 text-[18px]">check_circle</span> Không cần thẻ tín dụng
+</li>
+<li class="flex items-center gap-2 text-body-md text-on-surface-variant">
+<span class="material-symbols-outlined text-green-600 text-[18px]">check_circle</span> Kết nối nhiều database
+</li>
+<li class="flex items-center gap-2 text-body-md text-on-surface-variant">
+<span class="material-symbols-outlined text-green-600 text-[18px]">check_circle</span> Webview xem/sửa trực tiếp
+</li>
+</ul>
+</div>
+<div class="col-span-12 md:col-span-8 p-lg hairline-border rounded-xl bg-primary text-on-primary flex items-center justify-between">
+<div>
+<h4 class="text-h2 mb-1">Dành cho mọi ứng dụng lịch</h4>
+<p class="text-label-md opacity-80 uppercase tracking-widest">Chuẩn giao thức CalDAV</p>
+</div>
+<div class="text-code bg-white/10 p-3 rounded hairline-border border-white/20">
+notion-caldav.opendiy.vn/cal/...
+</div>
+</div>
+</div>
+</section>
+</main>
+<footer class="border-t border-outline-variant bg-surface mt-xl">
+<div class="max-w-[1280px] mx-auto w-full px-margin-desktop py-lg flex flex-col md:flex-row justify-between items-center gap-lg">
+<div class="flex flex-col md:flex-row items-center gap-md">
+<span class="text-h3 font-bold text-primary">Notion CalDAV SaaS</span>
+</div>
+<div class="flex items-center gap-6">
+<a class="text-label-md text-on-surface-variant hover:text-primary transition-colors opacity-80 hover:opacity-100" href="/privacy">Chính sách bảo mật</a>
+<a class="text-label-md text-on-surface-variant hover:text-primary transition-colors opacity-80 hover:opacity-100" href="/terms">Điều khoản dịch vụ</a>
+</div>
+</div>
+</footer>
+</body></html>"##;

@@ -1049,6 +1049,9 @@ pub async fn handle_host_calendar(
         let res = handle_calendar_impl(method, headers, state, db_id, prefix, body).await.into_response();
         add_caldav_headers(res)
     } else {
+        if method == axum::http::Method::GET || method == axum::http::Method::HEAD {
+            return crate::auth::landing_page().await.into_response();
+        }
         if method == axum::http::Method::OPTIONS {
             return axum::http::StatusCode::OK.into_response();
         }
@@ -1418,7 +1421,17 @@ async fn auth_middleware(
     // auth. GET/PROPFIND/REPORT used to bypass here too, which meant every
     // "protected" CalDAV route was actually readable by anyone — reads are
     // exactly what needs protecting, not just writes.
-    let is_bypass = method == axum::http::Method::OPTIONS;
+    //
+    // The one other bypass: a bare GET/HEAD "/" on a host with no personal
+    // calendar alias (see get_db_id_for_host) isn't a CalDAV request at all —
+    // it's a browser hitting the marketing domain, which should see the
+    // landing page, not a Basic Auth prompt. calendar.opendiy.vn/
+    // mytime.opendiy.vn (real personal calendar aliases) are unaffected since
+    // get_db_id_for_host returns Some for those hosts.
+    let is_landing_page_request = (method == axum::http::Method::GET || method == axum::http::Method::HEAD)
+        && path == "/"
+        && get_db_id_for_host(&headers, &state).await.is_none();
+    let is_bypass = method == axum::http::Method::OPTIONS || is_landing_page_request;
 
     if is_bypass {
         let mut response = next.run(request).await;
