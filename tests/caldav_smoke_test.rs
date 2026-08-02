@@ -108,12 +108,11 @@ async fn test_state_multi(calendars: &[(&str, &str)], allow_writes: CaldavAllowW
         .unwrap();
 
         sqlx::query(
-            "INSERT INTO calendars (user_id, notion_connection_id, database_id, data_source_id, date_property, caldav_username, caldav_password_hash)
-             VALUES ($1, $2, $3, $4, 'Date', $5, $6)
-             ON CONFLICT (database_id) DO UPDATE SET
+            "INSERT INTO calendars (user_id, notion_connection_id, database_id, data_source_id, date_property, caldav_username, caldav_password_hash, public_id)
+             VALUES ($1, $2, $3, $4, 'Date', $5, $6, $3)
+             ON CONFLICT (user_id, database_id) DO UPDATE SET
                 data_source_id = EXCLUDED.data_source_id,
                 notion_connection_id = EXCLUDED.notion_connection_id,
-                user_id = EXCLUDED.user_id,
                 caldav_username = EXCLUDED.caldav_username,
                 caldav_password_hash = EXCLUDED.caldav_password_hash",
         )
@@ -128,7 +127,7 @@ async fn test_state_multi(calendars: &[(&str, &str)], allow_writes: CaldavAllowW
         .unwrap();
     }
 
-    AppState::new(pool, allow_writes, None, None)
+    AppState::new(pool, allow_writes, None, None, None)
 }
 
 #[tokio::test]

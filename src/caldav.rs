@@ -887,6 +887,9 @@ pub async fn handle_calendar_impl(
         calendar = %name,
         "CalDAV handler: calendar collection"
     );
+    if method == axum::http::Method::OPTIONS {
+        return axum::http::StatusCode::OK.into_response();
+    }
     if method == axum::http::Method::GET {
         let cache = state.cache.read().await;
         let pages = cache.get(&cal.database_id).cloned().unwrap_or_default();
@@ -983,6 +986,9 @@ pub async fn handle_calendar_event_impl(
         calendar = %name,
         "CalDAV handler: calendar event"
     );
+    if method == axum::http::Method::OPTIONS {
+        return axum::http::StatusCode::OK.into_response();
+    }
     if method == axum::http::Method::GET {
         let cache = state.cache.read().await;
         let pages = cache.get(&cal.database_id).cloned().unwrap_or_default();
