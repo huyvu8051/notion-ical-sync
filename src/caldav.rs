@@ -16,8 +16,7 @@ use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use sqlx::PgPool;
 use tower_http::cors::CorsLayer;
-use tower_http::trace::{DefaultMakeSpan, DefaultOnRequest, DefaultOnResponse, TraceLayer};
-use tower_http::LatencyUnit;
+use tower_http::trace::{DefaultMakeSpan, TraceLayer};
 use tracing::{error, info};
 
 // Page info for ICS
@@ -1782,16 +1781,26 @@ pub fn create_app(
         .with_state(state)
         // Outermost layer: logs method/path/status/latency for every request
         // across the whole app (webview, OIDC, oauth, legal, CalDAV — not
-        // just the routes that already had their own manual info!() calls),
-        // plus an ERROR-level line on any 5xx response.
+        // just the routes that already had their own manual info!() calls).
+        // Custom on_request/on_response closures instead of tower_http's
+        // DefaultOnRequest/DefaultOnResponse: those log method/uri only as
+        // span fields, which tracing_subscriber::fmt's default formatter
+        // doesn't print inline, so they were invisible in `kubectl logs`.
         .layer(
             TraceLayer::new_for_http()
                 .make_span_with(DefaultMakeSpan::new().include_headers(false))
-                .on_request(DefaultOnRequest::new().level(tracing::Level::INFO))
+                .on_request(|request: &axum::http::Request<axum::body::Body>, _span: &tracing::Span| {
+                    info!(method = %request.method(), uri = %request.uri(), "request started");
+                })
                 .on_response(
-                    DefaultOnResponse::new()
-                        .level(tracing::Level::INFO)
-                        .latency_unit(LatencyUnit::Millis),
+                    |response: &axum::http::Response<axum::body::Body>, latency: std::time::Duration, _span: &tracing::Span| {
+                        let status = response.status();
+                        if status.is_server_error() {
+                            error!(status = %status, latency_ms = %latency.as_millis(), "request completed");
+                        } else {
+                            info!(status = %status, latency_ms = %latency.as_millis(), "request completed");
+                        }
+                    },
                 ),
         )
 }
