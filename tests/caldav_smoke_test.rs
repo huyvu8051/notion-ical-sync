@@ -73,8 +73,13 @@ async fn test_state(db_id: &str, ds_id: &str, allow_writes: CaldavAllowWrites) -
 }
 
 async fn test_state_multi(calendars: &[(&str, &str)], allow_writes: CaldavAllowWrites) -> AppState {
+    // A dedicated database, deliberately separate from the manual-dev-run
+    // default (postgres://.../notion_saas) — two of these tests hardcode
+    // real Notion database_ids (the ones get_db_id_for_host maps host names
+    // to) as fixtures, and once clobbered those rows' auth/tokens/data
+    // don't match what's actually connected in Notion.
     let db_url = std::env::var("TEST_DATABASE_URL")
-        .unwrap_or_else(|_| "postgres://biolink:biolink@localhost:5433/notion_saas".to_string());
+        .unwrap_or_else(|_| "postgres://biolink:biolink@localhost:5433/notion_saas_test".to_string());
     let pool = sqlx::PgPool::connect(&db_url).await.expect("connect to test db");
     sqlx::migrate!("./migrations").run(&pool).await.expect("run migrations");
 
