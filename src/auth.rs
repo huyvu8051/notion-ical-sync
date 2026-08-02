@@ -111,6 +111,7 @@ pub(crate) const AUTH_STYLE: &str = r#"
   .cred-row { font-size: 0.85rem; color: #444; margin: 0.15rem 0; }
   .cred-label { color: #888; margin-right: 0.35rem; }
   .banner-success { background: #dcfce7; color: #166534; padding: 0.75rem 1rem; border-radius: 8px; margin-bottom: 1.25rem; font-size: 0.9rem; }
+  .banner-error { background: #fee2e2; color: #991b1b; padding: 0.75rem 1rem; border-radius: 8px; margin-bottom: 1.25rem; font-size: 0.9rem; }
   code { font-family: ui-monospace, monospace; background: #eee; padding: 0.1rem 0.35rem; border-radius: 4px; font-size: 0.85rem; }
   .connect-card { margin-top: 2rem; }
   .reassure-list { list-style: none; padding: 0; margin-top: 1.5rem; font-size: 0.85rem; color: #555; }
@@ -156,9 +157,23 @@ pub async fn me(
     // its password here in the session for this one render.
     let new_passwords = crate::oauth::take_new_calendar_credentials(&session).await;
     let banner = if !new_passwords.is_empty() {
-        r#"<div class="banner-success">Đã kết nối thành công! Lịch của bạn đã sẵn sàng. Lưu lại mật khẩu CalDAV bên dưới — chúng tôi sẽ không hiển thị lại.</div>"#
+        r#"<div class="banner-success">Đã kết nối thành công! Lịch của bạn đã sẵn sàng. Lưu lại mật khẩu CalDAV bên dưới — chúng tôi sẽ không hiển thị lại.</div>"#.to_string()
     } else {
-        ""
+        String::new()
+    };
+
+    // A database_id can only ever belong to one calendar system-wide (see
+    // migrations/0001_init.sql) — surface a clear reason here instead of the
+    // previous silent no-op when someone tries to reconnect one that's
+    // already claimed by a different account.
+    let connect_errors = crate::oauth::take_calendar_connect_errors(&session).await;
+    let error_banner = if connect_errors.is_empty() {
+        String::new()
+    } else {
+        let names = connect_errors.iter().map(|n| html_escape(n)).collect::<Vec<_>>().join(", ");
+        format!(
+            r#"<div class="banner-error">Không thể kết nối: <strong>{names}</strong> đã được kết nối bởi một tài khoản khác trên hệ thống này. Nếu đây là database của bạn, hãy đăng nhập bằng tài khoản đã kết nối trước đó, hoặc liên hệ hỗ trợ để chuyển quyền sở hữu.</div>"#
+        )
     };
 
     let items: String = calendars
@@ -202,6 +217,7 @@ pub async fn me(
 <body>
 <div class="top-nav"><strong>Notion CalDAV SaaS</strong><a class="logout" href="/logout">Đăng xuất</a></div>
 {banner}
+{error_banner}
 <div class="header-row"><h1>Calendar của bạn</h1><a class="connect-btn-secondary" href="/connect/notion">+ Kết nối thêm cơ sở dữ liệu</a></div>
 {content}
 <p class="hint" style="margin-top:2.5rem"><a href="/privacy">Privacy Policy</a> · <a href="/terms">Terms of Service</a></p>

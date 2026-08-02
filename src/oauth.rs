@@ -485,6 +485,11 @@ pub async fn create_calendars(
     // (display_name, caldav_username, plaintext password) for calendars
     // actually created just now — shown once on the dashboard, never stored.
     let mut new_credentials: Vec<(String, String, String)> = Vec::new();
+    // Titles of databases that couldn't be connected because `database_id` is
+    // globally unique (see migrations/0001_init.sql) — some other account on
+    // this SaaS already claimed them. Surfaced on /me instead of failing
+    // silently, which is what happened before this fix.
+    let mut already_connected: Vec<String> = Vec::new();
 
     for db_id in &form.db_ids {
         let Some(candidate) = candidates.iter().find(|c| &c.database_id == db_id && c.date_property.is_some()) else {
@@ -520,7 +525,7 @@ pub async fn create_calendars(
 
         match result {
             Ok(r) if r.rows_affected() > 0 => new_credentials.push((candidate.title.clone(), caldav_username, caldav_password)),
-            Ok(_) => {} // database_id already synced by someone; nothing new to show
+            Ok(_) => already_connected.push(candidate.title.clone()),
             Err(e) => error!("failed to insert calendar {}: {}", candidate.database_id, e),
         }
     }
@@ -530,6 +535,12 @@ pub async fn create_calendars(
             error!("failed to stash new calendar credentials in session: {}", e);
         }
         state.refresh_all().await;
+    }
+
+    if !already_connected.is_empty() {
+        if let Err(e) = session.insert("calendar_connect_errors", &already_connected).await {
+            error!("failed to stash calendar connect errors in session: {}", e);
+        }
     }
 
     Redirect::to("/me").into_response()
@@ -543,4 +554,16 @@ pub async fn take_new_calendar_credentials(session: &tower_sessions::Session) ->
         let _ = session.remove::<Vec<(String, String, String)>>("new_calendar_credentials").await;
     }
     stashed.into_iter().map(|(_, username, password)| (username, password)).collect()
+}
+
+/// Reads and clears the one-time stash of database titles that couldn't be
+/// connected because they're already claimed by another account (see
+/// `create_calendars`) — `me()` shows these as an error banner instead of
+/// the previous silent no-op.
+pub async fn take_calendar_connect_errors(session: &tower_sessions::Session) -> Vec<String> {
+    let stashed: Vec<String> = session.get("calendar_connect_errors").await.ok().flatten().unwrap_or_default();
+    if !stashed.is_empty() {
+        let _ = session.remove::<Vec<String>>("calendar_connect_errors").await;
+    }
+    stashed
 }
