@@ -1677,6 +1677,11 @@ pub fn create_app(
             "/webhook/notion-test",
             post(crate::webhook::handle_notion_webhook),
         )
+        // Public/unauthenticated: linked from the Notion OAuth consent step
+        // and the dashboard footer, and required for eventual Notion
+        // Marketplace submission.
+        .route("/privacy", get(crate::legal::privacy_policy_page))
+        .route("/terms", get(crate::legal::terms_of_service_page))
         // SaaS login (Keycloak) — separate identity from the CalDAV Basic
         // Auth / Notion OAuth above. /me forces login via oidc_login_service;
         // /oidc (callback) and /logout must NOT themselves force a redirect,

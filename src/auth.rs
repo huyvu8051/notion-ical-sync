@@ -204,6 +204,7 @@ pub async fn me(
 {banner}
 <div class="header-row"><h1>Calendar của bạn</h1><a class="connect-btn-secondary" href="/connect/notion">+ Kết nối thêm cơ sở dữ liệu</a></div>
 {content}
+<p class="hint" style="margin-top:2.5rem"><a href="/privacy">Privacy Policy</a> · <a href="/terms">Terms of Service</a></p>
 </body></html>"#
     ))
     .into_response()

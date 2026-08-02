@@ -85,6 +85,7 @@ pub async fn connect_notion_page(_claims: OidcClaims<EmptyAdditionalClaims>) -> 
     <li>Có thể ngắt kết nối bất cứ lúc nào</li>
     <li>Không bao giờ chia sẻ dữ liệu của bạn với bên thứ ba</li>
   </ul>
+  <p class="hint" style="margin-top:1.5rem"><a href="/privacy">Privacy Policy</a> · <a href="/terms">Terms of Service</a></p>
 </div>
 </body></html>"#
     ))
