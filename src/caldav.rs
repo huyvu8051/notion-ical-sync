@@ -16,6 +16,8 @@ use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use sqlx::PgPool;
 use tower_http::cors::CorsLayer;
+use tower_http::trace::{DefaultMakeSpan, DefaultOnRequest, DefaultOnResponse, TraceLayer};
+use tower_http::LatencyUnit;
 use tracing::{error, info};
 
 // Page info for ICS
@@ -1778,4 +1780,18 @@ pub fn create_app(
         .layer(oidc_auth_service)
         .layer(axum::Extension(app_config))
         .with_state(state)
+        // Outermost layer: logs method/path/status/latency for every request
+        // across the whole app (webview, OIDC, oauth, legal, CalDAV — not
+        // just the routes that already had their own manual info!() calls),
+        // plus an ERROR-level line on any 5xx response.
+        .layer(
+            TraceLayer::new_for_http()
+                .make_span_with(DefaultMakeSpan::new().include_headers(false))
+                .on_request(DefaultOnRequest::new().level(tracing::Level::INFO))
+                .on_response(
+                    DefaultOnResponse::new()
+                        .level(tracing::Level::INFO)
+                        .latency_unit(LatencyUnit::Millis),
+                ),
+        )
 }
