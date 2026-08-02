@@ -11,6 +11,7 @@ use axum::{
     routing::{get, post},
     Router,
 };
+use argon2::password_hash::PasswordVerifier;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use sqlx::PgPool;
@@ -88,11 +89,22 @@ struct NotionQueryResponse {
 /// different user with a different token.
 #[derive(Debug, Clone, sqlx::FromRow)]
 pub struct CalendarRow {
+    pub user_id: i64,
     pub database_id: String,
     pub data_source_id: String,
     pub date_property: String,
     pub display_name: String,
     pub notion_access_token: String,
+}
+
+/// Identity resolved from a valid CalDAV Basic Auth credential — attached to
+/// the request by `auth_middleware` so handlers that need to scope by owner
+/// (e.g. `/refresh`, `/cal.ics`, `/calendars/{user}`) don't have to re-parse
+/// and re-verify the Authorization header themselves.
+#[derive(Debug, Clone)]
+pub struct AuthenticatedCaldavUser {
+    pub user_id: i64,
+    pub username: String,
 }
 
 impl AppState {
@@ -117,7 +129,7 @@ impl AppState {
 
     pub async fn all_calendars(&self) -> Vec<CalendarRow> {
         sqlx::query_as::<_, CalendarRow>(
-            "SELECT c.database_id, c.data_source_id, c.date_property, c.display_name, nc.notion_access_token
+            "SELECT c.user_id, c.database_id, c.data_source_id, c.date_property, c.display_name, nc.notion_access_token
              FROM calendars c JOIN notion_connections nc ON nc.id = c.notion_connection_id",
         )
         .fetch_all(&self.db)
@@ -128,9 +140,24 @@ impl AppState {
         })
     }
 
+    pub async fn calendars_for_user(&self, user_id: i64) -> Vec<CalendarRow> {
+        sqlx::query_as::<_, CalendarRow>(
+            "SELECT c.user_id, c.database_id, c.data_source_id, c.date_property, c.display_name, nc.notion_access_token
+             FROM calendars c JOIN notion_connections nc ON nc.id = c.notion_connection_id
+             WHERE c.user_id = $1",
+        )
+        .bind(user_id)
+        .fetch_all(&self.db)
+        .await
+        .unwrap_or_else(|e| {
+            error!("failed to list calendars for user {}: {}", user_id, e);
+            Vec::new()
+        })
+    }
+
     pub async fn calendar_by_db_id(&self, db_id: &str) -> Option<CalendarRow> {
         sqlx::query_as::<_, CalendarRow>(
-            "SELECT c.database_id, c.data_source_id, c.date_property, c.display_name, nc.notion_access_token
+            "SELECT c.user_id, c.database_id, c.data_source_id, c.date_property, c.display_name, nc.notion_access_token
              FROM calendars c JOIN notion_connections nc ON nc.id = c.notion_connection_id
              WHERE c.database_id = $1",
         )
@@ -145,7 +172,7 @@ impl AppState {
 
     pub async fn calendar_by_data_source_id(&self, ds_id: &str) -> Option<CalendarRow> {
         sqlx::query_as::<_, CalendarRow>(
-            "SELECT c.database_id, c.data_source_id, c.date_property, c.display_name, nc.notion_access_token
+            "SELECT c.user_id, c.database_id, c.data_source_id, c.date_property, c.display_name, nc.notion_access_token
              FROM calendars c JOIN notion_connections nc ON nc.id = c.notion_connection_id
              WHERE c.data_source_id = $1",
         )
@@ -156,6 +183,50 @@ impl AppState {
             error!("failed to look up calendar by data source {}: {}", ds_id, e);
             None
         })
+    }
+
+    /// Verifies a CalDAV Basic Auth credential against the `calendars` table,
+    /// returning the owning user's id and that calendar's database_id on
+    /// success. Callers still need to check the returned database_id against
+    /// whatever calendar the request is actually targeting — a valid
+    /// credential only proves identity, not that it's for *this* calendar.
+    pub async fn verify_caldav_credentials(&self, username: &str, password: &str) -> Option<(i64, String)> {
+        #[derive(sqlx::FromRow)]
+        struct Row {
+            user_id: i64,
+            database_id: String,
+            caldav_password_hash: String,
+        }
+
+        let row: Row = sqlx::query_as::<_, Row>(
+            "SELECT user_id, database_id, caldav_password_hash FROM calendars WHERE caldav_username = $1",
+        )
+        .bind(username)
+        .fetch_optional(&self.db)
+        .await
+        .unwrap_or_else(|e| {
+            error!("caldav credential lookup failed: {}", e);
+            None
+        })?;
+
+        let hash = argon2::PasswordHash::new(&row.caldav_password_hash).ok()?;
+        argon2::Argon2::default().verify_password(password.as_bytes(), &hash).ok()?;
+        Some((row.user_id, row.database_id))
+    }
+
+    /// Same as `refresh_all` but scoped to one user's own calendars — used by
+    /// the per-user `/refresh` CalDAV endpoint so one tenant can't trigger a
+    /// refresh (and Notion API calls) for calendars they don't own.
+    pub async fn refresh_for_user(&self, user_id: i64) {
+        for cal in self.calendars_for_user(user_id).await {
+            match self.refresh_db(&cal.data_source_id, &cal.date_property, &cal.notion_access_token).await {
+                Ok(pages) => {
+                    info!("DB {} synced: {} events", cal.database_id, pages.len());
+                    self.cache.write().await.insert(cal.database_id, pages);
+                }
+                Err(e) => error!("DB {} refresh failed: {}", cal.database_id, e),
+            }
+        }
     }
 
     pub async fn refresh_db(&self, ds_id: &str, date_property: &str, notion_token: &str) -> Result<Vec<PageInfo>, String> {
@@ -911,25 +982,24 @@ pub async fn handle_calendar_event_impl(
     axum::http::StatusCode::METHOD_NOT_ALLOWED.into_response()
 }
 
-// Helper to check HTTP Basic Auth using env variables CALDAV_USERNAME/CALDAV_PASSWORD.
-// If either CALDAV_USERNAME or CALDAV_PASSWORD are not set, auth is disabled/bypassed.
-pub fn check_auth(headers: &axum::http::HeaderMap) -> bool {
-    let username_env = std::env::var("CALDAV_USERNAME").unwrap_or_default();
-    let password_env = std::env::var("CALDAV_PASSWORD").unwrap_or_default();
-    if username_env.is_empty() || password_env.is_empty() {
-        return true;
-    }
+/// Extracts (username, password) from an HTTP Basic Authorization header.
+fn extract_basic_auth(headers: &axum::http::HeaderMap) -> Option<(String, String)> {
+    let auth_header = headers.get("Authorization").and_then(|h| h.to_str().ok())?;
+    let basic_val = auth_header.strip_prefix("Basic ")?;
+    let decoded = base64_light::base64_decode_str(basic_val);
+    let mut parts = decoded.splitn(2, ':');
+    let username = parts.next()?.to_string();
+    let password = parts.next()?.to_string();
+    Some((username, password))
+}
 
-    if let Some(auth_header) = headers.get("Authorization").and_then(|h| h.to_str().ok()) {
-        if let Some(basic_val) = auth_header.strip_prefix("Basic ") {
-            let decoded = base64_light::base64_decode_str(basic_val);
-            let parts: Vec<&str> = decoded.splitn(2, ':').collect();
-            if parts.len() == 2 {
-                return parts[0] == username_env && parts[1] == password_env;
-            }
-        }
-    }
-    false
+/// Pulls `{db_id}` out of a `/cal/{db_id}/...` request path, used to confirm
+/// the authenticated calendar's own database_id matches the one being
+/// requested (a valid credential for calendar A must not open calendar B).
+fn extract_path_db_id(path: &str) -> Option<String> {
+    let rest = path.strip_prefix("/cal/")?;
+    let seg = rest.split('/').next().unwrap_or("");
+    if seg.is_empty() { None } else { Some(seg.to_string()) }
 }
 
 pub async fn handle_path_calendar(
@@ -1083,6 +1153,7 @@ async fn handle_well_known(
 async fn handle_principals(
     method: axum::http::Method,
     headers: axum::http::HeaderMap,
+    auth: Option<axum::Extension<AuthenticatedCaldavUser>>,
 ) -> impl IntoResponse {
     let host = headers
         .get("host")
@@ -1105,7 +1176,7 @@ async fn handle_principals(
         ).into_response();
     }
     if method.as_str() == "PROPFIND" {
-        let username = std::env::var("CALDAV_USERNAME").unwrap_or_else(|_| "user".to_string());
+        let username = auth.map(|a| a.0.username.clone()).unwrap_or_else(|| "user".to_string());
         let body = format!(
             r#"<?xml version="1.0" encoding="utf-8" ?>
 <D:multistatus xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:caldav">
@@ -1144,6 +1215,7 @@ async fn handle_calendars_propfind(
     headers: axum::http::HeaderMap,
     State(state): State<AppState>,
     Path(_user): Path<String>,
+    auth: Option<axum::Extension<AuthenticatedCaldavUser>>,
 ) -> impl IntoResponse {
     let host = headers
         .get("host")
@@ -1172,9 +1244,18 @@ async fn handle_calendars_propfind(
             ],
         ).into_response();
     }
+    // Scoped to the authenticated calendar's own owner — this used to list
+    // *every* tenant's calendars to anyone with any one valid credential,
+    // which was a real cross-tenant data leak once there was more than one
+    // real tenant.
+    let owner_calendars = match &auth {
+        Some(a) => state.calendars_for_user(a.0.user_id).await,
+        None => Vec::new(),
+    };
+
     if method.as_str() == "PROPFIND" {
         let host_db_id = get_db_id_for_host(&headers, &state).await;
-        let all_cals = state.all_calendars().await;
+        let all_cals = owner_calendars;
         let cals_to_return: Vec<CalendarRow> = if let Some(db_id) = &host_db_id {
             all_cals.into_iter().filter(|c| &c.database_id == db_id).collect()
         } else {
@@ -1236,7 +1317,7 @@ async fn handle_calendars_propfind(
     }
     if method.as_str() == "REPORT" {
         let host_db_id = get_db_id_for_host(&headers, &state).await;
-        let all_cals = state.all_calendars().await;
+        let all_cals = owner_calendars;
         let cals_to_return: Vec<CalendarRow> = if let Some(db_id) = &host_db_id {
             all_cals.into_iter().filter(|c| &c.database_id == db_id).collect()
         } else {
@@ -1299,23 +1380,15 @@ async fn handle_calendars_propfind(
     axum::http::StatusCode::METHOD_NOT_ALLOWED.into_response()
 }
 
-fn extract_username(headers: &axum::http::HeaderMap) -> Option<String> {
-    if let Some(auth_header) = headers.get("Authorization").and_then(|h| h.to_str().ok()) {
-        if let Some(basic_val) = auth_header.strip_prefix("Basic ") {
-            let decoded = base64_light::base64_decode_str(basic_val);
-            let parts: Vec<&str> = decoded.splitn(2, ':').collect();
-            if !parts.is_empty() {
-                return Some(parts[0].to_string());
-            }
-        }
-    }
-    None
-}
-
-// Authentication middleware wrapper
+// Authentication middleware wrapper — every CalDAV request needs a Basic
+// Auth credential matching some calendar's own caldav_username/password
+// (looked up in Postgres). There's no "auth disabled" bypass anymore: unlike
+// the single-tenant env-var scheme this replaced, every calendar has real
+// per-tenant credentials from the moment it's created via onboarding.
 async fn auth_middleware(
+    State(state): State<AppState>,
     headers: axum::http::HeaderMap,
-    request: axum::extract::Request,
+    mut request: axum::extract::Request,
     next: axum::middleware::Next,
 ) -> impl IntoResponse {
     let method = request.method().clone();
@@ -1361,42 +1434,23 @@ async fn auth_middleware(
         return response;
     }
 
-    let is_authed = check_auth(&headers);
-    let username = extract_username(&headers);
+    let unauthorized_response = || {
+        add_caldav_headers(
+            (
+                axum::http::StatusCode::UNAUTHORIZED,
+                [
+                    (header::WWW_AUTHENTICATE, "Basic realm=\"CalDAV Server\""),
+                    (header::CONTENT_TYPE, "text/plain; charset=utf-8"),
+                ],
+                "Unauthorized",
+            )
+                .into_response(),
+        )
+    };
 
-    let username_env = std::env::var("CALDAV_USERNAME").unwrap_or_default();
-    let password_env = std::env::var("CALDAV_PASSWORD").unwrap_or_default();
-    let auth_enabled = !username_env.is_empty() && !password_env.is_empty();
-
-    if auth_enabled {
-        if is_authed {
-            info!(
-                username = ?username.as_deref().unwrap_or(""),
-                "Authentication success"
-            );
-        } else {
-            info!(
-                username = ?username.as_deref().unwrap_or(""),
-                "Authentication failure"
-            );
-        }
-    } else {
-        info!(
-            username = ?username.as_deref().unwrap_or(""),
-            "Authentication bypassed (auth disabled)"
-        );
-    }
-
-    if !is_authed {
-        let mut response = (
-            axum::http::StatusCode::UNAUTHORIZED,
-            [
-                (header::WWW_AUTHENTICATE, "Basic realm=\"CalDAV Server\""),
-                (header::CONTENT_TYPE, "text/plain; charset=utf-8"),
-            ],
-            "Unauthorized",
-        ).into_response();
-        response = add_caldav_headers(response);
+    let Some((username, password)) = extract_basic_auth(&headers) else {
+        info!("Authentication failure: no Basic Auth credentials presented");
+        let response = unauthorized_response();
         let duration = start.elapsed();
         info!(
             method = ?method,
@@ -1406,7 +1460,55 @@ async fn auth_middleware(
             "CalDAV request completed"
         );
         return response;
+    };
+
+    let Some((user_id, auth_db_id)) = state.verify_caldav_credentials(&username, &password).await else {
+        info!(username = %username, "Authentication failure: invalid credentials");
+        let response = unauthorized_response();
+        let duration = start.elapsed();
+        info!(
+            method = ?method,
+            path = %path,
+            status = response.status().as_u16(),
+            duration_ms = duration.as_millis(),
+            "CalDAV request completed"
+        );
+        return response;
+    };
+
+    // Path-scoped (/cal/{db_id}/...) or legacy host-based requests must match
+    // the authenticated calendar's own database_id — otherwise user A's
+    // valid credentials could read/write user B's calendar just by knowing
+    // its id.
+    let target_db_id = match extract_path_db_id(&path) {
+        Some(id) => Some(id),
+        None => get_db_id_for_host(&headers, &state).await,
+    };
+    if let Some(target) = &target_db_id {
+        if target != &auth_db_id {
+            info!(username = %username, target_db_id = %target, "Authorization failure: calendar not owned by these credentials");
+            let response = add_caldav_headers(
+                (
+                    axum::http::StatusCode::FORBIDDEN,
+                    [(header::CONTENT_TYPE, "text/plain; charset=utf-8")],
+                    "Forbidden",
+                )
+                    .into_response(),
+            );
+            let duration = start.elapsed();
+            info!(
+                method = ?method,
+                path = %path,
+                status = response.status().as_u16(),
+                duration_ms = duration.as_millis(),
+                "CalDAV request completed"
+            );
+            return response;
+        }
     }
+
+    info!(username = %username, "Authentication success");
+    request.extensions_mut().insert(AuthenticatedCaldavUser { user_id, username });
 
     let mut response = next.run(request).await;
     response = add_caldav_headers(response);
@@ -1439,7 +1541,7 @@ pub fn create_app(
         .layer(HandleErrorLayer::new(|e: MiddlewareError| async move { e.into_response() }))
         .layer(OidcAuthLayer::<_, SessionWrapper>::new(oidc_client));
 
-    let caldav_routes = Router::new()
+    let caldav_routes = Router::<AppState>::new()
         .route(
             "/cal/{db_id}",
             axum::routing::any(handle_path_calendar),
@@ -1495,36 +1597,36 @@ pub fn create_app(
         // Both moved here (from the unauthenticated router below) since they
         // either leak calendar data (/cal.ics) or let anyone force a Notion
         // API call (/refresh) — same auth requirement as the CalDAV routes.
-        .route("/refresh", post(move |State(state): State<AppState>| async move {
-            state.refresh_all().await;
+        // Both scoped to the AuthenticatedCaldavUser the middleware resolved
+        // — this used to operate over *every* tenant's calendars given any
+        // one valid credential, a real cross-tenant leak/abuse vector.
+        .route("/refresh", post(move |axum::Extension(auth): axum::Extension<AuthenticatedCaldavUser>, State(state): State<AppState>| async move {
+            state.refresh_for_user(auth.user_id).await;
             "refresh triggered"
         }))
         .route(
             "/cal.ics",
-            get(move |State(state): State<AppState>| async move {
+            get(move |axum::Extension(auth): axum::Extension<AuthenticatedCaldavUser>, State(state): State<AppState>| async move {
+                let my_cals = state.calendars_for_user(auth.user_id).await;
                 let cache = state.cache.read().await;
                 let mut all_pages: Vec<PageInfo> = Vec::new();
                 let mut names: Vec<String> = Vec::new();
-                for (db_id, pages) in cache.iter() {
-                    all_pages.extend(pages.clone());
-                    names.push(format!("Notion {}", &db_id[..8]));
+                for cal in &my_cals {
+                    if let Some(pages) = cache.get(&cal.database_id) {
+                        all_pages.extend(pages.clone());
+                    }
+                    names.push(if cal.display_name.is_empty() {
+                        format!("Notion {}", &cal.database_id[..8])
+                    } else {
+                        cal.display_name.clone()
+                    });
                 }
                 let name = names.join(", ");
                 let body = build_ics("all", &name, &all_pages);
                 ([(header::CONTENT_TYPE, "text/calendar; charset=utf-8")], body).into_response()
             }),
         )
-        // Webview: server-rendered FullCalendar page + its JSON CRUD API,
-        // writing straight through to Notion (see notion_create/update/
-        // delete_event on AppState). Same auth as everything else here.
-        .route("/app", get(crate::webview::handle_webview_index))
-        .route("/app/{db_id}", get(crate::webview::handle_webview_page))
-        .route("/app/{db_id}/api/events", get(crate::webview::handle_list_events).post(crate::webview::handle_create_event))
-        .route(
-            "/app/{db_id}/api/events/{event_id}",
-            axum::routing::patch(crate::webview::handle_update_event).delete(crate::webview::handle_delete_event),
-        )
-        .route_layer(axum::middleware::from_fn(auth_middleware));
+        .route_layer(axum::middleware::from_fn_with_state(state.clone(), auth_middleware));
 
     // Built as its own router (not chained onto the others before calling
     // .layer()) because Router::layer() wraps *every* route already
@@ -1541,6 +1643,20 @@ pub fn create_app(
             get(crate::oauth::pick_databases_page).post(crate::oauth::create_calendars),
         )
         .route("/oauth/notion/callback", get(crate::oauth::notion_oauth_callback))
+        // Webview: server-rendered FullCalendar page + its JSON CRUD API,
+        // writing straight through to Notion (see notion_create/update/
+        // delete_event on AppState). Was CalDAV-Basic-Auth-protected
+        // before, alongside routes meant for calendar apps, not browsers —
+        // now gated the same way as the rest of the dashboard (OIDC
+        // session), with per-handler ownership checks against the logged-in
+        // user's own calendars.
+        .route("/app", get(crate::webview::handle_webview_index))
+        .route("/app/{db_id}", get(crate::webview::handle_webview_page))
+        .route("/app/{db_id}/api/events", get(crate::webview::handle_list_events).post(crate::webview::handle_create_event))
+        .route(
+            "/app/{db_id}/api/events/{event_id}",
+            axum::routing::patch(crate::webview::handle_update_event).delete(crate::webview::handle_delete_event),
+        )
         .layer(oidc_login_service);
 
     Router::new()

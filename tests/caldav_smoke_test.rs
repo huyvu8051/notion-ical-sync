@@ -5,6 +5,29 @@ use std::sync::Mutex;
 
 static TEST_MUTEX: Mutex<()> = Mutex::new(());
 
+/// Fixed plaintext password every seeded test calendar shares — real per-row
+/// argon2 hashes (see `test_state_multi`) are what actually gets verified,
+/// this constant just needs to match what was hashed at seed time.
+const TEST_CALDAV_PASSWORD: &str = "test-caldav-pass-123";
+
+fn caldav_username(db_id: &str) -> String {
+    format!("caldav-{}", db_id)
+}
+
+fn basic_auth_header(db_id: &str) -> String {
+    format!(
+        "Basic {}",
+        base64_light::base64_encode(&format!("{}:{}", caldav_username(db_id), TEST_CALDAV_PASSWORD))
+    )
+}
+
+fn test_caldav_password_hash() -> String {
+    use argon2::password_hash::{PasswordHasher, SaltString};
+    use argon2::Argon2;
+    let salt = SaltString::generate(&mut rand::thread_rng());
+    Argon2::default().hash_password(TEST_CALDAV_PASSWORD.as_bytes(), &salt).unwrap().to_string()
+}
+
 /// create_app now also wires the SaaS's own Keycloak login, which needs a
 /// real OidcClient (built by discovering a live issuer). These CalDAV
 /// protocol tests don't exercise login at all, but still have to hand one
@@ -38,9 +61,13 @@ async fn test_create_app(state: AppState) -> Router {
 /// Builds a real DB-backed AppState against a test Postgres, seeding a
 /// user/notion_connection/calendar row so DB-backed lookups (calendar_by_db_id
 /// etc.) resolve `db_id`/`ds_id` the same way the pre-multi-tenant AppState's
-/// flat notion_token/database_ids fields used to provide directly. Event data
-/// itself is still seeded straight into `state.cache` by each test, same as
-/// before — only calendar *identity* now comes from Postgres.
+/// flat notion_token/database_ids fields used to provide directly. Each
+/// calendar also gets a real argon2-hashed CalDAV password (see
+/// `TEST_CALDAV_PASSWORD`/`basic_auth_header`) since Basic Auth is now
+/// DB-backed and unconditionally required — there's no more "auth disabled"
+/// env-var bypass to lean on. Event data itself is still seeded straight
+/// into `state.cache` by each test, same as before — only calendar
+/// *identity* comes from Postgres.
 async fn test_state(db_id: &str, ds_id: &str, allow_writes: CaldavAllowWrites) -> AppState {
     test_state_multi(&[(db_id, ds_id)], allow_writes).await
 }
@@ -50,6 +77,8 @@ async fn test_state_multi(calendars: &[(&str, &str)], allow_writes: CaldavAllowW
         .unwrap_or_else(|_| "postgres://biolink:biolink@localhost:5433/notion_saas".to_string());
     let pool = sqlx::PgPool::connect(&db_url).await.expect("connect to test db");
     sqlx::migrate!("./migrations").run(&pool).await.expect("run migrations");
+
+    let password_hash = test_caldav_password_hash();
 
     for (db_id, ds_id) in calendars {
         let user_id: i64 = sqlx::query_scalar(
@@ -75,16 +104,20 @@ async fn test_state_multi(calendars: &[(&str, &str)], allow_writes: CaldavAllowW
 
         sqlx::query(
             "INSERT INTO calendars (user_id, notion_connection_id, database_id, data_source_id, date_property, caldav_username, caldav_password_hash)
-             VALUES ($1, $2, $3, $4, 'Date', $5, 'x')
+             VALUES ($1, $2, $3, $4, 'Date', $5, $6)
              ON CONFLICT (database_id) DO UPDATE SET
                 data_source_id = EXCLUDED.data_source_id,
-                notion_connection_id = EXCLUDED.notion_connection_id",
+                notion_connection_id = EXCLUDED.notion_connection_id,
+                user_id = EXCLUDED.user_id,
+                caldav_username = EXCLUDED.caldav_username,
+                caldav_password_hash = EXCLUDED.caldav_password_hash",
         )
         .bind(user_id)
         .bind(conn_id)
         .bind(*db_id)
         .bind(*ds_id)
-        .bind(format!("caldav-{}", db_id))
+        .bind(caldav_username(db_id))
+        .bind(&password_hash)
         .execute(&pool)
         .await
         .unwrap();
@@ -96,11 +129,10 @@ async fn test_state_multi(calendars: &[(&str, &str)], allow_writes: CaldavAllowW
 #[tokio::test]
 async fn test_caldav_server_operations() {
     let _lock = TEST_MUTEX.lock().unwrap();
-    std::env::remove_var("CALDAV_USERNAME");
-    std::env::remove_var("CALDAV_PASSWORD");
     // 1. Create a mocked AppState with pre-populated cache
     let db_id = "test-db-12345".to_string();
     let state = test_state(&db_id, "mock-ds-id", CaldavAllowWrites::True).await;
+    let auth_header = basic_auth_header(&db_id);
 
     // Seed mock event
     let event_id = "event-abc-98765".to_string();
@@ -133,6 +165,7 @@ async fn test_caldav_server_operations() {
     let propfind_res = client
         .request(reqwest::Method::from_bytes(b"PROPFIND").unwrap(), &format!("{}/cal/{}", base_url, db_id))
         .header("Depth", "0")
+        .header("Authorization", &auth_header)
         .send()
         .await
         .unwrap();
@@ -145,6 +178,7 @@ async fn test_caldav_server_operations() {
     let propfind_depth1_res = client
         .request(reqwest::Method::from_bytes(b"PROPFIND").unwrap(), &format!("{}/cal/{}", base_url, db_id))
         .header("Depth", "1")
+        .header("Authorization", &auth_header)
         .send()
         .await
         .unwrap();
@@ -155,6 +189,7 @@ async fn test_caldav_server_operations() {
     // 5. Test REPORT /cal/{db_id}
     let report_res = client
         .request(reqwest::Method::from_bytes(b"REPORT").unwrap(), &format!("{}/cal/{}", base_url, db_id))
+        .header("Authorization", &auth_header)
         .send()
         .await
         .unwrap();
@@ -166,6 +201,7 @@ async fn test_caldav_server_operations() {
     // 6. Test GET /cal/{db_id}/{event_id}.ics
     let get_res = client
         .get(&format!("{}/cal/{}/{}.ics", base_url, db_id, event_id))
+        .header("Authorization", &auth_header)
         .send()
         .await
         .unwrap();
@@ -188,6 +224,7 @@ END:VCALENDAR"#;
 
     let put_res = client
         .put(&format!("{}/cal/{}/{}.ics", base_url, db_id, new_event_id))
+        .header("Authorization", &auth_header)
         .body(new_ics)
         .send()
         .await
@@ -197,6 +234,7 @@ END:VCALENDAR"#;
     // Check if GET returns the new event
     let get_new_res = client
         .get(&format!("{}/cal/{}/{}.ics", base_url, db_id, new_event_id))
+        .header("Authorization", &auth_header)
         .send()
         .await
         .unwrap();
@@ -208,6 +246,7 @@ END:VCALENDAR"#;
     // 8. Test DELETE /cal/{db_id}/{new_event_id}.ics
     let delete_res = client
         .delete(&format!("{}/cal/{}/{}.ics", base_url, db_id, new_event_id))
+        .header("Authorization", &auth_header)
         .send()
         .await
         .unwrap();
@@ -216,6 +255,7 @@ END:VCALENDAR"#;
     // Verify it is gone
     let get_deleted_res = client
         .get(&format!("{}/cal/{}/{}.ics", base_url, db_id, new_event_id))
+        .header("Authorization", &auth_header)
         .send()
         .await
         .unwrap();
@@ -225,8 +265,6 @@ END:VCALENDAR"#;
 #[tokio::test]
 async fn test_caldav_host_based_routing() {
     let _lock = TEST_MUTEX.lock().unwrap();
-    std::env::remove_var("CALDAV_USERNAME");
-    std::env::remove_var("CALDAV_PASSWORD");
     // 1. Create a mocked AppState with pre-populated cache for both databases
     let db_id_cal = "4cb38c7656ae483d8ee5650d9fb02108".to_string();
     let db_id_time = "39e6a94a90a680da85d2c29e3c52ed8e".to_string();
@@ -236,6 +274,8 @@ async fn test_caldav_host_based_routing() {
         CaldavAllowWrites::True,
     )
     .await;
+    let auth_cal = basic_auth_header(&db_id_cal);
+    let auth_time = basic_auth_header(&db_id_time);
 
     // Seed mock event for calendar.opendiy.vn
     let event_id_cal = "event-cal-111".to_string();
@@ -282,6 +322,7 @@ async fn test_caldav_host_based_routing() {
         .request(reqwest::Method::from_bytes(b"PROPFIND").unwrap(), &base_url)
         .header("Host", "calendar.opendiy.vn")
         .header("Depth", "0")
+        .header("Authorization", &auth_cal)
         .send()
         .await
         .unwrap();
@@ -294,6 +335,7 @@ async fn test_caldav_host_based_routing() {
         .request(reqwest::Method::from_bytes(b"PROPFIND").unwrap(), &base_url)
         .header("Host", "calendar.opendiy.vn")
         .header("Depth", "1")
+        .header("Authorization", &auth_cal)
         .send()
         .await
         .unwrap();
@@ -305,6 +347,7 @@ async fn test_caldav_host_based_routing() {
     let res = client
         .get(&format!("{}/eventcal111.ics", base_url))
         .header("Host", "calendar.opendiy.vn")
+        .header("Authorization", &auth_cal)
         .send()
         .await
         .unwrap();
@@ -317,6 +360,7 @@ async fn test_caldav_host_based_routing() {
         .request(reqwest::Method::from_bytes(b"PROPFIND").unwrap(), &base_url)
         .header("Host", "mytime.opendiy.vn")
         .header("Depth", "1")
+        .header("Authorization", &auth_time)
         .send()
         .await
         .unwrap();
@@ -328,6 +372,7 @@ async fn test_caldav_host_based_routing() {
     let res = client
         .get(&format!("{}/eventtime222.ics", base_url))
         .header("Host", "mytime.opendiy.vn")
+        .header("Authorization", &auth_time)
         .send()
         .await
         .unwrap();
@@ -335,9 +380,23 @@ async fn test_caldav_host_based_routing() {
     let body = res.text().await.unwrap();
     assert!(body.contains("SUMMARY:Time Event"));
 
+    // 7b. Cross-calendar credentials must be rejected even on a route that
+    // *does* successfully resolve a host-mapped db_id — this is the actual
+    // point of Phase 4's DB-backed auth: a valid credential for one
+    // calendar must not open a different one just because both exist.
+    let res = client
+        .get(&format!("{}/eventtime222.ics", base_url))
+        .header("Host", "mytime.opendiy.vn")
+        .header("Authorization", &auth_cal)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(res.status(), 403);
+
     // 8. Test fallback path-based routing on calendar.opendiy.vn or localhost
     let res = client
         .get(&format!("{}/cal/{}/eventcal111.ics", base_url, db_id_cal))
+        .header("Authorization", &auth_cal)
         .send()
         .await
         .unwrap();
@@ -345,10 +404,12 @@ async fn test_caldav_host_based_routing() {
     let body = res.text().await.unwrap();
     assert!(body.contains("SUMMARY:Calendar Event"));
 
-    // 9. Test unmapped host (should return 404)
+    // 9. Test unmapped host (should return 404, given valid credentials —
+    // otherwise auth itself would reject before the handler even runs)
     let res = client
         .get(&format!("{}/eventcal111.ics", base_url))
         .header("Host", "other.opendiy.vn")
+        .header("Authorization", &auth_cal)
         .send()
         .await
         .unwrap();
@@ -358,11 +419,11 @@ async fn test_caldav_host_based_routing() {
 #[tokio::test]
 async fn test_caldav_new_endpoints_and_auth() {
     let _lock = TEST_MUTEX.lock().unwrap();
-    std::env::set_var("CALDAV_USERNAME", "testuser");
-    std::env::set_var("CALDAV_PASSWORD", "testpass");
 
     let db_id = "4cb38c7656ae483d8ee5650d9fb02108".to_string();
     let state = test_state(&db_id, "mock-ds-id", CaldavAllowWrites::True).await;
+    let username = caldav_username(&db_id);
+    let auth_header_val = basic_auth_header(&db_id);
 
     // Seed mock event
     let event_id = "event-abc-98765".to_string();
@@ -400,15 +461,24 @@ async fn test_caldav_new_endpoints_and_auth() {
     assert_eq!(unauth_res.status(), 401);
     assert_eq!(unauth_res.headers().get("WWW-Authenticate").unwrap().to_str().unwrap(), "Basic realm=\"CalDAV Server\"");
 
+    // 1b. Test wrong-password request (real credential lookup, not just "any header present")
+    let bad_auth = format!("Basic {}", base64_light::base64_encode(&format!("{}:wrong-password", username)));
+    let bad_res = client
+        .put(&format!("{}/cal/{}/unauth-event.ics", base_url, db_id))
+        .header("Authorization", &bad_auth)
+        .body("BEGIN:VCALENDAR\nEND:VCALENDAR")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(bad_res.status(), 401);
+
     // 2. Test authorized request to well-known (with redirect)
-    let auth_header_val = format!("Basic {}", base64_light::base64_encode("testuser:testpass"));
-    
     // Test direct redirect by turning off auto-redirects
     let no_redirect_client = reqwest::Client::builder()
         .redirect(reqwest::redirect::Policy::none())
         .build()
         .unwrap();
-    
+
     let redirect_res = no_redirect_client
         .get(&format!("{}/.well-known/caldav", base_url))
         .header("Authorization", &auth_header_val)
@@ -430,11 +500,11 @@ async fn test_caldav_new_endpoints_and_auth() {
     let princ_body = propfind_princ_res.text().await.unwrap();
     assert!(princ_body.contains("<D:current-user-principal>"));
     assert!(princ_body.contains("<C:calendar-home-set>"));
-    assert!(princ_body.contains("/calendars/testuser/"));
+    assert!(princ_body.contains(&format!("/calendars/{}/", username)));
 
-    // 4. Test PROPFIND /calendars/testuser/
+    // 4. Test PROPFIND /calendars/{username}/
     let propfind_cal_res = client
-        .request(reqwest::Method::from_bytes(b"PROPFIND").unwrap(), &format!("{}/calendars/testuser/", base_url))
+        .request(reqwest::Method::from_bytes(b"PROPFIND").unwrap(), &format!("{}/calendars/{}/", base_url, username))
         .header("Authorization", &auth_header_val)
         .send()
         .await
@@ -457,9 +527,9 @@ async fn test_caldav_new_endpoints_and_auth() {
     assert!(root_propfind_body.contains("<D:href>/</D:href>"));
     assert!(root_propfind_body.contains("<D:current-user-principal>"));
 
-    // 6. Test REPORT /calendars/testuser/
+    // 6. Test REPORT /calendars/{username}/
     let report_cal_res = client
-        .request(reqwest::Method::from_bytes(b"REPORT").unwrap(), &format!("{}/calendars/testuser/", base_url))
+        .request(reqwest::Method::from_bytes(b"REPORT").unwrap(), &format!("{}/calendars/{}/", base_url, username))
         .header("Authorization", &auth_header_val)
         .send()
         .await
@@ -476,10 +546,6 @@ async fn test_caldav_new_endpoints_and_auth() {
         .unwrap();
     assert_eq!(options_res.status(), 200);
     assert!(options_res.headers().contains_key("dav"));
-
-    // Clean up env
-    std::env::remove_var("CALDAV_USERNAME");
-    std::env::remove_var("CALDAV_PASSWORD");
 }
 
 #[tokio::test]
@@ -488,6 +554,7 @@ async fn test_caldav_readonly_mode() {
 
     let db_id = "test-db-readonly".to_string();
     let state = test_state(&db_id, "mock-ds-id", CaldavAllowWrites::False).await;
+    let auth_header = basic_auth_header(&db_id);
 
     let app = test_create_app(state).await;
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -510,9 +577,12 @@ async fn test_caldav_readonly_mode() {
     let health_json: serde_json::Value = health_res.json().await.unwrap();
     assert_eq!(health_json["caldav_allow_writes"], "false");
 
-    // 2. Test PUT on event -> 403 Forbidden
+    // 2. Test PUT on event -> 403 Forbidden (reached only once real
+    // credentials pass auth — CaldavAllowWrites::False is checked inside the
+    // handler, after the DB-backed Basic Auth middleware).
     let put_res = client
         .put(&format!("{}/cal/{}/event123.ics", base_url, db_id))
+        .header("Authorization", &auth_header)
         .body("BEGIN:VCALENDAR\nEND:VCALENDAR")
         .send()
         .await
@@ -522,6 +592,7 @@ async fn test_caldav_readonly_mode() {
     // 3. Test DELETE on event -> 403 Forbidden
     let delete_res = client
         .delete(&format!("{}/cal/{}/event123.ics", base_url, db_id))
+        .header("Authorization", &auth_header)
         .send()
         .await
         .unwrap();
@@ -533,6 +604,7 @@ async fn test_caldav_readonly_mode() {
             reqwest::Method::from_bytes(b"PROPPATCH").unwrap(),
             &format!("{}/cal/{}", base_url, db_id),
         )
+        .header("Authorization", &auth_header)
         .body("<xml></xml>")
         .send()
         .await
@@ -540,4 +612,39 @@ async fn test_caldav_readonly_mode() {
     assert_eq!(proppatch_res.status(), 403);
 }
 
+#[tokio::test]
+async fn test_app_webview_requires_oidc_not_basic_auth() {
+    let _lock = TEST_MUTEX.lock().unwrap();
 
+    let db_id = "test-db-webview".to_string();
+    let state = test_state(&db_id, "mock-ds-id", CaldavAllowWrites::True).await;
+    let caldav_auth = basic_auth_header(&db_id);
+
+    let app = test_create_app(state).await;
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+
+    let no_redirect_client = reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .unwrap();
+    let base_url = format!("http://{}", addr);
+
+    // /app moved from CalDAV Basic Auth to OIDC session auth in Phase 4 — a
+    // valid CalDAV credential must NOT be enough to open the webview
+    // (they're different identities, see auth.rs vs oauth.rs), and no
+    // session at all should force a login redirect rather than a CalDAV 401.
+    let res = no_redirect_client
+        .get(&format!("{}/app", base_url))
+        .header("Authorization", &caldav_auth)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(res.status(), 303);
+    let location = res.headers().get("Location").unwrap().to_str().unwrap();
+    assert!(location.contains("/realms/notion-caldav-saas/protocol/openid-connect/auth"));
+}

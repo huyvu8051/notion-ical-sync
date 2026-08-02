@@ -4,17 +4,49 @@ use axum::{
     response::{Html, IntoResponse},
     Json,
 };
+use axum_oidc::{EmptyAdditionalClaims, OidcClaims};
 use leptos::prelude::*;
 use serde::Deserialize;
 use tracing::error;
 
+use crate::auth::find_or_create_user;
 use crate::AppState;
 
-/// `/app` — lists every configured database (by its real Notion calendar
+async fn current_user_id(state: &AppState, claims: &OidcClaims<EmptyAdditionalClaims>) -> Result<i64, StatusCode> {
+    let sub = claims.subject().as_str();
+    let email = claims.email().map(|e| e.as_str()).unwrap_or("");
+    find_or_create_user(&state.db, sub, email).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
+}
+
+/// Every `/app/{db_id}/...` handler needs this same check: the calendar must
+/// exist, and must belong to whoever is logged in — otherwise one user could
+/// read or edit another user's Notion events just by guessing a database_id.
+async fn require_owned_calendar(
+    state: &AppState,
+    claims: &OidcClaims<EmptyAdditionalClaims>,
+    db_id: &str,
+) -> Result<crate::caldav::CalendarRow, StatusCode> {
+    let user_id = current_user_id(state, claims).await?;
+    match state.calendar_by_db_id(db_id).await {
+        Some(cal) if cal.user_id == user_id => Ok(cal),
+        Some(_) => Err(StatusCode::FORBIDDEN),
+        None => Err(StatusCode::NOT_FOUND),
+    }
+}
+
+/// `/app` — lists the logged-in user's own calendars (by their real Notion
 /// name) so you don't have to know/type a database_id by hand.
-pub async fn handle_webview_index(State(state): State<AppState>) -> impl IntoResponse {
+pub async fn handle_webview_index(
+    State(state): State<AppState>,
+    claims: OidcClaims<EmptyAdditionalClaims>,
+) -> impl IntoResponse {
+    let user_id = match current_user_id(&state, &claims).await {
+        Ok(id) => id,
+        Err(status) => return status.into_response(),
+    };
+
     let mut items = Vec::new();
-    for cal in state.all_calendars().await {
+    for cal in state.calendars_for_user(user_id).await {
         let name = if cal.display_name.is_empty() {
             state.get_calendar_name(&cal.database_id, &cal.notion_access_token).await
         } else {
@@ -50,13 +82,21 @@ pub async fn handle_webview_index(State(state): State<AppState>) -> impl IntoRes
             </body>
         </html>
     };
-    Html(leptos::prelude::RenderHtml::to_html(html))
+    Html(leptos::prelude::RenderHtml::to_html(html)).into_response()
 }
 
 /// Server-rendered page shell (no client-side hydration/wasm — Leptos here
 /// is just producing the static HTML; all interactivity is FullCalendar's
 /// own JS, loaded from a CDN, talking to the JSON API below).
-pub async fn handle_webview_page(Path(db_id): Path<String>) -> impl IntoResponse {
+pub async fn handle_webview_page(
+    State(state): State<AppState>,
+    claims: OidcClaims<EmptyAdditionalClaims>,
+    Path(db_id): Path<String>,
+) -> impl IntoResponse {
+    if let Err(status) = require_owned_calendar(&state, &claims, &db_id).await {
+        return status.into_response();
+    }
+
     let events_url = format!("/app/{}/api/events", db_id);
     let html = leptos::prelude::view! {
         <!DOCTYPE html>
@@ -82,7 +122,7 @@ pub async fn handle_webview_page(Path(db_id): Path<String>) -> impl IntoResponse
             </body>
         </html>
     };
-    Html(leptos::prelude::RenderHtml::to_html(html))
+    Html(leptos::prelude::RenderHtml::to_html(html)).into_response()
 }
 
 fn webview_js(events_url: &str) -> String {
@@ -162,8 +202,13 @@ document.addEventListener('DOMContentLoaded', function() {{
 
 pub async fn handle_list_events(
     State(state): State<AppState>,
+    claims: OidcClaims<EmptyAdditionalClaims>,
     Path(db_id): Path<String>,
 ) -> impl IntoResponse {
+    if let Err(status) = require_owned_calendar(&state, &claims, &db_id).await {
+        return status.into_response();
+    }
+
     let cache = state.cache.read().await;
     let pages = cache.get(&db_id).cloned().unwrap_or_default();
     let events: Vec<_> = pages
@@ -178,7 +223,7 @@ pub async fn handle_list_events(
             })
         })
         .collect();
-    Json(events)
+    Json(events).into_response()
 }
 
 #[derive(Deserialize)]
@@ -190,11 +235,13 @@ pub struct CreateEventBody {
 
 pub async fn handle_create_event(
     State(state): State<AppState>,
+    claims: OidcClaims<EmptyAdditionalClaims>,
     Path(db_id): Path<String>,
     Json(body): Json<CreateEventBody>,
 ) -> impl IntoResponse {
-    let Some(cal) = state.calendar_by_db_id(&db_id).await else {
-        return (StatusCode::NOT_FOUND, "unknown database").into_response();
+    let cal = match require_owned_calendar(&state, &claims, &db_id).await {
+        Ok(cal) => cal,
+        Err(status) => return status.into_response(),
     };
     match state
         .notion_create_event(
@@ -237,11 +284,13 @@ where
 
 pub async fn handle_update_event(
     State(state): State<AppState>,
+    claims: OidcClaims<EmptyAdditionalClaims>,
     Path((db_id, event_id)): Path<(String, String)>,
     Json(body): Json<UpdateEventBody>,
 ) -> impl IntoResponse {
-    let Some(cal) = state.calendar_by_db_id(&db_id).await else {
-        return (StatusCode::NOT_FOUND, "unknown database").into_response();
+    let cal = match require_owned_calendar(&state, &claims, &db_id).await {
+        Ok(cal) => cal,
+        Err(status) => return status.into_response(),
     };
     match state
         .notion_update_event(
@@ -267,10 +316,12 @@ pub async fn handle_update_event(
 
 pub async fn handle_delete_event(
     State(state): State<AppState>,
+    claims: OidcClaims<EmptyAdditionalClaims>,
     Path((db_id, event_id)): Path<(String, String)>,
 ) -> impl IntoResponse {
-    let Some(cal) = state.calendar_by_db_id(&db_id).await else {
-        return (StatusCode::NOT_FOUND, "unknown database").into_response();
+    let cal = match require_owned_calendar(&state, &claims, &db_id).await {
+        Ok(cal) => cal,
+        Err(status) => return status.into_response(),
     };
     match state.notion_delete_event(&event_id, &cal.notion_access_token).await {
         Ok(()) => {
