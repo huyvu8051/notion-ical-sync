@@ -756,3 +756,47 @@ async fn test_calendars_propfind_scoped_to_authenticated_calendar_not_whole_acco
         "response must NOT list a sibling calendar the authenticated credentials don't belong to: {body}"
     );
 }
+
+#[tokio::test]
+async fn test_caldav_uid_mapping_survives_and_resolves() {
+    let _lock = TEST_MUTEX.lock().unwrap();
+
+    // Regression test for the duplicate-Notion-page bug found live in
+    // production 2026-08-02: editing one CalDAV-created event repeatedly
+    // created a fresh Notion page each time ("test", "test", "dung",
+    // "chung", "aaaaaa" all ended up as five separate pages) because
+    // nothing remembered that the client's own event UID already
+    // corresponded to a real Notion page id. This exercises the
+    // caldav_event_ids-backed mapping directly (lookup/store/delete)
+    // rather than through a live PUT, since that requires a real Notion
+    // connection the test environment doesn't have.
+    let db_id = "test-db-uid-mapping".to_string();
+    let state = test_state(&db_id, "mock-ds-id", CaldavAllowWrites::True).await;
+    let cal = state.calendar_by_public_id(&db_id).await.expect("seeded calendar must exist");
+
+    let caldav_uid = "CLIENT-GENERATED-UID-1234";
+    assert_eq!(
+        state.lookup_caldav_uid(cal.id, caldav_uid).await,
+        None,
+        "no mapping should exist yet"
+    );
+
+    state.store_caldav_uid_mapping(cal.id, caldav_uid, "fake-notion-page-id-1").await;
+    assert_eq!(
+        state.lookup_caldav_uid(cal.id, caldav_uid).await,
+        Some("fake-notion-page-id-1".to_string()),
+        "a second PUT under the same client UID must resolve to the same Notion page — this is what stops duplicate creates"
+    );
+
+    // A later edit re-storing under the same UID updates the mapping in
+    // place (ON CONFLICT DO UPDATE) rather than erroring or duplicating.
+    state.store_caldav_uid_mapping(cal.id, caldav_uid, "fake-notion-page-id-1").await;
+    assert_eq!(state.lookup_caldav_uid(cal.id, caldav_uid).await, Some("fake-notion-page-id-1".to_string()));
+
+    state.delete_caldav_uid_mapping(cal.id, caldav_uid).await;
+    assert_eq!(
+        state.lookup_caldav_uid(cal.id, caldav_uid).await,
+        None,
+        "deleting the event must also drop its UID mapping, not leak it forever"
+    );
+}

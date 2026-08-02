@@ -194,6 +194,51 @@ impl AppState {
         })
     }
 
+    /// Looks up the real Notion page id a CalDAV client's own event UID was
+    /// mapped to on a prior PUT (create). Needed because a client keeps
+    /// using its own generated UID for subsequent edits, but the cache
+    /// (rebuilt from Notion's actual state) only ever indexes events by
+    /// their real Notion page id — without this, every edit of a
+    /// CalDAV-created event looked like a brand new event and created a
+    /// fresh duplicate Notion page instead of updating the existing one.
+    pub async fn lookup_caldav_uid(&self, calendar_id: i64, caldav_uid: &str) -> Option<String> {
+        sqlx::query_scalar("SELECT notion_page_id FROM caldav_event_ids WHERE calendar_id = $1 AND caldav_uid = $2")
+            .bind(calendar_id)
+            .bind(caldav_uid)
+            .fetch_optional(&self.db)
+            .await
+            .unwrap_or_else(|e| {
+                error!("failed to look up caldav_uid mapping ({}, {}): {}", calendar_id, caldav_uid, e);
+                None
+            })
+    }
+
+    pub async fn store_caldav_uid_mapping(&self, calendar_id: i64, caldav_uid: &str, notion_page_id: &str) {
+        if let Err(e) = sqlx::query(
+            "INSERT INTO caldav_event_ids (calendar_id, caldav_uid, notion_page_id) VALUES ($1, $2, $3)
+             ON CONFLICT (calendar_id, caldav_uid) DO UPDATE SET notion_page_id = EXCLUDED.notion_page_id",
+        )
+        .bind(calendar_id)
+        .bind(caldav_uid)
+        .bind(notion_page_id)
+        .execute(&self.db)
+        .await
+        {
+            error!("failed to store caldav_uid mapping ({}, {}) -> {}: {}", calendar_id, caldav_uid, notion_page_id, e);
+        }
+    }
+
+    pub async fn delete_caldav_uid_mapping(&self, calendar_id: i64, caldav_uid: &str) {
+        if let Err(e) = sqlx::query("DELETE FROM caldav_event_ids WHERE calendar_id = $1 AND caldav_uid = $2")
+            .bind(calendar_id)
+            .bind(caldav_uid)
+            .execute(&self.db)
+            .await
+        {
+            error!("failed to delete caldav_uid mapping ({}, {}): {}", calendar_id, caldav_uid, e);
+        }
+    }
+
     /// Looks up *a* row for a given Notion database_id — used only by the
     /// legacy host-based aliases (calendar.opendiy.vn/mytime.opendiy.vn, see
     /// `get_public_id_for_host`), a single-owner shortcut that predates
@@ -1054,17 +1099,30 @@ pub async fn handle_calendar_event_impl(
         // just mutating the local cache — a cache-only write used to get
         // silently discarded on the very next refresh_all()/webhook-driven
         // refresh, since Notion is the source of truth for that cache.
-        // Known limitation: a brand-new event's resource URL (based on the
-        // CalDAV client's own generated UID) won't match the href the
-        // server advertises on the next PROPFIND (based on the real Notion
-        // page id) — the client may see it as a second, separate resource
-        // until it next fetches the full listing.
+        //
+        // Resolution order for "is this an edit of an existing event":
+        // 1. The cache already has a page under this exact id — true for
+        //    events that originated in Notion, since the client is (by
+        //    construction, see build_propfind_calendar_with_events) using
+        //    Notion's own page id as its local UID/href.
+        // 2. A persisted caldav_event_ids mapping from a prior CalDAV PUT
+        //    under this same client-generated UID. Needed because a
+        //    CalDAV-created event's UID never becomes the advertised href
+        //    (that's always the real Notion page id) — without this, every
+        //    edit of a CalDAV-created event looked like a new event to this
+        //    handler and created a fresh duplicate Notion page each time
+        //    (confirmed live: one edited title produced 5 separate Notion
+        //    pages — "test", "test", "dung", "chung", "aaaaaa").
         let new_page = parse_ics_to_page_info(&body, &event_id_clean);
         let existing_id = {
             let cache = state.cache.read().await;
             cache
                 .get(&cal.database_id)
                 .and_then(|pages| pages.iter().find(|p| matches_id(&p.id, &event_id_clean)).map(|p| p.id.clone()))
+        };
+        let existing_id = match existing_id {
+            Some(id) => Some(id),
+            None => state.lookup_caldav_uid(cal.id, &event_id_clean).await,
         };
         let result = if let Some(page_id) = existing_id {
             state
@@ -1079,7 +1137,7 @@ pub async fn handle_calendar_event_impl(
                 .await
                 .map(|_| axum::http::StatusCode::NO_CONTENT)
         } else {
-            state
+            match state
                 .notion_create_event(
                     &cal.data_source_id,
                     &cal.date_property,
@@ -1089,7 +1147,13 @@ pub async fn handle_calendar_event_impl(
                     new_page.end.as_deref(),
                 )
                 .await
-                .map(|_page_id| axum::http::StatusCode::CREATED)
+            {
+                Ok(page_id) => {
+                    state.store_caldav_uid_mapping(cal.id, &event_id_clean, &page_id).await;
+                    Ok(axum::http::StatusCode::CREATED)
+                }
+                Err(e) => Err(e),
+            }
         };
         return match result {
             Ok(status) => {
@@ -1110,11 +1174,16 @@ pub async fn handle_calendar_event_impl(
                 .get(&cal.database_id)
                 .and_then(|pages| pages.iter().find(|p| matches_id(&p.id, &event_id_clean)).map(|p| p.id.clone()))
         };
+        let existing_id = match existing_id {
+            Some(id) => Some(id),
+            None => state.lookup_caldav_uid(cal.id, &event_id_clean).await,
+        };
         let Some(page_id) = existing_id else {
             return axum::http::StatusCode::NOT_FOUND.into_response();
         };
         return match state.notion_delete_event(&page_id, &cal.notion_access_token).await {
             Ok(()) => {
+                state.delete_caldav_uid_mapping(cal.id, &event_id_clean).await;
                 state.refresh_by_data_source(&cal.data_source_id).await;
                 axum::http::StatusCode::NO_CONTENT.into_response()
             }
