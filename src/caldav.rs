@@ -1310,12 +1310,24 @@ async fn handle_calendars_propfind(
             ],
         ).into_response();
     }
-    // Scoped to the authenticated calendar's own owner — this used to list
-    // *every* tenant's calendars to anyone with any one valid credential,
-    // which was a real cross-tenant data leak once there was more than one
-    // real tenant.
+    // Scoped to the *specific calendar* these credentials belong to — not
+    // just the app-account owner. Each calendar has its own generated
+    // caldav_username/password (see oauth.rs::create_calendars), so a user
+    // with several calendars gets several independent credential pairs. A
+    // prior version of this filtered by `user_id` alone, which listed every
+    // one of that user's calendars regardless of which pair authenticated —
+    // discovery would hand a client hrefs for calendars it doesn't hold
+    // credentials for, and it would then dutifully try (and get 403 on) all
+    // of them. Confirmed live in production logs: Apple Calendar retrying
+    // PROPFIND/PROPPATCH every ~30s against two calendars it wasn't
+    // authenticated for, using a third calendar's credentials.
     let owner_calendars = match &auth {
-        Some(a) => state.calendars_for_user(a.0.user_id).await,
+        Some(a) => state
+            .calendars_for_user(a.0.user_id)
+            .await
+            .into_iter()
+            .filter(|c| c.caldav_username == a.0.username)
+            .collect(),
         None => Vec::new(),
     };
 

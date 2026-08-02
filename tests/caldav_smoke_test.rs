@@ -652,3 +652,98 @@ async fn test_app_webview_requires_oidc_not_basic_auth() {
     let location = res.headers().get("Location").unwrap().to_str().unwrap();
     assert!(location.contains("/realms/notion-caldav-saas/protocol/openid-connect/auth"));
 }
+
+#[tokio::test]
+async fn test_calendars_propfind_scoped_to_authenticated_calendar_not_whole_account() {
+    let _lock = TEST_MUTEX.lock().unwrap();
+
+    // Regression test for a real bug found live in production 2026-08-02:
+    // one app-account (one Keycloak user) with several NotionCal calendars,
+    // each with its own independent caldav_username/password (see
+    // oauth.rs::create_calendars). PROPFIND /calendars/{username}/ used to
+    // list *every* calendar owned by the underlying user_id, not just the
+    // one the authenticating username/password pair actually belongs to —
+    // so a client that authenticated as calendar A's CalDAV user got told
+    // about calendar B's href too, tried to sync it with A's credentials,
+    // and got 403 in a retry loop (observed as repeated PROPFIND/PROPPATCH
+    // failures against notion-caldav.opendiy.vn in real Apple Calendar
+    // traffic).
+    let db_id_a = "acct-cal-a".to_string();
+    let db_id_b = "acct-cal-b".to_string();
+    let db_url = std::env::var("TEST_DATABASE_URL")
+        .unwrap_or_else(|_| "postgres://biolink:biolink@localhost:5433/notion_saas_test".to_string());
+    let pool = sqlx::PgPool::connect(&db_url).await.expect("connect to test db");
+    sqlx::migrate!("./migrations").run(&pool).await.expect("run migrations");
+
+    let password_hash = test_caldav_password_hash();
+    let user_id: i64 = sqlx::query_scalar(
+        "INSERT INTO users (keycloak_sub, email) VALUES ($1, '')
+         ON CONFLICT (keycloak_sub) DO UPDATE SET email = users.email
+         RETURNING id",
+    )
+    .bind("test-sub-shared-account")
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let conn_id: i64 = sqlx::query_scalar(
+        "INSERT INTO notion_connections (user_id, notion_access_token, workspace_id)
+         VALUES ($1, 'mock-notion-token', 'mock-workspace')
+         ON CONFLICT (user_id, workspace_id) DO UPDATE SET notion_access_token = EXCLUDED.notion_access_token
+         RETURNING id",
+    )
+    .bind(user_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    for db_id in [&db_id_a, &db_id_b] {
+        sqlx::query(
+            "INSERT INTO calendars (user_id, notion_connection_id, database_id, data_source_id, date_property, caldav_username, caldav_password_hash, public_id)
+             VALUES ($1, $2, $3, $3, 'Date', $4, $5, $3)
+             ON CONFLICT (user_id, database_id) DO UPDATE SET
+                caldav_username = EXCLUDED.caldav_username,
+                caldav_password_hash = EXCLUDED.caldav_password_hash",
+        )
+        .bind(user_id)
+        .bind(conn_id)
+        .bind(db_id)
+        .bind(caldav_username(db_id))
+        .bind(&password_hash)
+        .execute(&pool)
+        .await
+        .unwrap();
+    }
+
+    let state = AppState::new(pool, CaldavAllowWrites::True, None, None, None);
+    let auth_a = basic_auth_header(&db_id_a);
+    let username_a = caldav_username(&db_id_a);
+
+    let app = test_create_app(state).await;
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+    let client = reqwest::Client::new();
+    let base_url = format!("http://{}", addr);
+
+    let res = client
+        .request(
+            reqwest::Method::from_bytes(b"PROPFIND").unwrap(),
+            &format!("{}/calendars/{}/", base_url, username_a),
+        )
+        .header("Authorization", &auth_a)
+        .header("Depth", "1")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(res.status(), 207);
+    let body = res.text().await.unwrap();
+    assert!(
+        body.contains(&format!("/cal/{}/", db_id_a)),
+        "response must list the authenticated calendar itself"
+    );
+    assert!(
+        !body.contains(&format!("/cal/{}/", db_id_b)),
+        "response must NOT list a sibling calendar the authenticated credentials don't belong to: {body}"
+    );
+}
