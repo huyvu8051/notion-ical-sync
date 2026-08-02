@@ -64,7 +64,7 @@ pub async fn handle_webview_page(
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Geist:wght@400;500&family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap" rel="stylesheet">
 <script id="tailwind-config">
 tailwind.config = {{
-  theme {{ extend {{
+  theme: {{ extend: {{
     colors: {{
       "outline-variant": "#e5e5e5", "outline": "#747878", "on-surface": "#1b1c1c",
       "primary": "#000000", "on-primary": "#ffffff", "background": "#fbf9f9", "surface": "#fbf9f9",
