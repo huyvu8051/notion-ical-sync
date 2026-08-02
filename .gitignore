@@ -1,5 +1,6 @@
 target
 logs/
+.env
 
 # terraform state holds resource attributes in plaintext, including the
 # Keycloak client_secret output — must never be committed.

@@ -10,7 +10,6 @@ use argon2::password_hash::{PasswordHasher, SaltString};
 use argon2::Argon2;
 use axum::extract::{Query, State};
 use axum::response::{Html, IntoResponse, Redirect};
-use axum::Form;
 use axum_oidc::{EmptyAdditionalClaims, OidcClaims};
 use rand::Rng;
 use serde::Deserialize;
@@ -239,34 +238,18 @@ struct DatabaseCandidate {
     date_property: Option<String>,
 }
 
-async fn fetch_date_property(client: &reqwest::Client, token: &str, data_source_id: &str) -> Option<String> {
-    let resp = client
-        .get(format!("https://api.notion.com/v1/data_sources/{data_source_id}"))
-        .bearer_auth(token)
-        .header("Notion-Version", NOTION_VERSION)
-        .send()
-        .await
-        .ok()?;
-    if !resp.status().is_success() {
-        return None;
-    }
-    let body: serde_json::Value = resp.json().await.ok()?;
-    let props = body.get("properties")?.as_object()?;
-    props
-        .iter()
-        .find(|(_, def)| def.get("type").and_then(|t| t.as_str()) == Some("date"))
-        .map(|(name, _)| name.clone())
-}
-
-/// Searches the workspace for every database the user granted access to,
-/// resolving each one's single data source and checking for a date
-/// property (needed for both sync and this picker's compatibility check).
+/// Searches the workspace for every data source (Notion's 2025-09-03 API
+/// split "database" into a container plus one-or-more data sources —
+/// `properties` now lives on the data source, not the database, so search
+/// for `data_source` objects directly rather than `database` objects) the
+/// user granted access to, checking each one for a date property (needed
+/// for both sync and this picker's compatibility check).
 async fn list_syncable_databases(client: &reqwest::Client, token: &str) -> Result<Vec<DatabaseCandidate>, String> {
     let resp = client
         .post("https://api.notion.com/v1/search")
         .bearer_auth(token)
         .header("Notion-Version", NOTION_VERSION)
-        .json(&serde_json::json!({ "filter": { "value": "database", "property": "object" } }))
+        .json(&serde_json::json!({ "filter": { "value": "data_source", "property": "object" } }))
         .send()
         .await
         .map_err(|e| format!("search request failed: {e}"))?;
@@ -281,19 +264,17 @@ async fn list_syncable_databases(client: &reqwest::Client, token: &str) -> Resul
     let results = body.get("results").and_then(|r| r.as_array()).cloned().unwrap_or_default();
 
     let mut candidates = Vec::new();
-    for db in results {
-        let Some(database_id) = db.get("id").and_then(|v| v.as_str()) else { continue };
-        let Some(data_source_id) = db
-            .get("data_sources")
-            .and_then(|ds| ds.as_array())
-            .and_then(|arr| arr.first())
-            .and_then(|first| first.get("id"))
+    for ds in results {
+        let Some(data_source_id) = ds.get("id").and_then(|v| v.as_str()) else { continue };
+        let Some(database_id) = ds
+            .get("parent")
+            .and_then(|p| p.get("database_id"))
             .and_then(|id| id.as_str())
         else {
-            continue; // no data source, can't sync
+            continue; // parent isn't a database (shouldn't happen for object=data_source, but be defensive)
         };
 
-        let title = db
+        let title = ds
             .get("title")
             .and_then(|t| t.as_array())
             .and_then(|arr| arr.first())
@@ -301,13 +282,21 @@ async fn list_syncable_databases(client: &reqwest::Client, token: &str) -> Resul
             .and_then(|t| t.as_str())
             .unwrap_or("(untitled)")
             .to_string();
-        let icon_emoji = db
+        let icon_emoji = ds
             .get("icon")
             .and_then(|icon| icon.get("emoji"))
             .and_then(|e| e.as_str())
             .map(|s| s.to_string());
 
-        let date_property = fetch_date_property(client, token, data_source_id).await;
+        let date_property = ds
+            .get("properties")
+            .and_then(|p| p.as_object())
+            .and_then(|props| {
+                props
+                    .iter()
+                    .find(|(_, def)| def.get("type").and_then(|t| t.as_str()) == Some("date"))
+                    .map(|(name, _)| name.clone())
+            });
 
         candidates.push(DatabaseCandidate {
             database_id: database_id.to_string(),
@@ -428,11 +417,29 @@ document.addEventListener('change', function () {{
     .into_response()
 }
 
-#[derive(Debug, Deserialize)]
-pub struct CreateCalendarsForm {
+struct CreateCalendarsForm {
     connection_id: i64,
-    #[serde(default)]
     db_ids: Vec<String>,
+}
+
+impl CreateCalendarsForm {
+    /// Parsed by hand from the raw body via `url::form_urlencoded` rather
+    /// than `axum::Form` — `serde_urlencoded` (what `Form` uses) can't
+    /// deserialize a `Vec<String>` field from a single `db_ids=x` pair (only
+    /// happens to work when 2+ checkboxes are checked), which broke the
+    /// single-database-selected case, the most common one.
+    fn parse(body: &str) -> Option<Self> {
+        let mut connection_id = None;
+        let mut db_ids = Vec::new();
+        for (key, value) in url::form_urlencoded::parse(body.as_bytes()) {
+            match key.as_ref() {
+                "connection_id" => connection_id = value.parse::<i64>().ok(),
+                "db_ids" => db_ids.push(value.into_owned()),
+                _ => {}
+            }
+        }
+        Some(Self { connection_id: connection_id?, db_ids })
+    }
 }
 
 /// Creates one `calendars` row (with freshly generated CalDAV credentials)
@@ -444,8 +451,13 @@ pub async fn create_calendars(
     State(state): State<AppState>,
     claims: OidcClaims<EmptyAdditionalClaims>,
     session: tower_sessions::Session,
-    Form(form): Form<CreateCalendarsForm>,
+    body: axum::body::Bytes,
 ) -> impl IntoResponse {
+    let body = String::from_utf8_lossy(&body);
+    let Some(form) = CreateCalendarsForm::parse(&body) else {
+        return error_page("Yêu cầu không hợp lệ.");
+    };
+
     let sub = claims.subject().as_str();
     let email = claims.email().map(|e| e.as_str()).unwrap_or("").to_string();
     let user_id = match find_or_create_user(&state.db, sub, &email).await {
