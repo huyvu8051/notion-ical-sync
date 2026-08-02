@@ -272,6 +272,7 @@ pub async fn me(
 <form method="post" action="/me/calendars/{public_id}/regenerate-password" onsubmit="return confirm('Tạo mật khẩu mới? Mật khẩu cũ sẽ ngừng hoạt động ngay.');">
 <button type="submit" class="text-label-md text-secondary hover:underline">Tạo lại mật khẩu</button>
 </form>
+<a href="/me/calendars/{public_id}/log" class="text-label-md text-secondary hover:underline">Xem log đồng bộ</a>
 <form method="post" action="/me/calendars/{public_id}/delete" onsubmit="return confirm('Xoá calendar này? Dữ liệu trên Notion không bị ảnh hưởng, nhưng lịch sẽ ngừng đồng bộ.');" class="ml-auto">
 <button type="submit" class="text-label-md text-error hover:underline">Xoá</button>
 </form>

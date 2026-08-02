@@ -239,6 +239,39 @@ impl AppState {
         }
     }
 
+    /// Records one write attempt (create/update/delete, from either a CalDAV
+    /// client or the webview) so a user can see their own sync history from
+    /// a browser (see oauth.rs::sync_log_page) instead of needing someone to
+    /// read the raw application logs. Fire-and-forget: a logging failure
+    /// must never fail the actual CalDAV/webview request it's describing.
+    pub async fn log_sync(
+        &self,
+        calendar_id: i64,
+        source: &str,
+        action: &str,
+        event_uid: &str,
+        notion_page_id: &str,
+        status: &str,
+        detail: &str,
+    ) {
+        if let Err(e) = sqlx::query(
+            "INSERT INTO sync_log (calendar_id, source, action, event_uid, notion_page_id, status, detail)
+             VALUES ($1, $2, $3, $4, $5, $6, $7)",
+        )
+        .bind(calendar_id)
+        .bind(source)
+        .bind(action)
+        .bind(event_uid)
+        .bind(notion_page_id)
+        .bind(status)
+        .bind(detail)
+        .execute(&self.db)
+        .await
+        {
+            error!("failed to write sync_log row for calendar {}: {}", calendar_id, e);
+        }
+    }
+
     /// Looks up *a* row for a given Notion database_id — used only by the
     /// legacy host-based aliases (calendar.opendiy.vn/mytime.opendiy.vn, see
     /// `get_public_id_for_host`), a single-owner shortcut that predates
@@ -1124,6 +1157,8 @@ pub async fn handle_calendar_event_impl(
             Some(id) => Some(id),
             None => state.lookup_caldav_uid(cal.id, &event_id_clean).await,
         };
+        let is_update = existing_id.is_some();
+        let action = if is_update { "update" } else { "create" };
         let result = if let Some(page_id) = existing_id {
             state
                 .notion_update_event(
@@ -1135,7 +1170,7 @@ pub async fn handle_calendar_event_impl(
                     Some(new_page.end.as_deref()),
                 )
                 .await
-                .map(|_| axum::http::StatusCode::NO_CONTENT)
+                .map(|_| (axum::http::StatusCode::NO_CONTENT, page_id))
         } else {
             match state
                 .notion_create_event(
@@ -1150,18 +1185,20 @@ pub async fn handle_calendar_event_impl(
             {
                 Ok(page_id) => {
                     state.store_caldav_uid_mapping(cal.id, &event_id_clean, &page_id).await;
-                    Ok(axum::http::StatusCode::CREATED)
+                    Ok((axum::http::StatusCode::CREATED, page_id))
                 }
                 Err(e) => Err(e),
             }
         };
         return match result {
-            Ok(status) => {
+            Ok((status, page_id)) => {
+                state.log_sync(cal.id, "caldav", action, &event_id_clean, &page_id, "ok", "").await;
                 state.refresh_by_data_source(&cal.data_source_id).await;
                 status.into_response()
             }
             Err(e) => {
                 error!("CalDAV PUT event {} failed to sync to Notion: {}", event_id_clean, e);
+                state.log_sync(cal.id, "caldav", action, &event_id_clean, "", "error", &e).await;
                 axum::http::StatusCode::BAD_GATEWAY.into_response()
             }
         };
@@ -1183,12 +1220,14 @@ pub async fn handle_calendar_event_impl(
         };
         return match state.notion_delete_event(&page_id, &cal.notion_access_token).await {
             Ok(()) => {
+                state.log_sync(cal.id, "caldav", "delete", &event_id_clean, &page_id, "ok", "").await;
                 state.delete_caldav_uid_mapping(cal.id, &event_id_clean).await;
                 state.refresh_by_data_source(&cal.data_source_id).await;
                 axum::http::StatusCode::NO_CONTENT.into_response()
             }
             Err(e) => {
                 error!("CalDAV DELETE event {} failed to sync to Notion: {}", event_id_clean, e);
+                state.log_sync(cal.id, "caldav", "delete", &event_id_clean, &page_id, "error", &e).await;
                 axum::http::StatusCode::BAD_GATEWAY.into_response()
             }
         };
@@ -1885,6 +1924,7 @@ pub fn create_app(
         .route("/me/calendars/{public_id}/delete", post(crate::oauth::delete_calendar))
         .route("/me/calendars/{public_id}/reveal-password", post(crate::oauth::reveal_password))
         .route("/me/calendars/{public_id}/regenerate-password", post(crate::oauth::regenerate_password))
+        .route("/me/calendars/{public_id}/log", get(crate::oauth::sync_log_page))
         // Webview: server-rendered FullCalendar page + its JSON CRUD API,
         // writing straight through to Notion (see notion_create/update/
         // delete_event on AppState). Was CalDAV-Basic-Auth-protected

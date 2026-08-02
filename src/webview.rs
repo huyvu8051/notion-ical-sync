@@ -366,11 +366,13 @@ pub async fn handle_create_event(
         .await
     {
         Ok(page_id) => {
+            state.log_sync(cal.id, "webview", "create", "", &page_id, "ok", "").await;
             state.refresh_by_data_source(&cal.data_source_id).await;
             (StatusCode::CREATED, Json(serde_json::json!({ "id": page_id }))).into_response()
         }
         Err(e) => {
             error!("webview create event failed: {}", e);
+            state.log_sync(cal.id, "webview", "create", "", "", "error", &e).await;
             (StatusCode::BAD_GATEWAY, e).into_response()
         }
     }
@@ -415,11 +417,13 @@ pub async fn handle_update_event(
         .await
     {
         Ok(()) => {
+            state.log_sync(cal.id, "webview", "update", &event_id, &event_id, "ok", "").await;
             state.refresh_by_data_source(&cal.data_source_id).await;
             StatusCode::NO_CONTENT.into_response()
         }
         Err(e) => {
             error!("webview update event failed: {}", e);
+            state.log_sync(cal.id, "webview", "update", &event_id, &event_id, "error", &e).await;
             (StatusCode::BAD_GATEWAY, e).into_response()
         }
     }
@@ -436,11 +440,13 @@ pub async fn handle_delete_event(
     };
     match state.notion_delete_event(&event_id, &cal.notion_access_token).await {
         Ok(()) => {
+            state.log_sync(cal.id, "webview", "delete", &event_id, &event_id, "ok", "").await;
             state.refresh_by_data_source(&cal.data_source_id).await;
             StatusCode::NO_CONTENT.into_response()
         }
         Err(e) => {
             error!("webview delete event failed: {}", e);
+            state.log_sync(cal.id, "webview", "delete", &event_id, &event_id, "error", &e).await;
             (StatusCode::BAD_GATEWAY, e).into_response()
         }
     }
