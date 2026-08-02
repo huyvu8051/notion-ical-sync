@@ -74,6 +74,13 @@ pub struct AppState {
     /// "not configured" page instead of panicking, same posture as
     /// `webhook_secret`.
     pub notion_oauth: Option<crate::oauth::NotionOAuthConfig>,
+    /// AES-256-GCM key (from `CALDAV_PASSWORD_ENC_KEY`) used to store CalDAV
+    /// passwords in a form the dashboard's "Hiện mật khẩu" action can
+    /// decrypt later — separate from `caldav_password_hash`, which is what
+    /// actual CalDAV Basic Auth verifies against and stays one-way. None
+    /// disables reveal (rows just show "Tạo lại" instead), same posture as
+    /// `webhook_secret`/`notion_oauth`.
+    pub password_enc_key: Option<[u8; 32]>,
 }
 
 // Notion API response types
@@ -89,11 +96,22 @@ struct NotionQueryResponse {
 /// different user with a different token.
 #[derive(Debug, Clone, sqlx::FromRow)]
 pub struct CalendarRow {
+    pub id: i64,
     pub user_id: i64,
+    /// The real Notion database id — shared cache key and what Notion API
+    /// calls use. Not unique across rows anymore (see migrations/0003):
+    /// several users can each have their own subscription to the same
+    /// underlying Notion database.
     pub database_id: String,
+    /// Per-subscription identifier used in public URLs (/cal/{id},
+    /// /app/{id}) and CalDAV auth ownership checks — this, not
+    /// `database_id`, is what makes one subscription unambiguous from
+    /// another when several users share a `database_id`.
+    pub public_id: String,
     pub data_source_id: String,
     pub date_property: String,
     pub display_name: String,
+    pub caldav_username: String,
     pub notion_access_token: String,
 }
 
@@ -113,6 +131,7 @@ impl AppState {
         caldav_allow_writes: CaldavAllowWrites,
         webhook_secret: Option<String>,
         notion_oauth: Option<crate::oauth::NotionOAuthConfig>,
+        password_enc_key: Option<[u8; 32]>,
     ) -> Self {
         Self {
             client: Client::builder()
@@ -124,12 +143,13 @@ impl AppState {
             caldav_allow_writes,
             webhook_secret,
             notion_oauth,
+            password_enc_key,
         }
     }
 
     pub async fn all_calendars(&self) -> Vec<CalendarRow> {
         sqlx::query_as::<_, CalendarRow>(
-            "SELECT c.user_id, c.database_id, c.data_source_id, c.date_property, c.display_name, nc.notion_access_token
+            "SELECT c.id, c.user_id, c.database_id, c.public_id, c.data_source_id, c.date_property, c.display_name, c.caldav_username, nc.notion_access_token
              FROM calendars c JOIN notion_connections nc ON nc.id = c.notion_connection_id",
         )
         .fetch_all(&self.db)
@@ -142,7 +162,7 @@ impl AppState {
 
     pub async fn calendars_for_user(&self, user_id: i64) -> Vec<CalendarRow> {
         sqlx::query_as::<_, CalendarRow>(
-            "SELECT c.user_id, c.database_id, c.data_source_id, c.date_property, c.display_name, nc.notion_access_token
+            "SELECT c.id, c.user_id, c.database_id, c.public_id, c.data_source_id, c.date_property, c.display_name, c.caldav_username, nc.notion_access_token
              FROM calendars c JOIN notion_connections nc ON nc.id = c.notion_connection_id
              WHERE c.user_id = $1",
         )
@@ -155,11 +175,37 @@ impl AppState {
         })
     }
 
-    pub async fn calendar_by_db_id(&self, db_id: &str) -> Option<CalendarRow> {
+    /// Looks up a calendar by its public, URL-facing identifier — the only
+    /// lookup that's safe to drive routing/ownership checks off, since
+    /// `database_id` alone can now match several different users' rows.
+    pub async fn calendar_by_public_id(&self, public_id: &str) -> Option<CalendarRow> {
         sqlx::query_as::<_, CalendarRow>(
-            "SELECT c.user_id, c.database_id, c.data_source_id, c.date_property, c.display_name, nc.notion_access_token
+            "SELECT c.id, c.user_id, c.database_id, c.public_id, c.data_source_id, c.date_property, c.display_name, c.caldav_username, nc.notion_access_token
              FROM calendars c JOIN notion_connections nc ON nc.id = c.notion_connection_id
-             WHERE c.database_id = $1",
+             WHERE c.public_id = $1",
+        )
+        .bind(public_id)
+        .fetch_optional(&self.db)
+        .await
+        .unwrap_or_else(|e| {
+            error!("failed to look up calendar {}: {}", public_id, e);
+            None
+        })
+    }
+
+    /// Looks up *a* row for a given Notion database_id — used only by the
+    /// legacy host-based aliases (calendar.opendiy.vn/mytime.opendiy.vn, see
+    /// `get_public_id_for_host`), a single-owner shortcut that predates
+    /// multi-tenancy. Deterministic (oldest row) since database_id is no
+    /// longer unique, but still only meaningful for those two hardcoded
+    /// hosts — never used for general routing/ownership decisions.
+    async fn calendar_by_db_id(&self, db_id: &str) -> Option<CalendarRow> {
+        sqlx::query_as::<_, CalendarRow>(
+            "SELECT c.id, c.user_id, c.database_id, c.public_id, c.data_source_id, c.date_property, c.display_name, c.caldav_username, nc.notion_access_token
+             FROM calendars c JOIN notion_connections nc ON nc.id = c.notion_connection_id
+             WHERE c.database_id = $1
+             ORDER BY c.created_at ASC
+             LIMIT 1",
         )
         .bind(db_id)
         .fetch_optional(&self.db)
@@ -172,7 +218,7 @@ impl AppState {
 
     pub async fn calendar_by_data_source_id(&self, ds_id: &str) -> Option<CalendarRow> {
         sqlx::query_as::<_, CalendarRow>(
-            "SELECT c.user_id, c.database_id, c.data_source_id, c.date_property, c.display_name, nc.notion_access_token
+            "SELECT c.id, c.user_id, c.database_id, c.public_id, c.data_source_id, c.date_property, c.display_name, c.caldav_username, nc.notion_access_token
              FROM calendars c JOIN notion_connections nc ON nc.id = c.notion_connection_id
              WHERE c.data_source_id = $1",
         )
@@ -186,20 +232,20 @@ impl AppState {
     }
 
     /// Verifies a CalDAV Basic Auth credential against the `calendars` table,
-    /// returning the owning user's id and that calendar's database_id on
-    /// success. Callers still need to check the returned database_id against
+    /// returning the owning user's id and that calendar's public_id on
+    /// success. Callers still need to check the returned public_id against
     /// whatever calendar the request is actually targeting — a valid
     /// credential only proves identity, not that it's for *this* calendar.
     pub async fn verify_caldav_credentials(&self, username: &str, password: &str) -> Option<(i64, String)> {
         #[derive(sqlx::FromRow)]
         struct Row {
             user_id: i64,
-            database_id: String,
+            public_id: String,
             caldav_password_hash: String,
         }
 
         let row: Row = sqlx::query_as::<_, Row>(
-            "SELECT user_id, database_id, caldav_password_hash FROM calendars WHERE caldav_username = $1",
+            "SELECT user_id, public_id, caldav_password_hash FROM calendars WHERE caldav_username = $1",
         )
         .bind(username)
         .fetch_optional(&self.db)
@@ -211,7 +257,7 @@ impl AppState {
 
         let hash = argon2::PasswordHash::new(&row.caldav_password_hash).ok()?;
         argon2::Argon2::default().verify_password(password.as_bytes(), &hash).ok()?;
-        Some((row.user_id, row.database_id))
+        Some((row.user_id, row.public_id))
     }
 
     /// Same as `refresh_all` but scoped to one user's own calendars — used by
@@ -325,8 +371,15 @@ impl AppState {
 
     pub async fn refresh_all(&self) {
         let calendars = self.all_calendars().await;
+        // Several rows can now share a database_id (multiple subscribers of
+        // the same Notion database) — the cache is keyed by database_id, so
+        // only fetch each one once per cycle rather than once per subscriber.
+        let mut seen = std::collections::HashSet::new();
         let mut cache = self.cache.write().await;
         for cal in calendars {
+            if !seen.insert(cal.database_id.clone()) {
+                continue;
+            }
             match self.refresh_db(&cal.data_source_id, &cal.date_property, &cal.notion_access_token).await {
                 Ok(pages) => {
                     info!("DB {} synced: {} events", cal.database_id, pages.len());
@@ -784,25 +837,26 @@ pub fn build_report_response(db_id: &str, prefix: &str, calendar_name: &str, pag
     xml
 }
 
-pub async fn get_db_id_for_host(headers: &axum::http::HeaderMap, state: &AppState) -> Option<String> {
+/// Resolves the legacy per-host calendar alias (calendar.opendiy.vn /
+/// mytime.opendiy.vn — a single-owner shortcut that predates multi-tenancy)
+/// to that calendar's public_id, so it flows through the exact same
+/// auth-ownership and routing logic as path-based `/cal/{public_id}` access.
+pub async fn get_public_id_for_host(headers: &axum::http::HeaderMap, state: &AppState) -> Option<String> {
     let host = headers.get("host").and_then(|h| h.to_str().ok()).unwrap_or("");
     let host_name = host.split(':').next().unwrap_or("").trim();
     let db_id = match host_name {
-        "calendar.opendiy.vn" => Some("4cb38c7656ae483d8ee5650d9fb02108".to_string()),
-        "mytime.opendiy.vn" => Some("39e6a94a90a680da85d2c29e3c52ed8e".to_string()),
+        "calendar.opendiy.vn" => Some("4cb38c7656ae483d8ee5650d9fb02108"),
+        "mytime.opendiy.vn" => Some("39e6a94a90a680da85d2c29e3c52ed8e"),
         _ => None,
-    };
-    match db_id {
-        Some(id) if state.calendar_by_db_id(&id).await.is_some() => Some(id),
-        _ => None,
-    }
+    }?;
+    state.calendar_by_db_id(db_id).await.map(|cal| cal.public_id)
 }
 
 pub async fn handle_calendar_impl(
     method: axum::http::Method,
     headers: axum::http::HeaderMap,
     state: AppState,
-    db_id: String,
+    public_id: String,
     prefix: String,
     body: String,
 ) -> impl IntoResponse {
@@ -811,11 +865,11 @@ pub async fn handle_calendar_impl(
         .and_then(|h| h.to_str().ok())
         .unwrap_or("")
         .to_string();
-    let Some(cal) = state.calendar_by_db_id(&db_id).await else {
+    let Some(cal) = state.calendar_by_public_id(&public_id).await else {
         return axum::http::StatusCode::NOT_FOUND.into_response();
     };
     let name = if cal.display_name.is_empty() {
-        state.get_calendar_name(&db_id, &cal.notion_access_token).await
+        state.get_calendar_name(&cal.database_id, &cal.notion_access_token).await
     } else {
         cal.display_name.clone()
     };
@@ -828,14 +882,15 @@ pub async fn handle_calendar_impl(
         method = ?method,
         path = %prefix,
         host = %host,
-        db_id = %db_id,
+        public_id = %public_id,
+        database_id = %cal.database_id,
         calendar = %name,
         "CalDAV handler: calendar collection"
     );
     if method == axum::http::Method::GET {
         let cache = state.cache.read().await;
-        let pages = cache.get(&db_id).cloned().unwrap_or_default();
-        let body = build_ics(&db_id, &name, &pages);
+        let pages = cache.get(&cal.database_id).cloned().unwrap_or_default();
+        let body = build_ics(&public_id, &name, &pages);
         return ([(header::CONTENT_TYPE, "text/calendar; charset=utf-8")], body).into_response();
     }
 
@@ -846,7 +901,7 @@ pub async fn handle_calendar_impl(
             .unwrap_or("0");
         let body = if depth == "1" {
             let cache = state.cache.read().await;
-            let pages = cache.get(&db_id).cloned().unwrap_or_default();
+            let pages = cache.get(&cal.database_id).cloned().unwrap_or_default();
             build_propfind_calendar_with_events(&prefix, &name, &pages)
         } else {
             build_propfind_calendar(&prefix, &name)
@@ -885,8 +940,8 @@ pub async fn handle_calendar_impl(
 
     if method.as_str() == "REPORT" {
         let cache = state.cache.read().await;
-        let pages = cache.get(&db_id).cloned().unwrap_or_default();
-        let body = build_report_response(&db_id, &prefix, &name, &pages);
+        let pages = cache.get(&cal.database_id).cloned().unwrap_or_default();
+        let body = build_report_response(&public_id, &prefix, &name, &pages);
         return (
             axum::http::StatusCode::MULTI_STATUS,
             [(header::CONTENT_TYPE, "application/xml; charset=utf-8")],
@@ -900,16 +955,16 @@ pub async fn handle_calendar_impl(
 pub async fn handle_calendar_event_impl(
     method: axum::http::Method,
     state: AppState,
-    db_id: String,
+    public_id: String,
     event_id: String,
     prefix: String,
     body: String,
 ) -> impl IntoResponse {
-    let Some(cal) = state.calendar_by_db_id(&db_id).await else {
+    let Some(cal) = state.calendar_by_public_id(&public_id).await else {
         return axum::http::StatusCode::NOT_FOUND.into_response();
     };
     let name = if cal.display_name.is_empty() {
-        state.get_calendar_name(&db_id, &cal.notion_access_token).await
+        state.get_calendar_name(&cal.database_id, &cal.notion_access_token).await
     } else {
         cal.display_name.clone()
     };
@@ -922,16 +977,17 @@ pub async fn handle_calendar_event_impl(
     info!(
         method = ?method,
         path = %prefix,
-        db_id = %db_id,
+        public_id = %public_id,
+        database_id = %cal.database_id,
         event_id = %event_id_clean,
         calendar = %name,
         "CalDAV handler: calendar event"
     );
     if method == axum::http::Method::GET {
         let cache = state.cache.read().await;
-        let pages = cache.get(&db_id).cloned().unwrap_or_default();
+        let pages = cache.get(&cal.database_id).cloned().unwrap_or_default();
         if let Some(page) = pages.iter().find(|p| matches_id(&p.id, &event_id_clean)) {
-            let body = build_ics(&db_id, &name, std::slice::from_ref(page));
+            let body = build_ics(&public_id, &name, std::slice::from_ref(page));
             info!(status=200, found=true, "CalDAV event GET");
             return ([(header::CONTENT_TYPE, "text/calendar; charset=utf-8")], body).into_response();
         } else {
@@ -942,7 +998,7 @@ pub async fn handle_calendar_event_impl(
 
     if method.as_str() == "PROPFIND" {
         let cache = state.cache.read().await;
-        let pages = cache.get(&db_id).cloned().unwrap_or_default();
+        let pages = cache.get(&cal.database_id).cloned().unwrap_or_default();
         if let Some(page) = pages.iter().find(|p| matches_id(&p.id, &event_id_clean)) {
             let body = build_propfind_event(&prefix, &event_id_clean, page);
             return (
@@ -958,7 +1014,7 @@ pub async fn handle_calendar_event_impl(
     if method == axum::http::Method::PUT {
         let new_page = parse_ics_to_page_info(&body, &event_id_clean);
         let mut cache = state.cache.write().await;
-        let pages = cache.entry(db_id).or_default();
+        let pages = cache.entry(cal.database_id).or_default();
         if let Some(pos) = pages.iter().position(|p| matches_id(&p.id, &event_id_clean)) {
             pages[pos] = new_page;
             return axum::http::StatusCode::NO_CONTENT.into_response();
@@ -970,7 +1026,7 @@ pub async fn handle_calendar_event_impl(
 
     if method == axum::http::Method::DELETE {
         let mut cache = state.cache.write().await;
-        if let Some(pages) = cache.get_mut(&db_id) {
+        if let Some(pages) = cache.get_mut(&cal.database_id) {
             if let Some(pos) = pages.iter().position(|p| matches_id(&p.id, &event_id_clean)) {
                 pages.remove(pos);
                 return axum::http::StatusCode::NO_CONTENT.into_response();
@@ -993,10 +1049,10 @@ fn extract_basic_auth(headers: &axum::http::HeaderMap) -> Option<(String, String
     Some((username, password))
 }
 
-/// Pulls `{db_id}` out of a `/cal/{db_id}/...` request path, used to confirm
-/// the authenticated calendar's own database_id matches the one being
+/// Pulls `{public_id}` out of a `/cal/{public_id}/...` request path, used to
+/// confirm the authenticated calendar's own public_id matches the one being
 /// requested (a valid credential for calendar A must not open calendar B).
-fn extract_path_db_id(path: &str) -> Option<String> {
+fn extract_path_public_id(path: &str) -> Option<String> {
     let rest = path.strip_prefix("/cal/")?;
     let seg = rest.split('/').next().unwrap_or("");
     if seg.is_empty() { None } else { Some(seg.to_string()) }
@@ -1006,22 +1062,22 @@ pub async fn handle_path_calendar(
     method: axum::http::Method,
     headers: axum::http::HeaderMap,
     State(state): State<AppState>,
-    Path(db_id): Path<String>,
+    Path(public_id): Path<String>,
     body: String,
 ) -> impl IntoResponse {
-    let prefix = format!("/cal/{}/", db_id);
-    let res = handle_calendar_impl(method, headers, state, db_id, prefix, body).await.into_response();
+    let prefix = format!("/cal/{}/", public_id);
+    let res = handle_calendar_impl(method, headers, state, public_id, prefix, body).await.into_response();
     add_caldav_headers(res)
 }
 
 pub async fn handle_path_calendar_event(
     method: axum::http::Method,
     State(state): State<AppState>,
-    Path((db_id, event_id)): Path<(String, String)>,
+    Path((public_id, event_id)): Path<(String, String)>,
     body: String,
 ) -> impl IntoResponse {
-    let prefix = format!("/cal/{}/", db_id);
-    let res = handle_calendar_event_impl(method, state, db_id, event_id, prefix, body).await.into_response();
+    let prefix = format!("/cal/{}/", public_id);
+    let res = handle_calendar_event_impl(method, state, public_id, event_id, prefix, body).await.into_response();
     add_caldav_headers(res)
 }
 
@@ -1036,17 +1092,17 @@ pub async fn handle_host_calendar(
         .and_then(|h| h.to_str().ok())
         .unwrap_or("")
         .to_string();
-    let host_db_id = get_db_id_for_host(&headers, &state).await;
+    let host_public_id = get_public_id_for_host(&headers, &state).await;
     info!(
         method = ?method,
         path = "/",
         host = %host,
-        host_db_id = ?host_db_id,
+        host_public_id = ?host_public_id,
         "CalDAV handler: host calendar root"
     );
-    if let Some(db_id) = host_db_id {
+    if let Some(public_id) = host_public_id {
         let prefix = "/".to_string();
-        let res = handle_calendar_impl(method, headers, state, db_id, prefix, body).await.into_response();
+        let res = handle_calendar_impl(method, headers, state, public_id, prefix, body).await.into_response();
         add_caldav_headers(res)
     } else {
         if method == axum::http::Method::GET || method == axum::http::Method::HEAD {
@@ -1092,18 +1148,18 @@ pub async fn handle_host_calendar_event(
         .and_then(|h| h.to_str().ok())
         .unwrap_or("")
         .to_string();
-    if let Some(db_id) = get_db_id_for_host(&headers, &state).await {
+    if let Some(public_id) = get_public_id_for_host(&headers, &state).await {
         let prefix = "/".to_string();
         let event_id_clean = event_id.strip_suffix(".ics").unwrap_or(&event_id);
         info!(
             method = ?method,
             path = "/",
             host = %host,
-            db_id = %db_id,
+            public_id = %public_id,
             event_id = %event_id_clean,
             "CalDAV handler: host calendar event"
         );
-        let res = handle_calendar_event_impl(method, state, db_id, event_id, prefix, body).await.into_response();
+        let res = handle_calendar_event_impl(method, state, public_id, event_id, prefix, body).await.into_response();
         add_caldav_headers(res)
     } else {
         info!(
@@ -1257,26 +1313,25 @@ async fn handle_calendars_propfind(
     };
 
     if method.as_str() == "PROPFIND" {
-        let host_db_id = get_db_id_for_host(&headers, &state).await;
+        let host_public_id = get_public_id_for_host(&headers, &state).await;
         let all_cals = owner_calendars;
-        let cals_to_return: Vec<CalendarRow> = if let Some(db_id) = &host_db_id {
-            all_cals.into_iter().filter(|c| &c.database_id == db_id).collect()
+        let cals_to_return: Vec<CalendarRow> = if let Some(public_id) = &host_public_id {
+            all_cals.into_iter().filter(|c| &c.public_id == public_id).collect()
         } else {
             all_cals
         };
 
         let mut responses_xml = String::new();
         for cal in cals_to_return {
-            let db_id = cal.database_id.clone();
             let name = if cal.display_name.is_empty() {
-                state.get_calendar_name(&db_id, &cal.notion_access_token).await
+                state.get_calendar_name(&cal.database_id, &cal.notion_access_token).await
             } else {
                 cal.display_name.clone()
             };
-            let href = if host_db_id.is_some() {
+            let href = if host_public_id.is_some() {
                 "/".to_string()
             } else {
-                format!("/cal/{}/", db_id)
+                format!("/cal/{}/", cal.public_id)
             };
 
             responses_xml.push_str(&format!(
@@ -1319,10 +1374,10 @@ async fn handle_calendars_propfind(
         ).into_response();
     }
     if method.as_str() == "REPORT" {
-        let host_db_id = get_db_id_for_host(&headers, &state).await;
+        let host_public_id = get_public_id_for_host(&headers, &state).await;
         let all_cals = owner_calendars;
-        let cals_to_return: Vec<CalendarRow> = if let Some(db_id) = &host_db_id {
-            all_cals.into_iter().filter(|c| &c.database_id == db_id).collect()
+        let cals_to_return: Vec<CalendarRow> = if let Some(public_id) = &host_public_id {
+            all_cals.into_iter().filter(|c| &c.public_id == public_id).collect()
         } else {
             all_cals
         };
@@ -1333,22 +1388,21 @@ async fn handle_calendars_propfind(
 
         let cache = state.cache.read().await;
         for cal in cals_to_return {
-            let db_id = cal.database_id.clone();
             let name = if cal.display_name.is_empty() {
-                state.get_calendar_name(&db_id, &cal.notion_access_token).await
+                state.get_calendar_name(&cal.database_id, &cal.notion_access_token).await
             } else {
                 cal.display_name.clone()
             };
-            let prefix = if host_db_id.is_some() {
+            let prefix = if host_public_id.is_some() {
                 "/".to_string()
             } else {
-                format!("/cal/{}/", db_id)
+                format!("/cal/{}/", cal.public_id)
             };
-            let pages = cache.get(&db_id).cloned().unwrap_or_default();
+            let pages = cache.get(&cal.database_id).cloned().unwrap_or_default();
             for page in pages {
                 let clean_id = page.id.replace("-", "");
                 let etag = &page.last_edited;
-                let ics_body = build_ics(&db_id, &name, std::slice::from_ref(&page));
+                let ics_body = build_ics(&cal.public_id, &name, std::slice::from_ref(&page));
                 let href = format!("{}{}.ics", prefix, clean_id);
                 xml.push_str(&format!(
                     r#"
@@ -1423,14 +1477,14 @@ async fn auth_middleware(
     // exactly what needs protecting, not just writes.
     //
     // The one other bypass: a bare GET/HEAD "/" on a host with no personal
-    // calendar alias (see get_db_id_for_host) isn't a CalDAV request at all —
-    // it's a browser hitting the marketing domain, which should see the
-    // landing page, not a Basic Auth prompt. calendar.opendiy.vn/
-    // mytime.opendiy.vn (real personal calendar aliases) are unaffected since
-    // get_db_id_for_host returns Some for those hosts.
+    // calendar alias (see get_public_id_for_host) isn't a CalDAV request at
+    // all — it's a browser hitting the marketing domain, which should see
+    // the landing page, not a Basic Auth prompt. calendar.opendiy.vn/
+    // mytime.opendiy.vn (real personal calendar aliases) are unaffected
+    // since get_public_id_for_host returns Some for those hosts.
     let is_landing_page_request = (method == axum::http::Method::GET || method == axum::http::Method::HEAD)
         && path == "/"
-        && get_db_id_for_host(&headers, &state).await.is_none();
+        && get_public_id_for_host(&headers, &state).await.is_none();
     let is_bypass = method == axum::http::Method::OPTIONS || is_landing_page_request;
 
     if is_bypass {
@@ -1475,7 +1529,7 @@ async fn auth_middleware(
         return response;
     };
 
-    let Some((user_id, auth_db_id)) = state.verify_caldav_credentials(&username, &password).await else {
+    let Some((user_id, auth_public_id)) = state.verify_caldav_credentials(&username, &password).await else {
         info!(username = %username, "Authentication failure: invalid credentials");
         let response = unauthorized_response();
         let duration = start.elapsed();
@@ -1489,17 +1543,18 @@ async fn auth_middleware(
         return response;
     };
 
-    // Path-scoped (/cal/{db_id}/...) or legacy host-based requests must match
-    // the authenticated calendar's own database_id — otherwise user A's
+    // Path-scoped (/cal/{public_id}/...) or legacy host-based requests must
+    // match the authenticated calendar's own public_id — otherwise user A's
     // valid credentials could read/write user B's calendar just by knowing
-    // its id.
-    let target_db_id = match extract_path_db_id(&path) {
+    // its id (or, now that database_id can be shared by multiple users'
+    // rows, by knowing a database_id someone else also subscribed to).
+    let target_public_id = match extract_path_public_id(&path) {
         Some(id) => Some(id),
-        None => get_db_id_for_host(&headers, &state).await,
+        None => get_public_id_for_host(&headers, &state).await,
     };
-    if let Some(target) = &target_db_id {
-        if target != &auth_db_id {
-            info!(username = %username, target_db_id = %target, "Authorization failure: calendar not owned by these credentials");
+    if let Some(target) = &target_public_id {
+        if target != &auth_public_id {
+            info!(username = %username, target_public_id = %target, "Authorization failure: calendar not owned by these credentials");
             let response = add_caldav_headers(
                 (
                     axum::http::StatusCode::FORBIDDEN,
@@ -1556,19 +1611,19 @@ pub fn create_app(
 
     let caldav_routes = Router::<AppState>::new()
         .route(
-            "/cal/{db_id}",
+            "/cal/{public_id}",
             axum::routing::any(handle_path_calendar),
         )
         .route(
-            "/cal/{db_id}/",
+            "/cal/{public_id}/",
             axum::routing::any(handle_path_calendar),
         )
         .route(
-            "/cal/{db_id}/{event_id}",
+            "/cal/{public_id}/{event_id}",
             axum::routing::any(handle_path_calendar_event),
         )
         .route(
-            "/cal/{db_id}/{event_id}/",
+            "/cal/{public_id}/{event_id}/",
             axum::routing::any(handle_path_calendar_event),
         )
         .route(
@@ -1656,6 +1711,9 @@ pub fn create_app(
             get(crate::oauth::pick_databases_page).post(crate::oauth::create_calendars),
         )
         .route("/oauth/notion/callback", get(crate::oauth::notion_oauth_callback))
+        .route("/me/calendars/{public_id}/delete", post(crate::oauth::delete_calendar))
+        .route("/me/calendars/{public_id}/reveal-password", post(crate::oauth::reveal_password))
+        .route("/me/calendars/{public_id}/regenerate-password", post(crate::oauth::regenerate_password))
         // Webview: server-rendered FullCalendar page + its JSON CRUD API,
         // writing straight through to Notion (see notion_create/update/
         // delete_event on AppState). Was CalDAV-Basic-Auth-protected
@@ -1666,10 +1724,10 @@ pub fn create_app(
         // Superseded by /me (the real dashboard, with credentials/cards) —
         // kept as a redirect so old bookmarks/links to the bare index still land somewhere useful.
         .route("/app", get(|| async { axum::response::Redirect::to("/me") }))
-        .route("/app/{db_id}", get(crate::webview::handle_webview_page))
-        .route("/app/{db_id}/api/events", get(crate::webview::handle_list_events).post(crate::webview::handle_create_event))
+        .route("/app/{public_id}", get(crate::webview::handle_webview_page))
+        .route("/app/{public_id}/api/events", get(crate::webview::handle_list_events).post(crate::webview::handle_create_event))
         .route(
-            "/app/{db_id}/api/events/{event_id}",
+            "/app/{public_id}/api/events/{event_id}",
             axum::routing::patch(crate::webview::handle_update_event).delete(crate::webview::handle_delete_event),
         )
         .layer(oidc_login_service);

@@ -40,3 +40,5 @@ rand = "0.8"
 # published as a new version.
 tower-sessions-sqlx-store = { git = "https://github.com/maxcountryman/tower-sessions-stores", rev = "be0f230fadb4", features = ["postgres"] }
 argon2 = "0.5"
+aes-gcm = "0.10"
+base64 = "0.22"

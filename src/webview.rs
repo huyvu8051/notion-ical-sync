@@ -18,16 +18,19 @@ async fn current_user_id(state: &AppState, claims: &OidcClaims<EmptyAdditionalCl
     find_or_create_user(&state.db, sub, email).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
 }
 
-/// Every `/app/{db_id}/...` handler needs this same check: the calendar must
-/// exist, and must belong to whoever is logged in — otherwise one user could
-/// read or edit another user's Notion events just by guessing a database_id.
+/// Every `/app/{public_id}/...` handler needs this same check: the calendar
+/// must exist, and must belong to whoever is logged in — otherwise one user
+/// could read or edit another user's Notion events just by guessing an id.
+/// Looked up by public_id, not database_id: several users can now each have
+/// their own subscription to the same Notion database, so database_id alone
+/// no longer identifies a single owner.
 async fn require_owned_calendar(
     state: &AppState,
     claims: &OidcClaims<EmptyAdditionalClaims>,
-    db_id: &str,
+    public_id: &str,
 ) -> Result<crate::caldav::CalendarRow, StatusCode> {
     let user_id = current_user_id(state, claims).await?;
-    match state.calendar_by_db_id(db_id).await {
+    match state.calendar_by_public_id(public_id).await {
         Some(cal) if cal.user_id == user_id => Ok(cal),
         Some(_) => Err(StatusCode::FORBIDDEN),
         None => Err(StatusCode::NOT_FOUND),
@@ -40,13 +43,13 @@ async fn require_owned_calendar(
 pub async fn handle_webview_page(
     State(state): State<AppState>,
     claims: OidcClaims<EmptyAdditionalClaims>,
-    Path(db_id): Path<String>,
+    Path(public_id): Path<String>,
 ) -> impl IntoResponse {
-    if let Err(status) = require_owned_calendar(&state, &claims, &db_id).await {
+    if let Err(status) = require_owned_calendar(&state, &claims, &public_id).await {
         return status.into_response();
     }
 
-    let events_url = format!("/app/{}/api/events", db_id);
+    let events_url = format!("/app/{}/api/events", public_id);
     let html = leptos::prelude::view! {
         <!DOCTYPE html>
         <html lang="en">
@@ -152,14 +155,15 @@ document.addEventListener('DOMContentLoaded', function() {{
 pub async fn handle_list_events(
     State(state): State<AppState>,
     claims: OidcClaims<EmptyAdditionalClaims>,
-    Path(db_id): Path<String>,
+    Path(public_id): Path<String>,
 ) -> impl IntoResponse {
-    if let Err(status) = require_owned_calendar(&state, &claims, &db_id).await {
-        return status.into_response();
-    }
+    let cal = match require_owned_calendar(&state, &claims, &public_id).await {
+        Ok(cal) => cal,
+        Err(status) => return status.into_response(),
+    };
 
     let cache = state.cache.read().await;
-    let pages = cache.get(&db_id).cloned().unwrap_or_default();
+    let pages = cache.get(&cal.database_id).cloned().unwrap_or_default();
     let events: Vec<_> = pages
         .into_iter()
         .map(|p| {
@@ -185,10 +189,10 @@ pub struct CreateEventBody {
 pub async fn handle_create_event(
     State(state): State<AppState>,
     claims: OidcClaims<EmptyAdditionalClaims>,
-    Path(db_id): Path<String>,
+    Path(public_id): Path<String>,
     Json(body): Json<CreateEventBody>,
 ) -> impl IntoResponse {
-    let cal = match require_owned_calendar(&state, &claims, &db_id).await {
+    let cal = match require_owned_calendar(&state, &claims, &public_id).await {
         Ok(cal) => cal,
         Err(status) => return status.into_response(),
     };
@@ -234,10 +238,10 @@ where
 pub async fn handle_update_event(
     State(state): State<AppState>,
     claims: OidcClaims<EmptyAdditionalClaims>,
-    Path((db_id, event_id)): Path<(String, String)>,
+    Path((public_id, event_id)): Path<(String, String)>,
     Json(body): Json<UpdateEventBody>,
 ) -> impl IntoResponse {
-    let cal = match require_owned_calendar(&state, &claims, &db_id).await {
+    let cal = match require_owned_calendar(&state, &claims, &public_id).await {
         Ok(cal) => cal,
         Err(status) => return status.into_response(),
     };
@@ -266,9 +270,9 @@ pub async fn handle_update_event(
 pub async fn handle_delete_event(
     State(state): State<AppState>,
     claims: OidcClaims<EmptyAdditionalClaims>,
-    Path((db_id, event_id)): Path<(String, String)>,
+    Path((public_id, event_id)): Path<(String, String)>,
 ) -> impl IntoResponse {
-    let cal = match require_owned_calendar(&state, &claims, &db_id).await {
+    let cal = match require_owned_calendar(&state, &claims, &public_id).await {
         Ok(cal) => cal,
         Err(status) => return status.into_response(),
     };

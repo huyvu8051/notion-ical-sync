@@ -52,8 +52,27 @@ async fn main() -> anyhow::Result<()> {
         );
     }
 
+    // Lets the dashboard's "Hiện mật khẩu" action decrypt a calendar's
+    // stored CalDAV password again later (see oauth.rs::encrypt_password).
+    // Must decode to exactly 32 bytes (AES-256-GCM) — generate with e.g.
+    // `openssl rand -base64 32`. None just disables reveal (rows show "Tạo
+    // lại mật khẩu" instead), same posture as the other optional configs.
+    let password_enc_key = env::var("CALDAV_PASSWORD_ENC_KEY")
+        .ok()
+        .and_then(|b64| {
+            use base64::Engine;
+            base64::engine::general_purpose::STANDARD.decode(b64).ok()
+        })
+        .and_then(|bytes| <[u8; 32]>::try_from(bytes).ok());
+    if password_enc_key.is_none() {
+        tracing::warn!(
+            "CALDAV_PASSWORD_ENC_KEY not set (or not valid base64 for 32 bytes); \"Hiện mật khẩu\" \
+             will be unavailable until it's configured — \"Tạo lại mật khẩu\" still works"
+        );
+    }
+
     let caldav_allow_writes = CaldavAllowWrites::from_env();
-    let state = AppState::new(pool.clone(), caldav_allow_writes, webhook_secret, notion_oauth);
+    let state = AppState::new(pool.clone(), caldav_allow_writes, webhook_secret, notion_oauth, password_enc_key);
 
     // Initial refresh
     state.refresh_all().await;

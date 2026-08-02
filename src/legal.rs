@@ -24,9 +24,9 @@ fn page(title: &str, back_label: &str, body: &str) -> Html<String> {
     Html(format!(
         r#"<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>{title} — Notion CalDAV SaaS</title>{LEGAL_STYLE}</head>
+<title>{title} — NotionCal</title>{LEGAL_STYLE}</head>
 <body>
-<div class="top-nav"><strong>Notion CalDAV SaaS</strong><a class="back" href="/me">{back_label}</a></div>
+<div class="top-nav"><strong>NotionCal</strong><a class="back" href="/me">{back_label}</a></div>
 {body}
 </body></html>"#
     ))
@@ -40,7 +40,7 @@ pub async fn privacy_policy_page() -> impl IntoResponse {
 <h1>Privacy Policy</h1>
 <p class="updated">Last updated: 2026-08-02</p>
 
-<p>Notion CalDAV SaaS ("the Service") turns a Notion database into a CalDAV feed and
+<p>NotionCal ("the Service") turns a Notion database into a CalDAV feed and
 a browser calendar view. This page explains what data we collect and how we use it.</p>
 
 <h2>What we collect</h2>
@@ -102,7 +102,7 @@ pub async fn terms_of_service_page() -> impl IntoResponse {
 <h1>Terms of Service</h1>
 <p class="updated">Last updated: 2026-08-02</p>
 
-<p>By using Notion CalDAV SaaS ("the Service"), you agree to these terms.</p>
+<p>By using NotionCal ("the Service"), you agree to these terms.</p>
 
 <h2>The Service</h2>
 <p>The Service connects to a Notion workspace you authorize, and exposes the

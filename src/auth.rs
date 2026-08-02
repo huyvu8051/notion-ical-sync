@@ -184,32 +184,33 @@ pub async fn me(
     };
 
     let calendars: Vec<(String, String, String)> = sqlx::query_as(
-        "SELECT database_id, display_name, caldav_username FROM calendars WHERE user_id = $1 ORDER BY created_at",
+        "SELECT public_id, display_name, caldav_username FROM calendars WHERE user_id = $1 ORDER BY created_at",
     )
     .bind(user_id)
     .fetch_all(&state.db)
     .await
     .unwrap_or_default();
 
-    // Plaintext CalDAV passwords only ever exist for one request — we store
-    // just a hash — so a calendar just created by create_calendars stashes
-    // its password here in the session for this one render.
+    // Plaintext CalDAV passwords only ever exist for one request — a
+    // calendar just created, or one whose password was just revealed or
+    // regenerated (see oauth.rs), stashes it here in the session for this
+    // one render.
     let new_passwords = crate::oauth::take_new_calendar_credentials(&session).await;
     let banner = if !new_passwords.is_empty() {
         r#"<div class="flex items-center gap-sm p-md success-banner-gradient border border-[#DCFCE7] rounded-lg" id="success-banner">
 <div class="flex items-center justify-center w-6 h-6 bg-[#DCFCE7] text-[#166534] rounded-full shrink-0">
 <span class="material-symbols-outlined !text-[16px]" style="font-variation-settings: 'FILL' 1;">check_circle</span>
 </div>
-<p class="text-[#166534] font-medium text-body-md">Đã kết nối thành công! Lịch của bạn đã sẵn sàng. Lưu lại mật khẩu CalDAV bên dưới — chúng tôi sẽ không hiển thị lại.</p>
+<p class="text-[#166534] font-medium text-body-md">Mật khẩu CalDAV bên dưới sẽ không tự động hiển thị lại — lưu lại hoặc copy ngay.</p>
 </div>"#.to_string()
     } else {
         String::new()
     };
 
-    // A database_id can only ever belong to one calendar system-wide (see
-    // migrations/0001_init.sql) — surface a clear reason here instead of the
-    // previous silent no-op when someone tries to reconnect one that's
-    // already claimed by a different account.
+    // A user can't add the exact same database to their own account twice
+    // (UNIQUE(user_id, database_id), see migrations/0003) — surface that
+    // here instead of failing silently. Different users *can* now each have
+    // their own subscription to the same Notion database.
     let connect_errors = crate::oauth::take_calendar_connect_errors(&session).await;
     let error_banner = if connect_errors.is_empty() {
         String::new()
@@ -220,7 +221,7 @@ pub async fn me(
 <div class="flex items-center justify-center w-6 h-6 bg-[#fecaca] text-error rounded-full shrink-0">
 <span class="material-symbols-outlined !text-[16px]" style="font-variation-settings: 'FILL' 1;">error</span>
 </div>
-<p class="text-error font-medium text-body-md">Không thể kết nối: <strong>{names}</strong> đã được kết nối bởi một tài khoản khác trên hệ thống này. Nếu đây là database của bạn, hãy đăng nhập bằng tài khoản đã kết nối trước đó, hoặc liên hệ hỗ trợ để chuyển quyền sở hữu.</p>
+<p class="text-error font-medium text-body-md"><strong>{names}</strong> đã được kết nối trong tài khoản của bạn rồi — không có gì thay đổi.</p>
 </div>"#
         )
     };
@@ -242,13 +243,14 @@ pub async fn me(
 
     let items: String = calendars
         .iter()
-        .map(|(db_id, name, caldav_username)| {
-            let label = if name.is_empty() { db_id.as_str() } else { name.as_str() };
-            let caldav_url = format!("{}/cal/{}", cfg.base_url, db_id);
+        .map(|(public_id, name, caldav_username)| {
+            let label = if name.is_empty() { public_id.as_str() } else { name.as_str() };
+            let caldav_url = format!("{}/cal/{}", cfg.base_url, public_id);
             let password_row = match new_passwords.get(caldav_username) {
-                Some(pw) => copy_row("Mật khẩu (chỉ hiện 1 lần)", pw),
+                Some(pw) => copy_row("Mật khẩu CalDAV", pw),
                 None => String::new(),
             };
+            let public_id = html_escape(public_id);
             format!(
                 r#"<div class="bg-surface border border-outline-variant rounded-lg p-lg hover:border-outline transition-colors duration-200">
 <div class="flex flex-col md:flex-row justify-between items-start md:items-center gap-md mb-lg">
@@ -257,15 +259,25 @@ pub async fn me(
 <h2 class="font-semibold text-h2">{label}</h2>
 <span class="bg-[#DCFCE7] text-[#166534] px-xs py-[2px] rounded font-label-md text-[10px] uppercase tracking-wider">Đang hoạt động</span>
 </div>
-<a class="px-md h-8 border border-outline-variant hover:bg-surface-container-low font-label-md text-label-md transition-all flex items-center" href="/app/{db_id}">Mở lịch</a>
+<a class="px-md h-8 border border-outline-variant hover:bg-surface-container-low font-label-md text-label-md transition-all flex items-center" href="/app/{public_id}">Mở lịch</a>
 </div>
 {url_row}
 {username_row}
 {password_row}
 <p class="text-on-surface-variant text-[13px] mt-sm">Dán link này vào Apple Calendar, Google Calendar hoặc bất kỳ ứng dụng CalDAV nào</p>
+<div class="flex items-center gap-md mt-md pt-md border-t border-outline-variant">
+<form method="post" action="/me/calendars/{public_id}/reveal-password">
+<button type="submit" class="text-label-md text-secondary hover:underline">Hiện mật khẩu</button>
+</form>
+<form method="post" action="/me/calendars/{public_id}/regenerate-password" onsubmit="return confirm('Tạo mật khẩu mới? Mật khẩu cũ sẽ ngừng hoạt động ngay.');">
+<button type="submit" class="text-label-md text-secondary hover:underline">Tạo lại mật khẩu</button>
+</form>
+<form method="post" action="/me/calendars/{public_id}/delete" onsubmit="return confirm('Xoá calendar này? Dữ liệu trên Notion không bị ảnh hưởng, nhưng lịch sẽ ngừng đồng bộ.');" class="ml-auto">
+<button type="submit" class="text-label-md text-error hover:underline">Xoá</button>
+</form>
+</div>
 </div>"#,
                 label = html_escape(label),
-                db_id = html_escape(db_id),
                 url_row = copy_row("CalDAV URL", &caldav_url),
                 username_row = copy_row("Username", caldav_username),
             )
@@ -285,11 +297,11 @@ pub async fn me(
     Html(format!(
         r#"<!doctype html>
 <html lang="vi"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Trang của bạn — Notion CalDAV SaaS</title>{DASHBOARD_HEAD}</head>
+<title>Trang của bạn — NotionCal</title>{DASHBOARD_HEAD}</head>
 <body class="bg-background text-on-surface font-body-md min-h-screen">
 <header class="bg-surface border-b border-outline-variant sticky top-0 z-50">
 <div class="flex justify-between items-center h-16 px-lg w-full max-w-[1280px] mx-auto">
-<span class="text-h1 font-semibold tracking-tighter text-primary">Notion CalDAV SaaS</span>
+<span class="text-h1 font-semibold tracking-tighter text-primary">NotionCal</span>
 <div class="flex items-center space-x-md">
 <span class="text-on-surface-variant font-label-md text-label-md">{email}</span>
 <a class="flex items-center justify-center w-8 h-8 hover:bg-surface-container-low transition-colors duration-200 rounded" href="/logout" title="Đăng xuất">
@@ -363,7 +375,7 @@ const LANDING_PAGE_HTML: &str = r##"<!doctype html>
 <html class="light" lang="vi"><head>
 <meta charset="utf-8"/>
 <meta content="width=device-width, initial-scale=1.0" name="viewport"/>
-<title>Notion CalDAV SaaS - Đồng bộ hóa Notion với Calendar</title>
+<title>NotionCal - Đồng bộ hóa Notion với Calendar</title>
 <script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Geist:wght@400;500&family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap" rel="stylesheet"/>
 <script id="tailwind-config">
@@ -407,7 +419,7 @@ body { font-family: 'Inter', sans-serif; -webkit-font-smoothing: antialiased; -m
 <div class="flex items-center gap-8">
 <a class="text-h2 font-bold text-primary flex items-center gap-2" href="/">
 <span class="material-symbols-outlined text-primary">calendar_month</span>
-Notion CalDAV SaaS
+NotionCal
 </a>
 <nav class="hidden md:flex items-center gap-6">
 <a class="text-body-md text-on-surface-variant hover:text-primary transition-colors" href="#how-it-works">Cách hoạt động</a>
@@ -530,7 +542,7 @@ notion-caldav.opendiy.vn/cal/...
 <footer class="border-t border-outline-variant bg-surface mt-xl">
 <div class="max-w-[1280px] mx-auto w-full px-margin-desktop py-lg flex flex-col md:flex-row justify-between items-center gap-lg">
 <div class="flex flex-col md:flex-row items-center gap-md">
-<span class="text-h3 font-bold text-primary">Notion CalDAV SaaS</span>
+<span class="text-h3 font-bold text-primary">NotionCal</span>
 </div>
 <div class="flex items-center gap-6">
 <a class="text-label-md text-on-surface-variant hover:text-primary transition-colors opacity-80 hover:opacity-100" href="/privacy">Chính sách bảo mật</a>

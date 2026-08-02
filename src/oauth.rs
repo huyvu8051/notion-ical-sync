@@ -6,11 +6,14 @@
 
 use std::collections::HashMap;
 
+use aes_gcm::aead::{Aead, KeyInit};
+use aes_gcm::{Aes256Gcm, Nonce};
 use argon2::password_hash::{PasswordHasher, SaltString};
 use argon2::Argon2;
-use axum::extract::{Query, State};
+use axum::extract::{Path, Query, State};
 use axum::response::{Html, IntoResponse, Redirect};
 use axum_oidc::{EmptyAdditionalClaims, OidcClaims};
+use base64::Engine;
 use rand::Rng;
 use serde::Deserialize;
 use tracing::error;
@@ -54,12 +57,39 @@ fn hash_password(password: &str) -> Result<String, argon2::password_hash::Error>
     Ok(Argon2::default().hash_password(password.as_bytes(), &salt)?.to_string())
 }
 
+/// Encrypts a CalDAV password for storage in `caldav_password_encrypted`, so
+/// the dashboard's "Hiện mật khẩu" action can recover it later — separate
+/// from `caldav_password_hash` (Argon2, one-way), which is what actual
+/// CalDAV Basic Auth verifies against and is unaffected by this.
+fn encrypt_password(key: &[u8; 32], plaintext: &str) -> Option<String> {
+    let cipher = Aes256Gcm::new(key.into());
+    let mut nonce_bytes = [0u8; 12];
+    rand::thread_rng().fill(&mut nonce_bytes);
+    let nonce = Nonce::from_slice(&nonce_bytes);
+    let ciphertext = cipher.encrypt(nonce, plaintext.as_bytes()).ok()?;
+    let mut combined = nonce_bytes.to_vec();
+    combined.extend_from_slice(&ciphertext);
+    Some(base64::engine::general_purpose::STANDARD.encode(combined))
+}
+
+fn decrypt_password(key: &[u8; 32], encoded: &str) -> Option<String> {
+    let combined = base64::engine::general_purpose::STANDARD.decode(encoded).ok()?;
+    if combined.len() < 12 {
+        return None;
+    }
+    let (nonce_bytes, ciphertext) = combined.split_at(12);
+    let cipher = Aes256Gcm::new(key.into());
+    let nonce = Nonce::from_slice(nonce_bytes);
+    let plaintext = cipher.decrypt(nonce, ciphertext).ok()?;
+    String::from_utf8(plaintext).ok()
+}
+
 fn error_page(message: &str) -> axum::response::Response {
     Html(format!(
         r#"<!doctype html>
 <html lang="vi"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">{AUTH_STYLE}</head>
 <body>
-<div class="top-nav"><strong>Notion CalDAV SaaS</strong><a class="logout" href="/me">Quay lại</a></div>
+<div class="top-nav"><strong>NotionCal</strong><a class="logout" href="/me">Quay lại</a></div>
 <p class="hint">{}</p>
 </body></html>"#,
         html_escape(message)
@@ -111,7 +141,7 @@ fn onboarding_top_nav(email: &str) -> String {
     format!(
         r#"<header class="bg-surface border-b border-outline-variant fixed top-0 left-0 right-0 z-50">
 <nav class="flex justify-between items-center w-full px-margin-desktop h-[56px] max-w-[1280px] mx-auto">
-<span class="text-h2 font-semibold text-primary">Notion CalDAV SaaS</span>
+<span class="text-h2 font-semibold text-primary">NotionCal</span>
 <div class="flex items-center gap-lg">
 <span class="text-on-surface-variant text-label-md">{}</span>
 <a class="text-primary hover:bg-surface-container-low transition-colors px-sm py-xs rounded-lg text-label-md" href="/logout">Đăng xuất</a>
@@ -129,7 +159,7 @@ pub async fn connect_notion_page(claims: OidcClaims<EmptyAdditionalClaims>) -> i
     Html(format!(
         r#"<!doctype html>
 <html lang="vi"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Kết nối Notion — Notion CalDAV SaaS</title>{ONBOARDING_HEAD}</head>
+<title>Kết nối Notion — NotionCal</title>{ONBOARDING_HEAD}</head>
 <body class="min-h-screen flex flex-col">
 {top_nav}
 <main class="flex-grow flex items-center justify-center pt-[56px] px-margin-mobile md:px-margin-desktop">
@@ -503,7 +533,7 @@ Không tìm thấy thuộc tính ngày
     Html(format!(
         r#"<!doctype html>
 <html lang="vi"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Chọn cơ sở dữ liệu — Notion CalDAV SaaS</title>{ONBOARDING_HEAD}</head>
+<title>Chọn cơ sở dữ liệu — NotionCal</title>{ONBOARDING_HEAD}</head>
 <body class="min-h-screen flex flex-col">
 {top_nav}
 <main class="flex-grow flex flex-col pt-[80px] pb-32">
@@ -614,12 +644,14 @@ pub async fn create_calendars(
     };
 
     // (display_name, caldav_username, plaintext password) for calendars
-    // actually created just now — shown once on the dashboard, never stored.
+    // actually created just now — shown once on the dashboard (reveal-able
+    // again later via caldav_password_encrypted, see encrypt_password).
     let mut new_credentials: Vec<(String, String, String)> = Vec::new();
-    // Titles of databases that couldn't be connected because `database_id` is
-    // globally unique (see migrations/0001_init.sql) — some other account on
-    // this SaaS already claimed them. Surfaced on /me instead of failing
-    // silently, which is what happened before this fix.
+    // Titles of databases already connected under *this* user's own account.
+    // database_id is no longer globally unique (see migrations/0003 — the
+    // same Notion database can now have many subscribers), so the only
+    // remaining conflict is UNIQUE(user_id, database_id): re-selecting one
+    // you already have. Surfaced on /me instead of failing silently.
     let mut already_connected: Vec<String> = Vec::new();
 
     for db_id in &form.db_ids {
@@ -628,6 +660,7 @@ pub async fn create_calendars(
         };
         let date_property = candidate.date_property.clone().expect("checked above");
 
+        let public_id = uuid::Uuid::new_v4().to_string();
         let caldav_username = format!("cal_{}", generate_token(12));
         let caldav_password = generate_token(24);
         let password_hash = match hash_password(&caldav_password) {
@@ -637,20 +670,27 @@ pub async fn create_calendars(
                 continue;
             }
         };
+        let password_encrypted = state
+            .password_enc_key
+            .as_ref()
+            .and_then(|key| encrypt_password(key, &caldav_password))
+            .unwrap_or_default();
 
         let result = sqlx::query(
-            "INSERT INTO calendars (user_id, notion_connection_id, database_id, data_source_id, date_property, display_name, caldav_username, caldav_password_hash)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-             ON CONFLICT (database_id) DO NOTHING",
+            "INSERT INTO calendars (user_id, notion_connection_id, database_id, public_id, data_source_id, date_property, display_name, caldav_username, caldav_password_hash, caldav_password_encrypted)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+             ON CONFLICT (user_id, database_id) DO NOTHING",
         )
         .bind(user_id)
         .bind(form.connection_id)
         .bind(&candidate.database_id)
+        .bind(&public_id)
         .bind(&candidate.data_source_id)
         .bind(&date_property)
         .bind(&candidate.title)
         .bind(&caldav_username)
         .bind(&password_hash)
+        .bind(&password_encrypted)
         .execute(&state.db)
         .await;
 
@@ -677,8 +717,142 @@ pub async fn create_calendars(
     Redirect::to("/me").into_response()
 }
 
+/// Ownership-checked lookup shared by the delete/reveal/regenerate actions
+/// below — same shape as webview.rs's `require_owned_calendar`, kept as its
+/// own small copy here since oauth.rs doesn't depend on webview.rs.
+async fn owned_calendar_or_error(
+    state: &AppState,
+    claims: &OidcClaims<EmptyAdditionalClaims>,
+    public_id: &str,
+) -> Result<crate::caldav::CalendarRow, axum::response::Response> {
+    let sub = claims.subject().as_str();
+    let email = claims.email().map(|e| e.as_str()).unwrap_or("").to_string();
+    let user_id = match find_or_create_user(&state.db, sub, &email).await {
+        Ok(id) => id,
+        Err(_) => return Err(error_page("Có lỗi xảy ra.")),
+    };
+    match state.calendar_by_public_id(public_id).await {
+        Some(cal) if cal.user_id == user_id => Ok(cal),
+        _ => Err(error_page("Không tìm thấy calendar này.")),
+    }
+}
+
+/// Removes a calendar subscription (the SaaS's own row only — the
+/// underlying Notion database/pages are untouched). Evicts the shared cache
+/// entry too, but only once no other subscriber still references the same
+/// database_id.
+pub async fn delete_calendar(
+    State(state): State<AppState>,
+    claims: OidcClaims<EmptyAdditionalClaims>,
+    Path(public_id): Path<String>,
+) -> impl IntoResponse {
+    let cal = match owned_calendar_or_error(&state, &claims, &public_id).await {
+        Ok(cal) => cal,
+        Err(resp) => return resp,
+    };
+
+    if let Err(e) = sqlx::query("DELETE FROM calendars WHERE id = $1").bind(cal.id).execute(&state.db).await {
+        error!("failed to delete calendar {}: {}", cal.id, e);
+        return error_page("Không thể xoá calendar này.");
+    }
+
+    let still_referenced: i64 = sqlx::query_scalar("SELECT count(*) FROM calendars WHERE database_id = $1")
+        .bind(&cal.database_id)
+        .fetch_one(&state.db)
+        .await
+        .unwrap_or(1);
+    if still_referenced == 0 {
+        state.cache.write().await.remove(&cal.database_id);
+    }
+
+    Redirect::to("/me").into_response()
+}
+
+/// Decrypts and re-surfaces a calendar's current CalDAV password via the
+/// same one-time session stash `create_calendars` uses — reuses `me()`'s
+/// existing "just created" display path rather than a separate UI state.
+/// Rows created before `caldav_password_encrypted` existed (or before
+/// `CALDAV_PASSWORD_ENC_KEY` was configured) have nothing recoverable here;
+/// "Tạo lại mật khẩu" is the only way to get a working password shown again.
+pub async fn reveal_password(
+    State(state): State<AppState>,
+    claims: OidcClaims<EmptyAdditionalClaims>,
+    session: tower_sessions::Session,
+    Path(public_id): Path<String>,
+) -> impl IntoResponse {
+    let cal = match owned_calendar_or_error(&state, &claims, &public_id).await {
+        Ok(cal) => cal,
+        Err(resp) => return resp,
+    };
+
+    let Some(key) = state.password_enc_key.as_ref() else {
+        return error_page("Tính năng hiện mật khẩu chưa được cấu hình trên server này — dùng \"Tạo lại mật khẩu\" thay thế.");
+    };
+
+    let encrypted: String = sqlx::query_scalar("SELECT caldav_password_encrypted FROM calendars WHERE id = $1")
+        .bind(cal.id)
+        .fetch_one(&state.db)
+        .await
+        .unwrap_or_default();
+
+    let Some(password) = (!encrypted.is_empty()).then(|| decrypt_password(key, &encrypted)).flatten() else {
+        return error_page("Mật khẩu này được tạo trước khi tính năng \"Hiện lại\" ra mắt nên không thể khôi phục — hãy dùng \"Tạo lại mật khẩu\".");
+    };
+
+    let stash = vec![(cal.display_name.clone(), cal.caldav_username.clone(), password)];
+    if let Err(e) = session.insert("new_calendar_credentials", &stash).await {
+        error!("failed to stash revealed password in session: {}", e);
+    }
+
+    Redirect::to("/me").into_response()
+}
+
+/// Issues a brand new CalDAV password for a calendar, invalidating the old
+/// one — for rows whose original password isn't recoverable (see
+/// `reveal_password`), or just as a routine credential rotation.
+pub async fn regenerate_password(
+    State(state): State<AppState>,
+    claims: OidcClaims<EmptyAdditionalClaims>,
+    session: tower_sessions::Session,
+    Path(public_id): Path<String>,
+) -> impl IntoResponse {
+    let cal = match owned_calendar_or_error(&state, &claims, &public_id).await {
+        Ok(cal) => cal,
+        Err(resp) => return resp,
+    };
+
+    let new_password = generate_token(24);
+    let Ok(password_hash) = hash_password(&new_password) else {
+        return error_page("Có lỗi xảy ra.");
+    };
+    let password_encrypted = state
+        .password_enc_key
+        .as_ref()
+        .and_then(|key| encrypt_password(key, &new_password))
+        .unwrap_or_default();
+
+    if let Err(e) = sqlx::query("UPDATE calendars SET caldav_password_hash = $1, caldav_password_encrypted = $2 WHERE id = $3")
+        .bind(&password_hash)
+        .bind(&password_encrypted)
+        .bind(cal.id)
+        .execute(&state.db)
+        .await
+    {
+        error!("failed to regenerate caldav password for calendar {}: {}", cal.id, e);
+        return error_page("Không thể tạo lại mật khẩu.");
+    }
+
+    let stash = vec![(cal.display_name.clone(), cal.caldav_username.clone(), new_password)];
+    if let Err(e) = session.insert("new_calendar_credentials", &stash).await {
+        error!("failed to stash regenerated password in session: {}", e);
+    }
+
+    Redirect::to("/me").into_response()
+}
+
 /// Reads and clears the one-time post-onboarding credential stash written by
-/// `create_calendars`, keyed by caldav_username for `me()` to display.
+/// `create_calendars` (and by `reveal_password`/`regenerate_password`),
+/// keyed by caldav_username for `me()` to display.
 pub async fn take_new_calendar_credentials(session: &tower_sessions::Session) -> HashMap<String, String> {
     let stashed: Vec<(String, String, String)> = session.get("new_calendar_credentials").await.ok().flatten().unwrap_or_default();
     if !stashed.is_empty() {
@@ -687,10 +861,9 @@ pub async fn take_new_calendar_credentials(session: &tower_sessions::Session) ->
     stashed.into_iter().map(|(_, username, password)| (username, password)).collect()
 }
 
-/// Reads and clears the one-time stash of database titles that couldn't be
-/// connected because they're already claimed by another account (see
-/// `create_calendars`) — `me()` shows these as an error banner instead of
-/// the previous silent no-op.
+/// Reads and clears the one-time stash of database titles that were already
+/// connected under this same account (see `create_calendars`) — `me()` shows
+/// these as a notice instead of the previous silent no-op.
 pub async fn take_calendar_connect_errors(session: &tower_sessions::Session) -> Vec<String> {
     let stashed: Vec<String> = session.get("calendar_connect_errors").await.ok().flatten().unwrap_or_default();
     if !stashed.is_empty() {
