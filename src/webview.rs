@@ -34,57 +34,6 @@ async fn require_owned_calendar(
     }
 }
 
-/// `/app` — lists the logged-in user's own calendars (by their real Notion
-/// name) so you don't have to know/type a database_id by hand.
-pub async fn handle_webview_index(
-    State(state): State<AppState>,
-    claims: OidcClaims<EmptyAdditionalClaims>,
-) -> impl IntoResponse {
-    let user_id = match current_user_id(&state, &claims).await {
-        Ok(id) => id,
-        Err(status) => return status.into_response(),
-    };
-
-    let mut items = Vec::new();
-    for cal in state.calendars_for_user(user_id).await {
-        let name = if cal.display_name.is_empty() {
-            state.get_calendar_name(&cal.database_id, &cal.notion_access_token).await
-        } else {
-            cal.display_name.clone()
-        };
-        items.push((cal.database_id, name));
-    }
-
-    let html = view! {
-        <!DOCTYPE html>
-        <html lang="en">
-            <head>
-                <meta charset="utf-8"/>
-                <title>"Notion Calendars"</title>
-                <style>
-                    "body { font-family: sans-serif; margin: 2rem; max-width: 600px; }
-                    li { line-height: 2.2; font-size: 1.1rem; }
-                    a { color: #2563eb; text-decoration: none; }
-                    a:hover { text-decoration: underline; }"
-                </style>
-            </head>
-            <body>
-                <h1>"Notion Calendars"</h1>
-                <ul>
-                    {items
-                        .into_iter()
-                        .map(|(db_id, name)| {
-                            let href = format!("/app/{}", db_id);
-                            view! { <li><a href=href>{name}</a></li> }
-                        })
-                        .collect_view()}
-                </ul>
-            </body>
-        </html>
-    };
-    Html(leptos::prelude::RenderHtml::to_html(html)).into_response()
-}
-
 /// Server-rendered page shell (no client-side hydration/wasm — Leptos here
 /// is just producing the static HTML; all interactivity is FullCalendar's
 /// own JS, loaded from a CDN, talking to the JSON API below).
@@ -115,7 +64,7 @@ pub async fn handle_webview_page(
                 </style>
             </head>
             <body>
-                <nav><a href="/app">"← All calendars"</a></nav>
+                <nav><a href="/me">"← All calendars"</a></nav>
                 <div id="calendar"></div>
                 <script src="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.15/index.global.min.js"></script>
                 <script>{webview_js(&events_url)}</script>

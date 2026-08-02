@@ -1650,7 +1650,9 @@ pub fn create_app(
         // now gated the same way as the rest of the dashboard (OIDC
         // session), with per-handler ownership checks against the logged-in
         // user's own calendars.
-        .route("/app", get(crate::webview::handle_webview_index))
+        // Superseded by /me (the real dashboard, with credentials/cards) —
+        // kept as a redirect so old bookmarks/links to the bare index still land somewhere useful.
+        .route("/app", get(|| async { axum::response::Redirect::to("/me") }))
         .route("/app/{db_id}", get(crate::webview::handle_webview_page))
         .route("/app/{db_id}/api/events", get(crate::webview::handle_list_events).post(crate::webview::handle_create_event))
         .route(
