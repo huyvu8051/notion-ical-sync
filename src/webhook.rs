@@ -62,16 +62,28 @@ pub async fn handle_notion_webhook(
         return "ignored";
     }
 
-    let event_type = json.get("type").and_then(|v| v.as_str()).unwrap_or("unknown");
+    let event_type = json.get("type").and_then(|v| v.as_str()).unwrap_or("unknown").to_string();
     let data_source_id = json
         .pointer("/data/parent/data_source_id")
         .and_then(|v| v.as_str())
         .map(|s| s.to_string());
+    // `data.id` is the affected page's id for page.* events — absent for
+    // database/data_source-level events, which is fine, sync_log just shows
+    // an empty event_uid for those.
+    let page_id = json.pointer("/data/id").and_then(|v| v.as_str()).unwrap_or("").to_string();
 
-    info!(event_type, data_source_id = data_source_id.as_deref(), "notion webhook event verified");
+    info!(event_type = %event_type, data_source_id = data_source_id.as_deref(), "notion webhook event verified");
 
     if let Some(ds_id) = data_source_id {
         tokio::spawn(async move {
+            // Logged here (source="notion") rather than inside
+            // refresh_by_data_source, since that function is also called by
+            // the plain 10-minute poll and by CalDAV/webview writes'
+            // post-write refresh — this is specifically the "Notion pushed
+            // us a change" case a user watching their sync log cares about.
+            if let Some(cal) = state.calendar_by_data_source_id(&ds_id).await {
+                state.log_sync(cal.id, "notion", &event_type, &page_id, &page_id, "ok", "").await;
+            }
             state.refresh_by_data_source(&ds_id).await;
         });
     }
