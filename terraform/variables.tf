@@ -28,3 +28,14 @@ variable "extra_app_base_urls" {
   type        = list(string)
   default     = []
 }
+
+variable "google_oauth_client_id" {
+  description = "Google OAuth 2.0 client ID (opendiy GCP project) used for the realm's Google identity provider broker."
+  type        = string
+}
+
+variable "google_oauth_client_secret" {
+  description = "Google OAuth 2.0 client secret used for the realm's Google identity provider broker."
+  type        = string
+  sensitive   = true
+}

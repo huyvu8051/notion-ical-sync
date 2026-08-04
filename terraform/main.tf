@@ -38,3 +38,15 @@ resource "keycloak_openid_client" "app" {
     var.extra_app_base_urls,
   )
 }
+
+resource "keycloak_oidc_google_identity_provider" "google" {
+  realm         = keycloak_realm.notion_caldav_saas.id
+  client_id     = var.google_oauth_client_id
+  client_secret = var.google_oauth_client_secret
+
+  # Google accounts are already email-verified, so trust the address Keycloak
+  # gets back instead of forcing a second verification step.
+  trust_email    = true
+  sync_mode      = "IMPORT"
+  default_scopes = "openid email profile"
+}
