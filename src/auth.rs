@@ -589,6 +589,7 @@ NotionCal
 </a>
 <nav class="hidden md:flex items-center gap-6">
 <a class="text-body-md text-on-surface-variant hover:text-primary transition-colors" href="#how-it-works">Cách hoạt động</a>
+<a class="text-body-md text-on-surface-variant hover:text-primary transition-colors" href="#pricing">Giá cả</a>
 </nav>
 </div>
 <div class="flex items-center gap-4">
@@ -619,7 +620,7 @@ Biến cơ sở dữ liệu Notion thành lịch trực tuyến
 </a>
 <p class="mt-4 text-label-md text-on-surface-variant flex items-center gap-2">
 <span class="material-symbols-outlined text-[16px] text-secondary">verified</span>
-Miễn phí. Thiết lập trong chưa đầy 2 phút.
+6 tháng đầu miễn phí, không giới hạn. Không cần thẻ tín dụng.
 </p>
 </div>
 </div>
@@ -681,16 +682,16 @@ Miễn phí. Thiết lập trong chưa đầy 2 phút.
 <p class="text-body-md text-on-surface-variant mt-2">Chỉ đọc/ghi vào các trang bạn cho phép. Có thể ngắt kết nối bất cứ lúc nào.</p>
 </div>
 <div class="col-span-12 md:col-span-4 p-lg hairline-border rounded-xl bg-white">
-<h4 class="text-h3 text-primary mb-2">Miễn phí, không giới hạn</h4>
+<h4 class="text-h3 text-primary mb-2">Giá đơn giản</h4>
 <ul class="space-y-2">
 <li class="flex items-center gap-2 text-body-md text-on-surface-variant">
-<span class="material-symbols-outlined text-green-600 text-[18px]">check_circle</span> Không cần thẻ tín dụng
+<span class="material-symbols-outlined text-green-600 text-[18px]">check_circle</span> 6 tháng đầu miễn phí, không giới hạn
 </li>
 <li class="flex items-center gap-2 text-body-md text-on-surface-variant">
-<span class="material-symbols-outlined text-green-600 text-[18px]">check_circle</span> Kết nối nhiều database
+<span class="material-symbols-outlined text-green-600 text-[18px]">check_circle</span> Sau đó chỉ $1/năm
 </li>
 <li class="flex items-center gap-2 text-body-md text-on-surface-variant">
-<span class="material-symbols-outlined text-green-600 text-[18px]">check_circle</span> Webview xem/sửa trực tiếp
+<span class="material-symbols-outlined text-green-600 text-[18px]">check_circle</span> Không cần thẻ tín dụng để bắt đầu
 </li>
 </ul>
 </div>
@@ -703,6 +704,50 @@ Miễn phí. Thiết lập trong chưa đầy 2 phút.
 notion-caldav.opendiy.vn/cal/...
 </div>
 </div>
+</div>
+</section>
+<section class="bg-surface-container-low py-xl border-y border-outline-variant" id="pricing">
+<div class="max-w-[1280px] mx-auto px-margin-desktop">
+<div class="text-center mb-xl">
+<h2 class="text-h1 text-primary">Giá cả</h2>
+<p class="text-body-md text-on-surface-variant mt-2">Dùng thử miễn phí 6 tháng, sau đó chỉ $1/năm</p>
+</div>
+<div class="grid grid-cols-1 md:grid-cols-2 gap-gutter max-w-[720px] mx-auto">
+<div class="bg-white p-lg hairline-border rounded-xl">
+<h3 class="text-h2 text-primary mb-1">6 tháng đầu</h3>
+<p class="text-display text-primary mb-2">Miễn phí</p>
+<p class="text-body-md text-on-surface-variant mb-md">Dành cho mọi tài khoản mới, tính từ ngày đăng ký.</p>
+<ul class="space-y-2">
+<li class="flex items-center gap-2 text-body-md text-on-surface-variant">
+<span class="material-symbols-outlined text-green-600 text-[18px]">check_circle</span> Không giới hạn số sự kiện
+</li>
+<li class="flex items-center gap-2 text-body-md text-on-surface-variant">
+<span class="material-symbols-outlined text-green-600 text-[18px]">check_circle</span> Kết nối nhiều database
+</li>
+<li class="flex items-center gap-2 text-body-md text-on-surface-variant">
+<span class="material-symbols-outlined text-green-600 text-[18px]">check_circle</span> Không cần thẻ tín dụng
+</li>
+</ul>
+</div>
+<div class="bg-primary text-on-primary p-lg hairline-border rounded-xl relative">
+<div class="absolute -top-3 right-lg bg-secondary text-on-primary text-[11px] uppercase tracking-wider font-bold px-3 py-1 rounded-full">Sau 6 tháng</div>
+<h3 class="text-h2 mb-1">Nâng cấp</h3>
+<p class="text-display mb-2">$1<span class="text-h3 opacity-70">/năm</span></p>
+<p class="text-body-md opacity-80 mb-md">Đăng ký sớm vẫn được hưởng trọn 6 tháng miễn phí — chỉ bắt đầu tính phí sau khi hết hạn.</p>
+<ul class="space-y-2">
+<li class="flex items-center gap-2 text-body-md opacity-90">
+<span class="material-symbols-outlined text-[18px]">check_circle</span> Không giới hạn số sự kiện
+</li>
+<li class="flex items-center gap-2 text-body-md opacity-90">
+<span class="material-symbols-outlined text-[18px]">check_circle</span> Thanh toán an toàn qua Stripe
+</li>
+<li class="flex items-center gap-2 text-body-md opacity-90">
+<span class="material-symbols-outlined text-[18px]">check_circle</span> Huỷ bất cứ lúc nào
+</li>
+</ul>
+</div>
+</div>
+<p class="text-center text-label-md text-on-surface-variant mt-lg">Hết 6 tháng miễn phí mà chưa đăng ký? Bạn vẫn dùng được, giới hạn 10 sự kiện mới/ngày.</p>
 </div>
 </section>
 </main>
@@ -771,6 +816,7 @@ NotionCal
 </a>
 <nav class="hidden md:flex items-center gap-6">
 <a class="text-body-md text-on-surface-variant hover:text-primary transition-colors" href="#how-it-works">How it works</a>
+<a class="text-body-md text-on-surface-variant hover:text-primary transition-colors" href="#pricing">Pricing</a>
 </nav>
 </div>
 <div class="flex items-center gap-4">
@@ -801,7 +847,7 @@ Log in / Sign up
 </a>
 <p class="mt-4 text-label-md text-on-surface-variant flex items-center gap-2">
 <span class="material-symbols-outlined text-[16px] text-secondary">verified</span>
-Free. Set up in under 2 minutes.
+Free for your first 6 months, unlimited. No credit card required.
 </p>
 </div>
 </div>
@@ -863,16 +909,16 @@ Free. Set up in under 2 minutes.
 <p class="text-body-md text-on-surface-variant mt-2">Only reads/writes the pages you authorize. Disconnect anytime.</p>
 </div>
 <div class="col-span-12 md:col-span-4 p-lg hairline-border rounded-xl bg-white">
-<h4 class="text-h3 text-primary mb-2">Free, no limits</h4>
+<h4 class="text-h3 text-primary mb-2">Simple pricing</h4>
 <ul class="space-y-2">
 <li class="flex items-center gap-2 text-body-md text-on-surface-variant">
-<span class="material-symbols-outlined text-green-600 text-[18px]">check_circle</span> No credit card required
+<span class="material-symbols-outlined text-green-600 text-[18px]">check_circle</span> Free for your first 6 months, unlimited
 </li>
 <li class="flex items-center gap-2 text-body-md text-on-surface-variant">
-<span class="material-symbols-outlined text-green-600 text-[18px]">check_circle</span> Connect multiple databases
+<span class="material-symbols-outlined text-green-600 text-[18px]">check_circle</span> Just $1/year after that
 </li>
 <li class="flex items-center gap-2 text-body-md text-on-surface-variant">
-<span class="material-symbols-outlined text-green-600 text-[18px]">check_circle</span> Built-in webview to view/edit events
+<span class="material-symbols-outlined text-green-600 text-[18px]">check_circle</span> No credit card required to start
 </li>
 </ul>
 </div>
@@ -885,6 +931,50 @@ Free. Set up in under 2 minutes.
 notion-caldav.opendiy.vn/cal/...
 </div>
 </div>
+</div>
+</section>
+<section class="bg-surface-container-low py-xl border-y border-outline-variant" id="pricing">
+<div class="max-w-[1280px] mx-auto px-margin-desktop">
+<div class="text-center mb-xl">
+<h2 class="text-h1 text-primary">Pricing</h2>
+<p class="text-body-md text-on-surface-variant mt-2">Free for 6 months, then just $1/year</p>
+</div>
+<div class="grid grid-cols-1 md:grid-cols-2 gap-gutter max-w-[720px] mx-auto">
+<div class="bg-white p-lg hairline-border rounded-xl">
+<h3 class="text-h2 text-primary mb-1">First 6 months</h3>
+<p class="text-display text-primary mb-2">Free</p>
+<p class="text-body-md text-on-surface-variant mb-md">For every new account, starting the day you sign up.</p>
+<ul class="space-y-2">
+<li class="flex items-center gap-2 text-body-md text-on-surface-variant">
+<span class="material-symbols-outlined text-green-600 text-[18px]">check_circle</span> Unlimited events
+</li>
+<li class="flex items-center gap-2 text-body-md text-on-surface-variant">
+<span class="material-symbols-outlined text-green-600 text-[18px]">check_circle</span> Connect multiple databases
+</li>
+<li class="flex items-center gap-2 text-body-md text-on-surface-variant">
+<span class="material-symbols-outlined text-green-600 text-[18px]">check_circle</span> No credit card required
+</li>
+</ul>
+</div>
+<div class="bg-primary text-on-primary p-lg hairline-border rounded-xl relative">
+<div class="absolute -top-3 right-lg bg-secondary text-on-primary text-[11px] uppercase tracking-wider font-bold px-3 py-1 rounded-full">After 6 months</div>
+<h3 class="text-h2 mb-1">Upgrade</h3>
+<p class="text-display mb-2">$1<span class="text-h3 opacity-70">/year</span></p>
+<p class="text-body-md opacity-80 mb-md">Subscribe early and you'll still get your full 6 free months first — billing only starts once your trial ends.</p>
+<ul class="space-y-2">
+<li class="flex items-center gap-2 text-body-md opacity-90">
+<span class="material-symbols-outlined text-[18px]">check_circle</span> Unlimited events
+</li>
+<li class="flex items-center gap-2 text-body-md opacity-90">
+<span class="material-symbols-outlined text-[18px]">check_circle</span> Secure checkout via Stripe
+</li>
+<li class="flex items-center gap-2 text-body-md opacity-90">
+<span class="material-symbols-outlined text-[18px]">check_circle</span> Cancel anytime
+</li>
+</ul>
+</div>
+</div>
+<p class="text-center text-label-md text-on-surface-variant mt-lg">Past your free 6 months without subscribing? You can still use NotionCal, capped at 10 new events/day.</p>
 </div>
 </section>
 </main>
