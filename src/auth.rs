@@ -196,6 +196,10 @@ struct MeLabels {
     heading: &'static str,
     subheading: &'static str,
     connect_more: &'static str,
+    billing_free_until: &'static str,
+    billing_subscribed: &'static str,
+    billing_quota: &'static str,
+    billing_upgrade_cta: &'static str,
 }
 
 const ME_LABELS_VI: MeLabels = MeLabels {
@@ -221,6 +225,10 @@ const ME_LABELS_VI: MeLabels = MeLabels {
     heading: "Calendar của bạn",
     subheading: "Quản lý và đồng bộ hóa các cơ sở dữ liệu Notion với ứng dụng lịch yêu thích của bạn.",
     connect_more: "Kết nối thêm cơ sở dữ liệu",
+    billing_free_until: "Miễn phí đến {date}",
+    billing_subscribed: "Đã đăng ký — $1/năm",
+    billing_quota: "{used}/{limit} sự kiện hôm nay",
+    billing_upgrade_cta: "Nâng cấp $1/năm",
 };
 
 const ME_LABELS_EN: MeLabels = MeLabels {
@@ -246,6 +254,10 @@ const ME_LABELS_EN: MeLabels = MeLabels {
     heading: "Your calendars",
     subheading: "Manage and sync your Notion databases with your favorite calendar app.",
     connect_more: "Connect another database",
+    billing_free_until: "Free until {date}",
+    billing_subscribed: "Subscribed — $1/year",
+    billing_quota: "{used}/{limit} events today",
+    billing_upgrade_cta: "Upgrade for $1/year",
 };
 
 pub async fn me(
@@ -265,6 +277,46 @@ pub async fn me(
     let user_id = match find_or_create_user(&state.db, sub, &email).await {
         Ok(id) => id,
         Err(_) => return (axum::http::StatusCode::INTERNAL_SERVER_ERROR, l.error_generic).into_response(),
+    };
+
+    let billing_card = {
+        let row: Option<(chrono::DateTime<chrono::Utc>, String)> =
+            sqlx::query_as("SELECT trial_started_at, subscription_status FROM users WHERE id = $1")
+                .bind(user_id)
+                .fetch_optional(&state.db)
+                .await
+                .ok()
+                .flatten();
+        let (trial_started_at, subscription_status) = row.unwrap_or((chrono::Utc::now(), "none".to_string()));
+        let subscribed = matches!(subscription_status.as_str(), "trialing" | "active");
+
+        let (status_text, show_cta) = if subscribed {
+            (l.billing_subscribed.to_string(), false)
+        } else {
+            match crate::billing::effective_access(&state, user_id).await {
+                crate::billing::AccessLevel::Unlimited => {
+                    let free_until = crate::billing::trial_end(trial_started_at).format("%Y-%m-%d").to_string();
+                    (l.billing_free_until.replace("{date}", &free_until), true)
+                }
+                crate::billing::AccessLevel::Quota { used_today, limit } => (
+                    l.billing_quota.replace("{used}", &used_today.to_string()).replace("{limit}", &limit.to_string()),
+                    true,
+                ),
+            }
+        };
+        let cta = if show_cta && state.stripe.is_some() {
+            format!(
+                r#" <a href="/billing/checkout" class="text-secondary hover:underline font-medium">{}</a>"#,
+                l.billing_upgrade_cta
+            )
+        } else {
+            String::new()
+        };
+        format!(
+            r#"<div class="flex items-center gap-sm p-md bg-surface-container-low border border-outline-variant rounded-lg">
+<p class="text-on-surface-variant text-body-md">{status_text}{cta}</p>
+</div>"#
+        )
     };
 
     let calendars: Vec<(String, String, String)> = sqlx::query_as(
@@ -416,6 +468,7 @@ pub async fn me(
 <main class="max-w-[1280px] mx-auto px-margin-mobile md:px-margin-desktop py-lg space-y-lg">
 {banner}
 {error_banner}
+{billing_card}
 <div class="flex flex-col md:flex-row md:items-end justify-between gap-md border-b border-outline-variant pb-md">
 <div>
 <h1 class="text-h1 font-semibold">{heading}</h1>

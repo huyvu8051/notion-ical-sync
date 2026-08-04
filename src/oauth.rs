@@ -84,7 +84,7 @@ fn decrypt_password(key: &[u8; 32], encoded: &str) -> Option<String> {
     String::from_utf8(plaintext).ok()
 }
 
-fn error_page(message: &str) -> axum::response::Response {
+pub(crate) fn error_page(message: &str) -> axum::response::Response {
     Html(format!(
         r#"<!doctype html>
 <html lang="vi"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">{AUTH_STYLE}</head>

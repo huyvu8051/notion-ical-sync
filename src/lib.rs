@@ -7,6 +7,7 @@ pub mod auth;
 pub mod oauth;
 pub mod legal;
 pub mod i18n;
+pub mod billing;
 
 pub use notion::*;
 pub use notion_fs::*;
@@ -17,4 +18,5 @@ pub use auth::*;
 pub use oauth::*;
 pub use legal::*;
 pub use i18n::*;
+pub use billing::*;
 

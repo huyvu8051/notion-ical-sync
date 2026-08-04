@@ -71,8 +71,19 @@ async fn main() -> anyhow::Result<()> {
         );
     }
 
+    // $1/year Stripe subscription checkout. None disables /billing/checkout
+    // (shows a not-configured page), same posture as the other optional
+    // integrations above.
+    let stripe = notion_ical_sync::billing::StripeConfig::from_env();
+    if stripe.is_none() {
+        tracing::warn!(
+            "STRIPE_SECRET_KEY/STRIPE_WEBHOOK_SECRET/STRIPE_PRICE_ID not set; \
+             /billing/checkout will show a not-configured page until they're set"
+        );
+    }
+
     let caldav_allow_writes = CaldavAllowWrites::from_env();
-    let state = AppState::new(pool.clone(), caldav_allow_writes, webhook_secret, notion_oauth, password_enc_key);
+    let state = AppState::new(pool.clone(), caldav_allow_writes, webhook_secret, notion_oauth, password_enc_key, stripe);
 
     // Initial refresh
     state.refresh_all().await;

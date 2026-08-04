@@ -29,7 +29,7 @@ base64_light = "0.1.6"
 leptos = { version = "0.8", features = ["ssr"] }
 hmac = "0.12"
 sha2 = "0.10"
-sqlx = { version = "0.8", default-features = false, features = ["postgres", "runtime-tokio", "macros", "migrate"] }
+sqlx = { version = "0.8", default-features = false, features = ["postgres", "runtime-tokio", "macros", "migrate", "chrono"] }
 axum-oidc = "=1.0.0-dev-2"
 tower-sessions = "0.15"
 rand = "0.8"

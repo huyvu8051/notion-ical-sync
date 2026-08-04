@@ -58,6 +58,7 @@ struct WebviewLabels {
     confirm_delete_event: &'static str,
     alert_delete_failed: &'static str,
     alert_update_date_failed: &'static str,
+    alert_quota_exceeded: &'static str,
 }
 
 const WEBVIEW_LABELS_VI: WebviewLabels = WebviewLabels {
@@ -82,6 +83,7 @@ const WEBVIEW_LABELS_VI: WebviewLabels = WebviewLabels {
     confirm_delete_event: "Xoá sự kiện này?",
     alert_delete_failed: "Xoá thất bại",
     alert_update_date_failed: "Cập nhật ngày thất bại",
+    alert_quota_exceeded: "Đã đạt giới hạn 10 sự kiện miễn phí hôm nay. Nâng cấp $1/năm để bỏ giới hạn.",
 };
 
 const WEBVIEW_LABELS_EN: WebviewLabels = WebviewLabels {
@@ -106,6 +108,7 @@ const WEBVIEW_LABELS_EN: WebviewLabels = WebviewLabels {
     confirm_delete_event: "Delete this event?",
     alert_delete_failed: "Delete failed",
     alert_update_date_failed: "Failed to update date",
+    alert_quota_exceeded: "You've hit today's free limit of 10 events. Upgrade for $1/year to remove it.",
 };
 
 /// Server-rendered page shell (no client-side hydration/wasm — Leptos here
@@ -326,7 +329,7 @@ function saveFromModal() {{
       headers: {{ 'Content-Type': 'application/json' }},
       body: JSON.stringify({{ title: title, start: start, end: end }})
     }}).then(function(r) {{
-      if (!r.ok) {{ alert('{alert_update_failed}'); return; }}
+      if (!r.ok) {{ alert(r.status === 429 ? '{alert_quota_exceeded}' : '{alert_update_failed}'); return; }}
       closeModal();
       calendar.refetchEvents();
     }});
@@ -336,7 +339,7 @@ function saveFromModal() {{
       headers: {{ 'Content-Type': 'application/json' }},
       body: JSON.stringify({{ title: title, start: start, end: end }})
     }}).then(function(r) {{
-      if (!r.ok) {{ alert('{alert_create_failed}'); return; }}
+      if (!r.ok) {{ alert(r.status === 429 ? '{alert_quota_exceeded}' : '{alert_create_failed}'); return; }}
       closeModal();
       calendar.refetchEvents();
     }});
@@ -407,6 +410,7 @@ document.addEventListener('DOMContentLoaded', function() {{
         confirm_delete_event = l.confirm_delete_event,
         alert_delete_failed = l.alert_delete_failed,
         alert_update_date_failed = l.alert_update_date_failed,
+        alert_quota_exceeded = l.alert_quota_exceeded,
     )
 }
 
@@ -452,12 +456,21 @@ pub async fn handle_create_event(
     State(state): State<AppState>,
     claims: OidcClaims<EmptyAdditionalClaims>,
     Path(public_id): Path<String>,
+    lang: crate::i18n::Lang,
     Json(body): Json<CreateEventBody>,
 ) -> impl IntoResponse {
     let cal = match require_owned_calendar(&state, &claims, &public_id).await {
         Ok(cal) => cal,
         Err(status) => return status.into_response(),
     };
+    if crate::billing::enforce_quota(&state, cal.user_id).await.is_err() {
+        state.log_sync(cal.id, "webview", "create", "", "", "error", "daily quota exceeded").await;
+        let l = match lang {
+            crate::i18n::Lang::En => &WEBVIEW_LABELS_EN,
+            crate::i18n::Lang::Vi => &WEBVIEW_LABELS_VI,
+        };
+        return (StatusCode::TOO_MANY_REQUESTS, l.alert_quota_exceeded).into_response();
+    }
     match state
         .notion_create_event(
             &cal.data_source_id,
@@ -503,12 +516,21 @@ pub async fn handle_update_event(
     State(state): State<AppState>,
     claims: OidcClaims<EmptyAdditionalClaims>,
     Path((public_id, event_id)): Path<(String, String)>,
+    lang: crate::i18n::Lang,
     Json(body): Json<UpdateEventBody>,
 ) -> impl IntoResponse {
     let cal = match require_owned_calendar(&state, &claims, &public_id).await {
         Ok(cal) => cal,
         Err(status) => return status.into_response(),
     };
+    if crate::billing::enforce_quota(&state, cal.user_id).await.is_err() {
+        state.log_sync(cal.id, "webview", "update", &event_id, "", "error", "daily quota exceeded").await;
+        let l = match lang {
+            crate::i18n::Lang::En => &WEBVIEW_LABELS_EN,
+            crate::i18n::Lang::Vi => &WEBVIEW_LABELS_VI,
+        };
+        return (StatusCode::TOO_MANY_REQUESTS, l.alert_quota_exceeded).into_response();
+    }
     match state
         .notion_update_event(
             &event_id,

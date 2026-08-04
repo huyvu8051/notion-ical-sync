@@ -82,6 +82,10 @@ pub struct AppState {
     /// disables reveal (rows just show "Tạo lại" instead), same posture as
     /// `webhook_secret`/`notion_oauth`.
     pub password_enc_key: Option<[u8; 32]>,
+    /// Stripe API credentials for the $1/year checkout flow. None disables
+    /// `/billing/checkout` ("not configured" page), same posture as
+    /// `notion_oauth`/`webhook_secret`/`password_enc_key`.
+    pub stripe: Option<crate::billing::StripeConfig>,
 }
 
 // Notion API response types
@@ -133,6 +137,7 @@ impl AppState {
         webhook_secret: Option<String>,
         notion_oauth: Option<crate::oauth::NotionOAuthConfig>,
         password_enc_key: Option<[u8; 32]>,
+        stripe: Option<crate::billing::StripeConfig>,
     ) -> Self {
         Self {
             client: Client::builder()
@@ -145,6 +150,7 @@ impl AppState {
             webhook_secret,
             notion_oauth,
             password_enc_key,
+            stripe,
         }
     }
 
@@ -1159,6 +1165,10 @@ pub async fn handle_calendar_event_impl(
         };
         let is_update = existing_id.is_some();
         let action = if is_update { "update" } else { "create" };
+        if crate::billing::enforce_quota(&state, cal.user_id).await.is_err() {
+            state.log_sync(cal.id, "caldav", action, &event_id_clean, "", "error", "daily quota exceeded").await;
+            return axum::http::StatusCode::FORBIDDEN.into_response();
+        }
         let result = if let Some(page_id) = existing_id {
             state
                 .notion_update_event(
@@ -1941,6 +1951,7 @@ pub fn create_app(
             "/app/{public_id}/api/events/{event_id}",
             axum::routing::patch(crate::webview::handle_update_event).delete(crate::webview::handle_delete_event),
         )
+        .route("/billing/checkout", get(crate::billing::start_checkout))
         .layer(oidc_login_service);
 
     Router::new()
@@ -1960,6 +1971,12 @@ pub fn create_app(
         .route(
             "/webhook/notion-test",
             post(crate::webhook::handle_notion_webhook),
+        )
+        // Not auth-protected: Stripe can't send session cookies either — its
+        // own signature scheme (see billing.rs) authenticates the request.
+        .route(
+            "/billing/webhook",
+            post(crate::billing::handle_stripe_webhook),
         )
         // Public/unauthenticated: linked from the Notion OAuth consent step
         // and the dashboard footer, and required for eventual Notion
