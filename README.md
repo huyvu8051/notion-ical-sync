@@ -33,12 +33,3 @@ The `/health` endpoint returns a JSON response specifying the system status and 
   "caldav_allow_writes": "false"
 }
 ```
-
-## Development
-
-To set up the pre-commit Git hook that automatically formats your code before committing, run:
-
-```bash
-git config core.hooksPath .githooks
-```
-
