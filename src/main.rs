@@ -117,6 +117,14 @@ async fn main() -> anyhow::Result<()> {
         );
     }
 
+    // Gates POST /admin/reset-billing (see billing.rs) — a dev/test-only
+    // tool to reset a user's trial/subscription state, never meant to be
+    // user-reachable. None disables the route entirely (404).
+    let admin_secret = env::var("ADMIN_SECRET").ok();
+    if admin_secret.is_none() {
+        tracing::warn!("ADMIN_SECRET not set; /admin/reset-billing is disabled");
+    }
+
     let caldav_allow_writes = CaldavAllowWrites::from_env();
     let state = AppState::new(
         pool.clone(),
@@ -126,6 +134,7 @@ async fn main() -> anyhow::Result<()> {
         password_enc_key,
         stripe,
         email,
+        admin_secret,
     );
 
     // Initial refresh

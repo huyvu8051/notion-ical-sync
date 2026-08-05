@@ -260,6 +260,13 @@ pub struct AppState {
     /// than failing the request they'd otherwise piggyback on, same posture
     /// as `stripe`/`notion_oauth`/`webhook_secret`.
     pub email: Option<crate::email::EmailConfig>,
+    /// Gates `POST /admin/reset-billing` (see billing.rs) — a caller must
+    /// send this exact value in `X-Admin-Secret`. `None` disables the route
+    /// entirely (404) rather than leaving it reachable with no real gate,
+    /// since it fully resets a user's trial/subscription state and cancels
+    /// any live Stripe subscription — this is strictly a dev/test tool, not
+    /// meant to ever be user-reachable.
+    pub admin_secret: Option<String>,
 }
 
 // Notion API response types
@@ -313,6 +320,7 @@ impl AppState {
         password_enc_key: Option<[u8; 32]>,
         stripe: Option<crate::billing::StripeConfig>,
         email: Option<crate::email::EmailConfig>,
+        admin_secret: Option<String>,
     ) -> Self {
         Self {
             client: Client::builder()
@@ -327,6 +335,7 @@ impl AppState {
             password_enc_key,
             stripe,
             email,
+            admin_secret,
         }
     }
 
@@ -2767,6 +2776,10 @@ pub fn create_app(
             "/billing/webhook",
             post(crate::billing::handle_stripe_webhook),
         )
+        // Not auth-protected via session either — gated by the X-Admin-Secret
+        // header instead (see billing.rs::reset_billing). Dev/test-only tool,
+        // 404s entirely unless ADMIN_SECRET is configured.
+        .route("/admin/reset-billing", post(crate::billing::reset_billing))
         // Public/unauthenticated: linked from the Notion OAuth consent step
         // and the dashboard footer, and required for eventual Notion
         // Marketplace submission.

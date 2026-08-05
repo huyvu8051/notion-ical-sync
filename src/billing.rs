@@ -3,10 +3,12 @@ use axum::{
     extract::State,
     http::{HeaderMap, StatusCode},
     response::{IntoResponse, Redirect},
+    Json,
 };
 use axum_oidc::{EmptyAdditionalClaims, OidcClaims};
 use chrono::{DateTime, Months, Utc};
 use hmac::{Hmac, Mac};
+use serde::Deserialize;
 use sha2::Sha256;
 use tracing::{error, info, warn};
 
@@ -498,4 +500,119 @@ pub async fn send_trial_reminders(state: &AppState) {
             );
         }
     }
+}
+
+#[derive(Deserialize)]
+pub struct ResetBillingRequest {
+    email: String,
+}
+
+/// Dev/test-only: resets one user's trial/subscription state back to a
+/// fresh 6-month trial, cancelling any live Stripe subscription first so
+/// Stripe and our DB don't end up disagreeing. Gated by `X-Admin-Secret`
+/// matching `state.admin_secret` — `None` (unset `ADMIN_SECRET`) disables
+/// the route entirely rather than leaving a real reset action reachable
+/// with no gate. Never meant to be user-facing: there's no reason a real
+/// customer should ever be able to rewind their own trial clock.
+pub async fn reset_billing(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(body): Json<ResetBillingRequest>,
+) -> impl IntoResponse {
+    let Some(expected_secret) = state.admin_secret.as_deref() else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    let provided = headers.get("X-Admin-Secret").and_then(|v| v.to_str().ok());
+    if provided != Some(expected_secret) {
+        return StatusCode::UNAUTHORIZED.into_response();
+    }
+
+    #[derive(sqlx::FromRow)]
+    struct UserRow {
+        id: i64,
+        stripe_subscription_id: Option<String>,
+    }
+    let row: Option<UserRow> =
+        sqlx::query_as("SELECT id, stripe_subscription_id FROM users WHERE email = $1")
+            .bind(&body.email)
+            .fetch_optional(&state.db)
+            .await
+            .unwrap_or_else(|e| {
+                error!("reset_billing: failed to look up user by email: {}", e);
+                None
+            });
+    let Some(row) = row else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+
+    let mut stripe_cancel_result = "no subscription on file";
+    if let (Some(sub_id), Some(stripe)) =
+        (row.stripe_subscription_id.as_deref(), state.stripe.as_ref())
+    {
+        match cancel_stripe_subscription(&state, stripe, sub_id).await {
+            Ok(()) => stripe_cancel_result = "cancelled",
+            Err(e) => {
+                // Not fatal — the subscription may already be canceled on
+                // Stripe's side (e.g. a prior manual cancel), which is fine;
+                // still proceed to reset the DB row either way so the test
+                // account is usable again.
+                warn!(
+                    "reset_billing: failed to cancel Stripe subscription {}: {}",
+                    sub_id, e
+                );
+                stripe_cancel_result = "cancel failed (see server logs) — DB reset anyway";
+            }
+        }
+    }
+
+    if let Err(e) = sqlx::query(
+        "UPDATE users SET subscription_status = 'none', trial_started_at = now(),
+         stripe_customer_id = NULL, stripe_subscription_id = NULL, trial_reminder_sent_at = NULL
+         WHERE id = $1",
+    )
+    .bind(row.id)
+    .execute(&state.db)
+    .await
+    {
+        error!("reset_billing: failed to reset user {}: {}", row.id, e);
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "failed to reset billing state",
+        )
+            .into_response();
+    }
+
+    info!(
+        "reset_billing: reset user {} ({}) — stripe: {}",
+        row.id, body.email, stripe_cancel_result
+    );
+    Json(serde_json::json!({
+        "user_id": row.id,
+        "stripe_subscription": stripe_cancel_result,
+        "trial_started_at": "now (fresh 6-month trial)",
+    }))
+    .into_response()
+}
+
+async fn cancel_stripe_subscription(
+    state: &AppState,
+    stripe: &StripeConfig,
+    subscription_id: &str,
+) -> Result<(), String> {
+    let url = format!("https://api.stripe.com/v1/subscriptions/{subscription_id}");
+    info!(notion_method = "DELETE", notion_url = %url, "-> Stripe API request (cancel subscription)");
+    let resp = state
+        .client
+        .delete(&url)
+        .basic_auth(&stripe.secret_key, Some(""))
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+        return Err(format!("Stripe cancel failed ({status}): {body}"));
+    }
+    Ok(())
 }
