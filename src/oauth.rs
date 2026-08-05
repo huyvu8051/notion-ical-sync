@@ -84,15 +84,105 @@ fn decrypt_password(key: &[u8; 32], encoded: &str) -> Option<String> {
     String::from_utf8(plaintext).ok()
 }
 
-pub(crate) fn error_page(message: &str) -> axum::response::Response {
+/// Every failure state shown via `error_page` below, across the Notion
+/// connect flow and billing checkout — kept as one enum (rather than each
+/// call site building its own string) so the VI/EN pair for each case lives
+/// in exactly one place instead of getting hardcoded ad hoc at 29 call sites.
+pub(crate) enum OauthError {
+    NotionNotConfigured,
+    TryAgain,
+    NotionDenied(String),
+    MissingAuthCode,
+    InvalidSession,
+    CantReachNotion,
+    NotionRejectedToken,
+    InvalidNotionResponse,
+    NotionResponseMissingFields,
+    Generic,
+    FailedToSaveConnection,
+    ConnectionNotFound,
+    FailedToListDatabases,
+    InvalidRequest,
+    CalendarNotFound,
+    FailedToDeleteCalendar,
+    RevealPasswordNotConfigured,
+    PasswordPredatesReveal,
+    FailedToRegeneratePassword,
+    BillingNotConfigured,
+    FailedToCreateCheckoutSession,
+}
+
+impl OauthError {
+    fn message(&self, lang: crate::i18n::Lang) -> String {
+        use crate::i18n::Lang;
+        match (self, lang) {
+            (Self::NotionNotConfigured, Lang::Vi) => "Notion OAuth chưa được cấu hình trên server này.".to_string(),
+            (Self::NotionNotConfigured, Lang::En) => "Notion OAuth isn't configured on this server.".to_string(),
+            (Self::TryAgain, Lang::Vi) => "Có lỗi xảy ra, vui lòng thử lại.".to_string(),
+            (Self::TryAgain, Lang::En) => "Something went wrong, please try again.".to_string(),
+            (Self::NotionDenied(reason), Lang::Vi) => format!("Notion từ chối cấp quyền: {reason}"),
+            (Self::NotionDenied(reason), Lang::En) => format!("Notion denied the authorization request: {reason}"),
+            (Self::MissingAuthCode, Lang::Vi) => "Thiếu mã xác thực từ Notion.".to_string(),
+            (Self::MissingAuthCode, Lang::En) => "Missing authorization code from Notion.".to_string(),
+            (Self::InvalidSession, Lang::Vi) => "Phiên xác thực không hợp lệ, vui lòng thử lại.".to_string(),
+            (Self::InvalidSession, Lang::En) => "Invalid auth session, please try again.".to_string(),
+            (Self::CantReachNotion, Lang::Vi) => "Không thể kết nối tới Notion.".to_string(),
+            (Self::CantReachNotion, Lang::En) => "Couldn't connect to Notion.".to_string(),
+            (Self::NotionRejectedToken, Lang::Vi) => "Notion từ chối yêu cầu trao đổi token.".to_string(),
+            (Self::NotionRejectedToken, Lang::En) => "Notion rejected the token exchange request.".to_string(),
+            (Self::InvalidNotionResponse, Lang::Vi) => "Phản hồi từ Notion không hợp lệ.".to_string(),
+            (Self::InvalidNotionResponse, Lang::En) => "Invalid response from Notion.".to_string(),
+            (Self::NotionResponseMissingFields, Lang::Vi) => "Phản hồi từ Notion thiếu access_token hoặc workspace_id.".to_string(),
+            (Self::NotionResponseMissingFields, Lang::En) => "Notion's response is missing access_token or workspace_id.".to_string(),
+            (Self::Generic, Lang::Vi) => "Có lỗi xảy ra.".to_string(),
+            (Self::Generic, Lang::En) => "Something went wrong.".to_string(),
+            (Self::FailedToSaveConnection, Lang::Vi) => "Không thể lưu kết nối Notion.".to_string(),
+            (Self::FailedToSaveConnection, Lang::En) => "Failed to save the Notion connection.".to_string(),
+            (Self::ConnectionNotFound, Lang::Vi) => "Không tìm thấy kết nối Notion này.".to_string(),
+            (Self::ConnectionNotFound, Lang::En) => "This Notion connection wasn't found.".to_string(),
+            (Self::FailedToListDatabases, Lang::Vi) => "Không thể lấy danh sách cơ sở dữ liệu từ Notion.".to_string(),
+            (Self::FailedToListDatabases, Lang::En) => "Failed to list databases from Notion.".to_string(),
+            (Self::InvalidRequest, Lang::Vi) => "Yêu cầu không hợp lệ.".to_string(),
+            (Self::InvalidRequest, Lang::En) => "Invalid request.".to_string(),
+            (Self::CalendarNotFound, Lang::Vi) => "Không tìm thấy calendar này.".to_string(),
+            (Self::CalendarNotFound, Lang::En) => "This calendar wasn't found.".to_string(),
+            (Self::FailedToDeleteCalendar, Lang::Vi) => "Không thể xoá calendar này.".to_string(),
+            (Self::FailedToDeleteCalendar, Lang::En) => "Failed to delete this calendar.".to_string(),
+            (Self::RevealPasswordNotConfigured, Lang::Vi) => {
+                "Tính năng hiện mật khẩu chưa được cấu hình trên server này — dùng \"Tạo lại mật khẩu\" thay thế.".to_string()
+            }
+            (Self::RevealPasswordNotConfigured, Lang::En) => {
+                "The reveal-password feature isn't configured on this server — use \"Regenerate password\" instead.".to_string()
+            }
+            (Self::PasswordPredatesReveal, Lang::Vi) => {
+                "Mật khẩu này được tạo trước khi tính năng \"Hiện lại\" ra mắt nên không thể khôi phục — hãy dùng \"Tạo lại mật khẩu\".".to_string()
+            }
+            (Self::PasswordPredatesReveal, Lang::En) => {
+                "This password was created before the \"reveal\" feature shipped, so it can't be recovered — use \"Regenerate password\" instead.".to_string()
+            }
+            (Self::FailedToRegeneratePassword, Lang::Vi) => "Không thể tạo lại mật khẩu.".to_string(),
+            (Self::FailedToRegeneratePassword, Lang::En) => "Failed to regenerate the password.".to_string(),
+            (Self::BillingNotConfigured, Lang::Vi) => "Tính năng thanh toán chưa được cấu hình trên server này.".to_string(),
+            (Self::BillingNotConfigured, Lang::En) => "Billing isn't configured on this server.".to_string(),
+            (Self::FailedToCreateCheckoutSession, Lang::Vi) => "Không thể tạo phiên thanh toán.".to_string(),
+            (Self::FailedToCreateCheckoutSession, Lang::En) => "Failed to create a checkout session.".to_string(),
+        }
+    }
+}
+
+pub(crate) fn error_page(lang: crate::i18n::Lang, err: OauthError) -> axum::response::Response {
+    let (html_lang, back_label) = match lang {
+        crate::i18n::Lang::Vi => ("vi", "Quay lại"),
+        crate::i18n::Lang::En => ("en", "Back"),
+    };
     Html(format!(
         r#"<!doctype html>
-<html lang="vi"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">{AUTH_STYLE}</head>
+<html lang="{html_lang}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">{AUTH_STYLE}</head>
 <body>
-<div class="top-nav"><strong>NotionCal</strong><a class="logout" href="/me">Quay lại</a></div>
+<div class="top-nav"><strong>NotionCal</strong><a class="logout" href="/me">{back_label}</a></div>
 <p class="hint">{}</p>
 </body></html>"#,
-        html_escape(message)
+        html_escape(&err.message(lang))
     ))
     .into_response()
 }
@@ -137,14 +227,18 @@ body { background-color: #fbf9f9; color: #1b1c1c; -webkit-font-smoothing: antial
 </style>
 "##;
 
-fn onboarding_top_nav(email: &str) -> String {
+fn onboarding_top_nav(email: &str, lang: crate::i18n::Lang) -> String {
+    let logout = match lang {
+        crate::i18n::Lang::Vi => "Đăng xuất",
+        crate::i18n::Lang::En => "Log out",
+    };
     format!(
         r#"<header class="bg-surface border-b border-outline-variant fixed top-0 left-0 right-0 z-50">
 <nav class="flex justify-between items-center w-full px-margin-desktop h-[56px] max-w-[1280px] mx-auto">
 <span class="text-h2 font-semibold text-primary">NotionCal</span>
 <div class="flex items-center gap-lg">
 <span class="text-on-surface-variant text-label-md">{}</span>
-<a class="text-primary hover:bg-surface-container-low transition-colors px-sm py-xs rounded-lg text-label-md" href="/logout">Đăng xuất</a>
+<a class="text-primary hover:bg-surface-container-low transition-colors px-sm py-xs rounded-lg text-label-md" href="/logout">{logout}</a>
 </div>
 </nav>
 </header>"#,
@@ -152,14 +246,55 @@ fn onboarding_top_nav(email: &str) -> String {
     )
 }
 
+struct ConnectNotionLabels {
+    title: &'static str,
+    heading: &'static str,
+    body: &'static str,
+    connect_cta: &'static str,
+    bullet_read_write: &'static str,
+    bullet_disconnect: &'static str,
+    bullet_no_sharing: &'static str,
+    privacy_link: &'static str,
+    terms_link: &'static str,
+}
+
+const CONNECT_NOTION_LABELS_VI: ConnectNotionLabels = ConnectNotionLabels {
+    title: "Kết nối Notion",
+    heading: "Kết nối không gian làm việc Notion của bạn",
+    body: "Chúng tôi cần quyền truy cập vào không gian làm việc Notion của bạn để tìm và đồng bộ hóa các cơ sở dữ liệu bạn chọn. Bạn sẽ chọn chính xác trang nào cần chia sẻ ở bước tiếp theo trên Notion.",
+    connect_cta: "Kết nối với Notion",
+    bullet_read_write: "Chỉ đọc và ghi vào các trang bạn cho phép",
+    bullet_disconnect: "Có thể ngắt kết nối bất cứ lúc nào",
+    bullet_no_sharing: "Không bao giờ chia sẻ dữ liệu của bạn với bên thứ ba",
+    privacy_link: "Chính sách bảo mật",
+    terms_link: "Điều khoản dịch vụ",
+};
+
+const CONNECT_NOTION_LABELS_EN: ConnectNotionLabels = ConnectNotionLabels {
+    title: "Connect Notion",
+    heading: "Connect your Notion workspace",
+    body: "We need access to your Notion workspace to find and sync the databases you choose. You'll pick exactly which pages to share in the next step, on Notion.",
+    connect_cta: "Connect to Notion",
+    bullet_read_write: "Only reads and writes the pages you allow",
+    bullet_disconnect: "Disconnect anytime",
+    bullet_no_sharing: "Never shares your data with third parties",
+    privacy_link: "Privacy Policy",
+    terms_link: "Terms of Service",
+};
+
 /// Step 1 confirmation screen (matches the Stitch "Kết nối Notion" design) —
 /// shown before we actually redirect away to Notion's consent screen.
-pub async fn connect_notion_page(claims: OidcClaims<EmptyAdditionalClaims>) -> impl IntoResponse {
+pub async fn connect_notion_page(claims: OidcClaims<EmptyAdditionalClaims>, lang: crate::i18n::Lang) -> impl IntoResponse {
     let email = claims.email().map(|e| e.as_str()).unwrap_or("");
+    let l = match lang {
+        crate::i18n::Lang::Vi => &CONNECT_NOTION_LABELS_VI,
+        crate::i18n::Lang::En => &CONNECT_NOTION_LABELS_EN,
+    };
+    let html_lang = lang.code();
     Html(format!(
         r#"<!doctype html>
-<html lang="vi"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Kết nối Notion — NotionCal</title>{ONBOARDING_HEAD}</head>
+<html lang="{html_lang}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{title} — NotionCal</title>{ONBOARDING_HEAD}</head>
 <body class="min-h-screen flex flex-col">
 {top_nav}
 <main class="flex-grow flex items-center justify-center pt-[56px] px-margin-mobile md:px-margin-desktop">
@@ -174,50 +309,63 @@ pub async fn connect_notion_page(claims: OidcClaims<EmptyAdditionalClaims>) -> i
 </div>
 </div>
 <div class="text-center mb-xl">
-<h1 class="text-h1 mb-sm tracking-tight text-primary">Kết nối không gian làm việc Notion của bạn</h1>
-<p class="text-body-md text-on-surface-variant leading-relaxed">Chúng tôi cần quyền truy cập vào không gian làm việc Notion của bạn để tìm và đồng bộ hóa các cơ sở dữ liệu bạn chọn. Bạn sẽ chọn chính xác trang nào cần chia sẻ ở bước tiếp theo trên Notion.</p>
+<h1 class="text-h1 mb-sm tracking-tight text-primary">{heading}</h1>
+<p class="text-body-md text-on-surface-variant leading-relaxed">{body}</p>
 </div>
 <a class="w-full h-12 bg-primary text-white text-label-md flex items-center justify-center gap-sm rounded-lg hover:bg-zinc-800 transition-all active:scale-[0.98] mb-lg" href="/connect/notion/start">
 <svg class="w-5 h-5 fill-current" viewBox="0 0 24 24"><path d="M4.459 4.208c.673-.51 1.258-.69 2.067-.69h11.974c.421 0 .762.341.762.762v15.44c0 .421-.341.762-.762.762H5.539c-.588 0-1.026-.411-1.127-1.002L3.13 10.985C3.01 10.378 3.167 9.754 3.56 9.27L4.459 4.208zM17.15 17.61V6.63h-.04l-3.32 4.45h-.04V6.63h-1.28v10.98h.04l3.32-4.44h.04v4.44h1.28z"></path></svg>
-Kết nối với Notion
+{connect_cta}
 </a>
 <div class="border-t border-outline-variant pt-lg space-y-md">
 <div class="flex items-start gap-md">
 <span class="material-symbols-outlined text-[20px] text-secondary mt-0.5" style="font-variation-settings: 'FILL' 1;">check_circle</span>
-<span class="text-body-md text-on-surface-variant">Chỉ đọc và ghi vào các trang bạn cho phép</span>
+<span class="text-body-md text-on-surface-variant">{bullet_read_write}</span>
 </div>
 <div class="flex items-start gap-md">
 <span class="material-symbols-outlined text-[20px] text-secondary mt-0.5" style="font-variation-settings: 'FILL' 1;">check_circle</span>
-<span class="text-body-md text-on-surface-variant">Có thể ngắt kết nối bất cứ lúc nào</span>
+<span class="text-body-md text-on-surface-variant">{bullet_disconnect}</span>
 </div>
 <div class="flex items-start gap-md">
 <span class="material-symbols-outlined text-[20px] text-secondary mt-0.5" style="font-variation-settings: 'FILL' 1;">check_circle</span>
-<span class="text-body-md text-on-surface-variant">Không bao giờ chia sẻ dữ liệu của bạn với bên thứ ba</span>
+<span class="text-body-md text-on-surface-variant">{bullet_no_sharing}</span>
 </div>
 </div>
 <div class="mt-xl text-center">
-<a class="text-label-md text-on-surface-variant hover:text-primary transition-colors underline underline-offset-4" href="/privacy">Chính sách bảo mật</a>
+<a class="text-label-md text-on-surface-variant hover:text-primary transition-colors underline underline-offset-4" href="/privacy">{privacy_link}</a>
 <span class="text-outline-variant mx-2">·</span>
-<a class="text-label-md text-on-surface-variant hover:text-primary transition-colors underline underline-offset-4" href="/terms">Điều khoản dịch vụ</a>
+<a class="text-label-md text-on-surface-variant hover:text-primary transition-colors underline underline-offset-4" href="/terms">{terms_link}</a>
 </div>
 </div>
 </main>
 </body></html>"#,
-        top_nav = onboarding_top_nav(email),
+        title = l.title,
+        top_nav = onboarding_top_nav(email, lang),
+        heading = l.heading,
+        body = l.body,
+        connect_cta = l.connect_cta,
+        bullet_read_write = l.bullet_read_write,
+        bullet_disconnect = l.bullet_disconnect,
+        bullet_no_sharing = l.bullet_no_sharing,
+        privacy_link = l.privacy_link,
+        terms_link = l.terms_link,
     ))
 }
 
 /// Actually redirects to Notion's OAuth consent screen, stashing a CSRF
 /// state token in the session first.
-pub async fn connect_notion_start(State(state): State<AppState>, session: tower_sessions::Session) -> impl IntoResponse {
+pub async fn connect_notion_start(
+    State(state): State<AppState>,
+    session: tower_sessions::Session,
+    lang: crate::i18n::Lang,
+) -> impl IntoResponse {
     let Some(cfg) = state.notion_oauth.clone() else {
-        return error_page("Notion OAuth chưa được cấu hình trên server này.");
+        return error_page(lang, OauthError::NotionNotConfigured);
     };
 
     let oauth_state = generate_token(32);
     if let Err(e) = session.insert("notion_oauth_state", &oauth_state).await {
         error!("failed to store notion oauth state: {}", e);
-        return error_page("Có lỗi xảy ra, vui lòng thử lại.");
+        return error_page(lang, OauthError::TryAgain);
     }
 
     let mut url = url::Url::parse("https://api.notion.com/v1/oauth/authorize").expect("static url");
@@ -248,20 +396,20 @@ pub async fn notion_oauth_callback(
     Query(params): Query<CallbackParams>,
 ) -> impl IntoResponse {
     if let Some(err) = params.error {
-        return error_page(&format!("Notion từ chối cấp quyền: {err}"));
+        return error_page(lang, OauthError::NotionDenied(err));
     }
     let Some(code) = params.code else {
-        return error_page("Thiếu mã xác thực từ Notion.");
+        return error_page(lang, OauthError::MissingAuthCode);
     };
 
     let expected_state: Option<String> = session.get("notion_oauth_state").await.unwrap_or(None);
     let _ = session.remove::<String>("notion_oauth_state").await;
     if expected_state.is_none() || expected_state.as_deref() != params.state.as_deref() {
-        return error_page("Phiên xác thực không hợp lệ, vui lòng thử lại.");
+        return error_page(lang, OauthError::InvalidSession);
     }
 
     let Some(cfg) = state.notion_oauth.clone() else {
-        return error_page("Notion OAuth chưa được cấu hình trên server này.");
+        return error_page(lang, OauthError::NotionNotConfigured);
     };
 
     let resp = match state
@@ -280,7 +428,7 @@ pub async fn notion_oauth_callback(
         Ok(r) => r,
         Err(e) => {
             error!("notion token exchange request failed: {}", e);
-            return error_page("Không thể kết nối tới Notion.");
+            return error_page(lang, OauthError::CantReachNotion);
         }
     };
 
@@ -288,14 +436,14 @@ pub async fn notion_oauth_callback(
         let status = resp.status();
         let txt = resp.text().await.unwrap_or_default();
         error!("notion token exchange failed {}: {}", status, txt);
-        return error_page("Notion từ chối yêu cầu trao đổi token.");
+        return error_page(lang, OauthError::NotionRejectedToken);
     }
 
     let body: serde_json::Value = match resp.json().await {
         Ok(b) => b,
         Err(e) => {
             error!("failed to parse notion token response: {}", e);
-            return error_page("Phản hồi từ Notion không hợp lệ.");
+            return error_page(lang, OauthError::InvalidNotionResponse);
         }
     };
 
@@ -305,7 +453,7 @@ pub async fn notion_oauth_callback(
     let bot_id = body.get("bot_id").and_then(|v| v.as_str()).unwrap_or_default().to_string();
 
     if access_token.is_empty() || workspace_id.is_empty() {
-        return error_page("Phản hồi từ Notion thiếu access_token hoặc workspace_id.");
+        return error_page(lang, OauthError::NotionResponseMissingFields);
     }
 
     let sub = claims.subject().as_str();
@@ -314,7 +462,7 @@ pub async fn notion_oauth_callback(
         Ok(id) => id,
         Err(e) => {
             error!("failed to find_or_create_user: {}", e);
-            return error_page("Có lỗi xảy ra.");
+            return error_page(lang, OauthError::Generic);
         }
     };
 
@@ -338,7 +486,7 @@ pub async fn notion_oauth_callback(
         Ok(id) => id,
         Err(e) => {
             error!("failed to upsert notion_connection: {}", e);
-            return error_page("Không thể lưu kết nối Notion.");
+            return error_page(lang, OauthError::FailedToSaveConnection);
         }
     };
 
@@ -457,18 +605,18 @@ pub async fn pick_databases_page(
     let email = claims.email().map(|e| e.as_str()).unwrap_or("").to_string();
     let user_id = match find_or_create_user(&state, sub, &email, lang).await {
         Ok(id) => id,
-        Err(_) => return error_page("Có lỗi xảy ra."),
+        Err(_) => return error_page(lang, OauthError::Generic),
     };
 
     let Some(access_token) = connection_token_for_user(&state, params.connection_id, user_id).await else {
-        return error_page("Không tìm thấy kết nối Notion này.");
+        return error_page(lang, OauthError::ConnectionNotFound);
     };
 
     let candidates = match list_syncable_databases(&state.client, &access_token).await {
         Ok(c) => c,
         Err(e) => {
             error!("failed to list notion databases: {}", e);
-            return error_page("Không thể lấy danh sách cơ sở dữ liệu từ Notion.");
+            return error_page(lang, OauthError::FailedToListDatabases);
         }
     };
 
@@ -483,7 +631,7 @@ pub async fn pick_databases_page(
 <p class="text-on-surface-variant text-body-lg">Không tìm thấy cơ sở dữ liệu nào bạn đã cấp quyền. <a class="text-secondary underline" href="/connect/notion/start">Cấp thêm quyền truy cập trên Notion</a>.</p>
 </main>
 </body></html>"#,
-            top_nav = onboarding_top_nav(&email),
+            top_nav = onboarding_top_nav(&email, lang),
         ))
         .into_response();
     }
@@ -575,7 +723,7 @@ document.addEventListener('change', function () {{
 }});
 </script>
 </body></html>"#,
-        top_nav = onboarding_top_nav(&email),
+        top_nav = onboarding_top_nav(&email, lang),
         connection_id = params.connection_id,
     ))
     .into_response()
@@ -620,18 +768,18 @@ pub async fn create_calendars(
 ) -> impl IntoResponse {
     let body = String::from_utf8_lossy(&body);
     let Some(form) = CreateCalendarsForm::parse(&body) else {
-        return error_page("Yêu cầu không hợp lệ.");
+        return error_page(lang, OauthError::InvalidRequest);
     };
 
     let sub = claims.subject().as_str();
     let email = claims.email().map(|e| e.as_str()).unwrap_or("").to_string();
     let user_id = match find_or_create_user(&state, sub, &email, lang).await {
         Ok(id) => id,
-        Err(_) => return error_page("Có lỗi xảy ra."),
+        Err(_) => return error_page(lang, OauthError::Generic),
     };
 
     let Some(access_token) = connection_token_for_user(&state, form.connection_id, user_id).await else {
-        return error_page("Không tìm thấy kết nối Notion này.");
+        return error_page(lang, OauthError::ConnectionNotFound);
     };
 
     if form.db_ids.is_empty() {
@@ -642,7 +790,7 @@ pub async fn create_calendars(
         Ok(c) => c,
         Err(e) => {
             error!("failed to list notion databases: {}", e);
-            return error_page("Không thể lấy danh sách cơ sở dữ liệu từ Notion.");
+            return error_page(lang, OauthError::FailedToListDatabases);
         }
     };
 
@@ -733,11 +881,11 @@ async fn owned_calendar_or_error(
     let email = claims.email().map(|e| e.as_str()).unwrap_or("").to_string();
     let user_id = match find_or_create_user(state, sub, &email, lang).await {
         Ok(id) => id,
-        Err(_) => return Err(error_page("Có lỗi xảy ra.")),
+        Err(_) => return Err(error_page(lang, OauthError::Generic)),
     };
     match state.calendar_by_public_id(public_id).await {
         Some(cal) if cal.user_id == user_id => Ok(cal),
-        _ => Err(error_page("Không tìm thấy calendar này.")),
+        _ => Err(error_page(lang, OauthError::CalendarNotFound)),
     }
 }
 
@@ -758,7 +906,7 @@ pub async fn delete_calendar(
 
     if let Err(e) = sqlx::query("DELETE FROM calendars WHERE id = $1").bind(cal.id).execute(&state.db).await {
         error!("failed to delete calendar {}: {}", cal.id, e);
-        return error_page("Không thể xoá calendar này.");
+        return error_page(lang, OauthError::FailedToDeleteCalendar);
     }
 
     let still_referenced: i64 = sqlx::query_scalar("SELECT count(*) FROM calendars WHERE database_id = $1")
@@ -792,7 +940,7 @@ pub async fn reveal_password(
     };
 
     let Some(key) = state.password_enc_key.as_ref() else {
-        return error_page("Tính năng hiện mật khẩu chưa được cấu hình trên server này — dùng \"Tạo lại mật khẩu\" thay thế.");
+        return error_page(lang, OauthError::RevealPasswordNotConfigured);
     };
 
     let encrypted: String = sqlx::query_scalar("SELECT caldav_password_encrypted FROM calendars WHERE id = $1")
@@ -802,7 +950,7 @@ pub async fn reveal_password(
         .unwrap_or_default();
 
     let Some(password) = (!encrypted.is_empty()).then(|| decrypt_password(key, &encrypted)).flatten() else {
-        return error_page("Mật khẩu này được tạo trước khi tính năng \"Hiện lại\" ra mắt nên không thể khôi phục — hãy dùng \"Tạo lại mật khẩu\".");
+        return error_page(lang, OauthError::PasswordPredatesReveal);
     };
 
     let stash = vec![(cal.display_name.clone(), cal.caldav_username.clone(), password)];
@@ -830,7 +978,7 @@ pub async fn regenerate_password(
 
     let new_password = generate_token(24);
     let Ok(password_hash) = hash_password(&new_password) else {
-        return error_page("Có lỗi xảy ra.");
+        return error_page(lang, OauthError::Generic);
     };
     let password_encrypted = state
         .password_enc_key
@@ -846,7 +994,7 @@ pub async fn regenerate_password(
         .await
     {
         error!("failed to regenerate caldav password for calendar {}: {}", cal.id, e);
-        return error_page("Không thể tạo lại mật khẩu.");
+        return error_page(lang, OauthError::FailedToRegeneratePassword);
     }
 
     let stash = vec![(cal.display_name.clone(), cal.caldav_username.clone(), new_password)];

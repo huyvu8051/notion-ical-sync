@@ -341,14 +341,14 @@ pub async fn start_checkout(
     lang: crate::i18n::Lang,
 ) -> impl IntoResponse {
     let Some(stripe) = state.stripe.as_ref() else {
-        return crate::oauth::error_page("Tính năng thanh toán chưa được cấu hình trên server này.");
+        return crate::oauth::error_page(lang, crate::oauth::OauthError::BillingNotConfigured);
     };
 
     let sub = claims.subject().as_str();
     let email = claims.email().map(|e| e.as_str()).unwrap_or("").to_string();
     let user_id = match find_or_create_user(&state, sub, &email, lang).await {
         Ok(id) => id,
-        Err(_) => return crate::oauth::error_page("Có lỗi xảy ra."),
+        Err(_) => return crate::oauth::error_page(lang, crate::oauth::OauthError::Generic),
     };
 
     let row: Option<CheckoutUserRow> =
@@ -359,7 +359,7 @@ pub async fn start_checkout(
             .ok()
             .flatten();
     let Some(row) = row else {
-        return crate::oauth::error_page("Có lỗi xảy ra.");
+        return crate::oauth::error_page(lang, crate::oauth::OauthError::Generic);
     };
 
     match create_checkout_session(
@@ -376,7 +376,7 @@ pub async fn start_checkout(
         Ok(url) => Redirect::to(&url).into_response(),
         Err(e) => {
             warn!("failed to create stripe checkout session for user {}: {}", user_id, e);
-            crate::oauth::error_page("Không thể tạo phiên thanh toán.")
+            crate::oauth::error_page(lang, crate::oauth::OauthError::FailedToCreateCheckoutSession)
         }
     }
 }
