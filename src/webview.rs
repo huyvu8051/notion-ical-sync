@@ -261,6 +261,14 @@ body {{ background-color: #fbf9f9; color: #1b1c1c; -webkit-font-smoothing: antia
     .into_response()
 }
 
+/// Escapes a Rust string for safe interpolation inside a single-quoted JS
+/// string literal — labels like `alert_quota_exceeded` are plain prose (can
+/// contain `'` or `\`) and get spliced directly into `alert('...')` calls
+/// below via `format!`, so an unescaped apostrophe breaks the whole script.
+fn js_escape(s: &str) -> String {
+    s.replace('\\', "\\\\").replace('\'', "\\'")
+}
+
 fn webview_js(events_url: &str, l: &WebviewLabels) -> String {
     format!(
         r#"
@@ -406,16 +414,16 @@ document.addEventListener('DOMContentLoaded', function() {{
 }});
 "#,
         events_url = events_url,
-        modal_title_add = l.modal_title_add,
-        modal_title_edit = l.modal_title_edit,
-        alert_enter_title = l.alert_enter_title,
-        alert_pick_start = l.alert_pick_start,
-        alert_update_failed = l.alert_update_failed,
-        alert_create_failed = l.alert_create_failed,
-        confirm_delete_event = l.confirm_delete_event,
-        alert_delete_failed = l.alert_delete_failed,
-        alert_update_date_failed = l.alert_update_date_failed,
-        alert_quota_exceeded = l.alert_quota_exceeded,
+        modal_title_add = js_escape(l.modal_title_add),
+        modal_title_edit = js_escape(l.modal_title_edit),
+        alert_enter_title = js_escape(l.alert_enter_title),
+        alert_pick_start = js_escape(l.alert_pick_start),
+        alert_update_failed = js_escape(l.alert_update_failed),
+        alert_create_failed = js_escape(l.alert_create_failed),
+        confirm_delete_event = js_escape(l.confirm_delete_event),
+        alert_delete_failed = js_escape(l.alert_delete_failed),
+        alert_update_date_failed = js_escape(l.alert_update_date_failed),
+        alert_quota_exceeded = js_escape(l.alert_quota_exceeded),
     )
 }
 
