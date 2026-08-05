@@ -115,6 +115,34 @@ fn map_priority(select_name: &str) -> Option<u8> {
     }
 }
 
+/// Inverse of `map_priority`, for writing an iCal `PRIORITY` value (or our
+/// own modal's priority selection) back to a Notion select option. Uses
+/// ranges rather than the exact 1/5/9 this app itself emits, since a CalDAV
+/// client could send any 1-9 value.
+fn priority_number_to_select_name(n: u8) -> Option<&'static str> {
+    match n {
+        1..=3 => Some("High"),
+        4..=6 => Some("Medium"),
+        7..=9 => Some("Low"),
+        _ => None,
+    }
+}
+
+/// Optional per-event fields shared by `notion_create_event` and
+/// `notion_update_event` — split out from the required title/start/end
+/// params (which differ in shape between create and update) since this set
+/// is identical between the two and would otherwise be an unwieldy number of
+/// positional arguments.
+#[derive(Default)]
+pub struct ExtraEventFields<'a> {
+    pub location: Option<&'a str>,
+    pub notes: Option<&'a str>,
+    pub priority: Option<u8>,
+    pub busy: Option<bool>,
+    pub reminder_minutes: Option<i64>,
+    pub travel_minutes: Option<i64>,
+}
+
 /// `Busy` (checkbox) takes priority if present; falls back to `Show As`
 /// (select, "Busy"/"Free"). `None` if neither property exists.
 fn extract_busy(props: &serde_json::Value) -> Option<bool> {
@@ -728,6 +756,133 @@ impl AppState {
             date.insert("end".into(), serde_json::json!(e));
         }
         serde_json::Value::Object(date)
+    }
+
+    /// Fetches the data source's property schema — `(lowercased name) ->
+    /// (original name, Notion type)` — so `notion_create_event`/
+    /// `notion_update_event` can tell whether e.g. a "Location" property
+    /// actually exists (and what shape it needs) before attempting to write
+    /// it: Notion's API rejects the *entire* request if `properties`
+    /// references a name that isn't on the target schema, so this has to be
+    /// checked up front rather than just attempting the write.
+    async fn get_data_source_properties(
+        &self,
+        data_source_id: &str,
+        notion_token: &str,
+    ) -> HashMap<String, (String, String)> {
+        let url = format!("https://api.notion.com/v1/data_sources/{}", data_source_id);
+        let resp = match self
+            .client
+            .get(&url)
+            .header("Authorization", format!("Bearer {}", notion_token))
+            .header("Notion-Version", "2025-09-03")
+            .send()
+            .await
+        {
+            Ok(r) if r.status().is_success() => r,
+            Ok(r) => {
+                error!(notion_url = %url, status = %r.status(), "<- Notion API error response (data source schema)");
+                return HashMap::new();
+            }
+            Err(e) => {
+                error!(notion_url = %url, error = %e, "<- Notion API request failed (data source schema)");
+                return HashMap::new();
+            }
+        };
+        let data: serde_json::Value = match resp.json().await {
+            Ok(v) => v,
+            Err(_) => return HashMap::new(),
+        };
+        data.get("properties")
+            .and_then(|p| p.as_object())
+            .map(|props| {
+                props
+                    .iter()
+                    .filter_map(|(name, def)| {
+                        let ptype = def.get("type")?.as_str()?;
+                        Some((name.to_lowercase(), (name.clone(), ptype.to_string())))
+                    })
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    /// Builds the `properties` entries for the optional fields (Location,
+    /// Notes, Priority, Busy/Free, Reminder, Travel time) — only for
+    /// whichever ones are both `Some` in `fields` *and* present on `schema`
+    /// with a compatible type; anything else is silently skipped rather than
+    /// erroring, same "auto-detect, tolerate absence" posture as the read
+    /// side (`extract_*` helpers near `refresh_db`).
+    fn optional_event_properties(
+        &self,
+        schema: &HashMap<String, (String, String)>,
+        fields: &ExtraEventFields,
+    ) -> serde_json::Map<String, serde_json::Value> {
+        let mut properties = serde_json::Map::new();
+
+        if let Some(location) = fields.location {
+            if let Some((name, ptype)) = schema.get("location") {
+                let value = match ptype.as_str() {
+                    "rich_text" => Some(
+                        serde_json::json!({ "rich_text": [{ "text": { "content": location } }] }),
+                    ),
+                    "url" => Some(serde_json::json!({ "url": location })),
+                    _ => None,
+                };
+                if let Some(v) = value {
+                    properties.insert(name.clone(), v);
+                }
+            }
+        }
+        if let Some(notes) = fields.notes {
+            if let Some((name, ptype)) = schema.get("notes") {
+                if ptype == "rich_text" {
+                    properties.insert(
+                        name.clone(),
+                        serde_json::json!({ "rich_text": [{ "text": { "content": notes } }] }),
+                    );
+                }
+            }
+        }
+        if let Some(priority) = fields.priority {
+            if let Some((name, ptype)) = schema.get("priority") {
+                if ptype == "select" {
+                    if let Some(option_name) = priority_number_to_select_name(priority) {
+                        properties.insert(
+                            name.clone(),
+                            serde_json::json!({ "select": { "name": option_name } }),
+                        );
+                    }
+                }
+            }
+        }
+        if let Some(busy) = fields.busy {
+            if let Some((name, ptype)) = schema.get("busy") {
+                if ptype == "checkbox" {
+                    properties.insert(name.clone(), serde_json::json!({ "checkbox": busy }));
+                }
+            } else if let Some((name, ptype)) = schema.get("show as") {
+                if ptype == "select" {
+                    properties.insert(name.clone(), serde_json::json!({ "select": { "name": if busy { "Busy" } else { "Free" } } }));
+                }
+            }
+        }
+        if let Some(minutes) = fields.reminder_minutes {
+            if let Some((name, ptype)) = schema.get("reminder") {
+                if ptype == "number" {
+                    properties.insert(name.clone(), serde_json::json!({ "number": minutes }));
+                }
+            }
+        }
+        if let Some(minutes) = fields.travel_minutes {
+            if let Some((name, ptype)) = schema.get("travel time") {
+                if ptype == "number" {
+                    properties.insert(name.clone(), serde_json::json!({ "number": minutes }));
+                }
+            }
+        }
+
+        properties
     }
 
     /// Create a new Notion page under `data_source_id` with a title and the
