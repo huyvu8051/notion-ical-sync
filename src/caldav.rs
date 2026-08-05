@@ -312,6 +312,7 @@ pub struct AuthenticatedCaldavUser {
 }
 
 impl AppState {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         db: PgPool,
         caldav_allow_writes: CaldavAllowWrites,
@@ -444,6 +445,7 @@ impl AppState {
     /// a browser (see oauth.rs::sync_log_page) instead of needing someone to
     /// read the raw application logs. Fire-and-forget: a logging failure
     /// must never fail the actual CalDAV/webview request it's describing.
+    #[allow(clippy::too_many_arguments)]
     pub async fn log_sync(
         &self,
         calendar_id: i64,
@@ -904,6 +906,7 @@ impl AppState {
     /// event" flow needs. Notion is always the source of truth: this writes
     /// through to it directly rather than touching our own cache, which the
     /// caller refreshes afterward from the real Notion state.
+    #[allow(clippy::too_many_arguments)]
     pub async fn notion_create_event(
         &self,
         data_source_id: &str,
@@ -969,6 +972,7 @@ impl AppState {
 
     /// Patch title and/or the date property on an existing page. Any field
     /// left as `None` is left untouched on the Notion side.
+    #[allow(clippy::too_many_arguments)]
     pub async fn notion_update_event(
         &self,
         page_id: &str,
