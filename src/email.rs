@@ -41,11 +41,13 @@ pub async fn send_email(cfg: &EmailConfig, to: &str, subject: &str, html: &str) 
         .body(html.to_string())
         .map_err(|e| format!("failed to build message: {e}"))?;
 
+    // Stalwart's first-run wizard only bound ports 25 and 465 (submissions,
+    // implicit TLS) — not 587 (STARTTLS submission) — confirmed empirically, so
+    // this connects with implicit TLS (`Tls::Wrapper`) rather than STARTTLS.
     // Stalwart has no ACME cert (no inbound path for HTTP-01), so it presents a
     // self-signed one — `dangerous_accept_invalid_certs` skips validation for it.
     // Safe here: this is an internal, same-cluster, trusted-network hop, not the
-    // public internet. STARTTLS is still required (`builder_dangerous` alone would
-    // negotiate no encryption at all, which Stalwart would likely refuse AUTH over).
+    // public internet.
     let tls_parameters = TlsParameters::builder(cfg.host.clone())
         .dangerous_accept_invalid_certs(true)
         .build()
@@ -53,7 +55,7 @@ pub async fn send_email(cfg: &EmailConfig, to: &str, subject: &str, html: &str) 
 
     let mailer = AsyncSmtpTransport::<Tokio1Executor>::builder_dangerous(&cfg.host)
         .port(cfg.port)
-        .tls(Tls::Required(tls_parameters))
+        .tls(Tls::Wrapper(tls_parameters))
         .credentials(Credentials::new(cfg.username.clone(), cfg.password.clone()))
         .build();
 
