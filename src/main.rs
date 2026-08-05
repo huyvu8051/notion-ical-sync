@@ -82,8 +82,19 @@ async fn main() -> anyhow::Result<()> {
         );
     }
 
+    // Transactional email (self-hosted Stalwart). None disables sending —
+    // welcome/billing emails are silently skipped rather than failing the
+    // request they'd otherwise piggyback on.
+    let email = notion_ical_sync::email::EmailConfig::from_env();
+    if email.is_none() {
+        tracing::warn!(
+            "SMTP_HOST/SMTP_PORT/SMTP_USERNAME/SMTP_PASSWORD/EMAIL_FROM not set; \
+             transactional emails will not be sent until they're configured"
+        );
+    }
+
     let caldav_allow_writes = CaldavAllowWrites::from_env();
-    let state = AppState::new(pool.clone(), caldav_allow_writes, webhook_secret, notion_oauth, password_enc_key, stripe);
+    let state = AppState::new(pool.clone(), caldav_allow_writes, webhook_secret, notion_oauth, password_enc_key, stripe, email);
 
     // Initial refresh
     state.refresh_all().await;
@@ -97,6 +108,17 @@ async fn main() -> anyhow::Result<()> {
         loop {
             interval.tick().await;
             state2.refresh_all().await;
+        }
+    });
+
+    // Daily check for trials ending within 7 days — same spawn/interval shape
+    // as the refresh loop above, just once a day instead of every 10 minutes.
+    let state3 = state.clone();
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(Duration::from_secs(86400));
+        loop {
+            interval.tick().await;
+            notion_ical_sync::billing::send_trial_reminders(&state3).await;
         }
     });
 

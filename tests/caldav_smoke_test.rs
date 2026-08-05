@@ -127,7 +127,7 @@ async fn test_state_multi(calendars: &[(&str, &str)], allow_writes: CaldavAllowW
         .unwrap();
     }
 
-    AppState::new(pool, allow_writes, None, None, None, None)
+    AppState::new(pool, allow_writes, None, None, None, None, None)
 }
 
 #[tokio::test]
@@ -722,7 +722,7 @@ async fn test_calendars_propfind_scoped_to_authenticated_calendar_not_whole_acco
         .unwrap();
     }
 
-    let state = AppState::new(pool, CaldavAllowWrites::True, None, None, None, None);
+    let state = AppState::new(pool, CaldavAllowWrites::True, None, None, None, None, None);
     let auth_a = basic_auth_header(&db_id_a);
     let username_a = caldav_username(&db_id_a);
 

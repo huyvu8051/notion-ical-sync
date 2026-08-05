@@ -3,7 +3,7 @@ use axum_oidc::{EmptyAdditionalClaims, OidcClaims};
 use chrono::{DateTime, Months, Utc};
 use hmac::{Hmac, Mac};
 use sha2::Sha256;
-use tracing::{info, warn};
+use tracing::{error, info, warn};
 
 use crate::{auth::find_or_create_user, AppState};
 
@@ -236,12 +236,17 @@ pub async fn handle_stripe_webhook(State(state): State<AppState>, headers: Heade
                 .await
                 {
                     warn!("stripe webhook: failed to link customer/subscription to user {}: {}", user_id, e);
+                } else if let Some(cfg) = state.email.clone() {
+                    // This — not `customer.subscription.updated` — is the one genuine
+                    // "just subscribed" moment; `.updated` fires on lots of unrelated
+                    // changes too and would spam a confirmation email repeatedly.
+                    notify_user_by_id(&state, cfg, user_id, crate::email::subscribed_email).await;
                 }
             } else {
                 warn!("stripe webhook: checkout.session.completed missing client_reference_id/customer/subscription");
             }
         }
-        "customer.subscription.updated" | "customer.subscription.deleted" => {
+        "customer.subscription.updated" => {
             let customer_id = data.get("customer").and_then(|v| v.as_str());
             let status = data.get("status").and_then(|v| v.as_str());
             if let (Some(customer_id), Some(status)) = (customer_id, status) {
@@ -255,10 +260,70 @@ pub async fn handle_stripe_webhook(State(state): State<AppState>, headers: Heade
                 }
             }
         }
+        "customer.subscription.deleted" => {
+            let customer_id = data.get("customer").and_then(|v| v.as_str());
+            let status = data.get("status").and_then(|v| v.as_str()).unwrap_or("canceled");
+            if let Some(customer_id) = customer_id {
+                if let Err(e) = sqlx::query("UPDATE users SET subscription_status = $1 WHERE stripe_customer_id = $2")
+                    .bind(status)
+                    .bind(customer_id)
+                    .execute(&state.db)
+                    .await
+                {
+                    warn!("stripe webhook: failed to update subscription_status for customer {}: {}", customer_id, e);
+                } else if let Some(cfg) = state.email.clone() {
+                    notify_user_by_customer_id(&state, cfg, customer_id, crate::email::subscription_canceled_email).await;
+                }
+            }
+        }
+        "invoice.payment_failed" => {
+            if let Some(customer_id) = data.get("customer").and_then(|v| v.as_str()) {
+                if let Some(cfg) = state.email.clone() {
+                    notify_user_by_customer_id(&state, cfg, customer_id, crate::email::payment_failed_email).await;
+                }
+            }
+        }
         _ => {}
     }
 
     StatusCode::OK
+}
+
+/// Shared by the webhook arms above that need to email a user identified by
+/// our own `users.id` (checkout completion, where we already have it from
+/// `client_reference_id`).
+async fn notify_user_by_id(
+    state: &AppState,
+    cfg: crate::email::EmailConfig,
+    user_id: i64,
+    template: fn(crate::i18n::Lang) -> (&'static str, String),
+) {
+    let row: Option<(String, String)> =
+        sqlx::query_as("SELECT email, preferred_lang FROM users WHERE id = $1").bind(user_id).fetch_optional(&state.db).await.ok().flatten();
+    if let Some((email, lang_code)) = row {
+        let (subject, html) = template(crate::i18n::Lang::from_code(&lang_code));
+        crate::email::spawn_send(cfg, email, subject.to_string(), html);
+    }
+}
+
+/// Shared by the webhook arms above that only carry a Stripe customer id
+/// (subscription/invoice events), looked up back to our own user row.
+async fn notify_user_by_customer_id(
+    state: &AppState,
+    cfg: crate::email::EmailConfig,
+    customer_id: &str,
+    template: fn(crate::i18n::Lang) -> (&'static str, String),
+) {
+    let row: Option<(String, String)> = sqlx::query_as("SELECT email, preferred_lang FROM users WHERE stripe_customer_id = $1")
+        .bind(customer_id)
+        .fetch_optional(&state.db)
+        .await
+        .ok()
+        .flatten();
+    if let Some((email, lang_code)) = row {
+        let (subject, html) = template(crate::i18n::Lang::from_code(&lang_code));
+        crate::email::spawn_send(cfg, email, subject.to_string(), html);
+    }
 }
 
 #[derive(sqlx::FromRow)]
@@ -273,6 +338,7 @@ pub async fn start_checkout(
     State(state): State<AppState>,
     claims: OidcClaims<EmptyAdditionalClaims>,
     cfg: axum::Extension<crate::auth::AppConfig>,
+    lang: crate::i18n::Lang,
 ) -> impl IntoResponse {
     let Some(stripe) = state.stripe.as_ref() else {
         return crate::oauth::error_page("Tính năng thanh toán chưa được cấu hình trên server này.");
@@ -280,7 +346,7 @@ pub async fn start_checkout(
 
     let sub = claims.subject().as_str();
     let email = claims.email().map(|e| e.as_str()).unwrap_or("").to_string();
-    let user_id = match find_or_create_user(&state.db, sub, &email).await {
+    let user_id = match find_or_create_user(&state, sub, &email, lang).await {
         Ok(id) => id,
         Err(_) => return crate::oauth::error_page("Có lỗi xảy ra."),
     };
@@ -311,6 +377,37 @@ pub async fn start_checkout(
         Err(e) => {
             warn!("failed to create stripe checkout session for user {}: {}", user_id, e);
             crate::oauth::error_page("Không thể tạo phiên thanh toán.")
+        }
+    }
+}
+
+/// Daily background job (see `main.rs`'s spawned interval loop, modeled on
+/// the existing 10-minute Notion refresh) — emails anyone whose free 6
+/// months end within the next 7 days and who hasn't subscribed, then stamps
+/// `trial_reminder_sent_at` so a later run of this same job never resends it.
+pub async fn send_trial_reminders(state: &AppState) {
+    let Some(cfg) = state.email.clone() else { return };
+
+    let rows: Vec<(i64, String, String, DateTime<Utc>)> = sqlx::query_as(
+        "SELECT id, email, preferred_lang, trial_started_at FROM users
+         WHERE trial_reminder_sent_at IS NULL
+           AND subscription_status NOT IN ('trialing', 'active')
+           AND trial_started_at + interval '6 months' BETWEEN now() AND now() + interval '7 days'",
+    )
+    .fetch_all(&state.db)
+    .await
+    .unwrap_or_else(|e| {
+        error!("failed to query users for trial reminders: {}", e);
+        Vec::new()
+    });
+
+    for (user_id, email, lang_code, trial_started_at) in rows {
+        let free_until = trial_end(trial_started_at).format("%Y-%m-%d").to_string();
+        let (subject, html) = crate::email::trial_ending_email(crate::i18n::Lang::from_code(&lang_code), &free_until);
+        crate::email::spawn_send(cfg.clone(), email, subject.to_string(), html);
+
+        if let Err(e) = sqlx::query("UPDATE users SET trial_reminder_sent_at = now() WHERE id = $1").bind(user_id).execute(&state.db).await {
+            error!("failed to stamp trial_reminder_sent_at for user {}: {}", user_id, e);
         }
     }
 }

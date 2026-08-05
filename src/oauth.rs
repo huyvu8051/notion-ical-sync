@@ -244,6 +244,7 @@ pub async fn notion_oauth_callback(
     State(state): State<AppState>,
     session: tower_sessions::Session,
     claims: OidcClaims<EmptyAdditionalClaims>,
+    lang: crate::i18n::Lang,
     Query(params): Query<CallbackParams>,
 ) -> impl IntoResponse {
     if let Some(err) = params.error {
@@ -309,7 +310,7 @@ pub async fn notion_oauth_callback(
 
     let sub = claims.subject().as_str();
     let email = claims.email().map(|e| e.as_str()).unwrap_or("").to_string();
-    let user_id = match find_or_create_user(&state.db, sub, &email).await {
+    let user_id = match find_or_create_user(&state, sub, &email, lang).await {
         Ok(id) => id,
         Err(e) => {
             error!("failed to find_or_create_user: {}", e);
@@ -449,11 +450,12 @@ pub struct DatabasesPageParams {
 pub async fn pick_databases_page(
     State(state): State<AppState>,
     claims: OidcClaims<EmptyAdditionalClaims>,
+    lang: crate::i18n::Lang,
     Query(params): Query<DatabasesPageParams>,
 ) -> impl IntoResponse {
     let sub = claims.subject().as_str();
     let email = claims.email().map(|e| e.as_str()).unwrap_or("").to_string();
-    let user_id = match find_or_create_user(&state.db, sub, &email).await {
+    let user_id = match find_or_create_user(&state, sub, &email, lang).await {
         Ok(id) => id,
         Err(_) => return error_page("Có lỗi xảy ra."),
     };
@@ -613,6 +615,7 @@ pub async fn create_calendars(
     State(state): State<AppState>,
     claims: OidcClaims<EmptyAdditionalClaims>,
     session: tower_sessions::Session,
+    lang: crate::i18n::Lang,
     body: axum::body::Bytes,
 ) -> impl IntoResponse {
     let body = String::from_utf8_lossy(&body);
@@ -622,7 +625,7 @@ pub async fn create_calendars(
 
     let sub = claims.subject().as_str();
     let email = claims.email().map(|e| e.as_str()).unwrap_or("").to_string();
-    let user_id = match find_or_create_user(&state.db, sub, &email).await {
+    let user_id = match find_or_create_user(&state, sub, &email, lang).await {
         Ok(id) => id,
         Err(_) => return error_page("Có lỗi xảy ra."),
     };
@@ -724,10 +727,11 @@ async fn owned_calendar_or_error(
     state: &AppState,
     claims: &OidcClaims<EmptyAdditionalClaims>,
     public_id: &str,
+    lang: crate::i18n::Lang,
 ) -> Result<crate::caldav::CalendarRow, axum::response::Response> {
     let sub = claims.subject().as_str();
     let email = claims.email().map(|e| e.as_str()).unwrap_or("").to_string();
-    let user_id = match find_or_create_user(&state.db, sub, &email).await {
+    let user_id = match find_or_create_user(state, sub, &email, lang).await {
         Ok(id) => id,
         Err(_) => return Err(error_page("Có lỗi xảy ra.")),
     };
@@ -744,9 +748,10 @@ async fn owned_calendar_or_error(
 pub async fn delete_calendar(
     State(state): State<AppState>,
     claims: OidcClaims<EmptyAdditionalClaims>,
+    lang: crate::i18n::Lang,
     Path(public_id): Path<String>,
 ) -> impl IntoResponse {
-    let cal = match owned_calendar_or_error(&state, &claims, &public_id).await {
+    let cal = match owned_calendar_or_error(&state, &claims, &public_id, lang).await {
         Ok(cal) => cal,
         Err(resp) => return resp,
     };
@@ -778,9 +783,10 @@ pub async fn reveal_password(
     State(state): State<AppState>,
     claims: OidcClaims<EmptyAdditionalClaims>,
     session: tower_sessions::Session,
+    lang: crate::i18n::Lang,
     Path(public_id): Path<String>,
 ) -> impl IntoResponse {
-    let cal = match owned_calendar_or_error(&state, &claims, &public_id).await {
+    let cal = match owned_calendar_or_error(&state, &claims, &public_id, lang).await {
         Ok(cal) => cal,
         Err(resp) => return resp,
     };
@@ -814,9 +820,10 @@ pub async fn regenerate_password(
     State(state): State<AppState>,
     claims: OidcClaims<EmptyAdditionalClaims>,
     session: tower_sessions::Session,
+    lang: crate::i18n::Lang,
     Path(public_id): Path<String>,
 ) -> impl IntoResponse {
-    let cal = match owned_calendar_or_error(&state, &claims, &public_id).await {
+    let cal = match owned_calendar_or_error(&state, &claims, &public_id, lang).await {
         Ok(cal) => cal,
         Err(resp) => return resp,
     };
@@ -911,9 +918,10 @@ const SYNC_LOG_STYLE: &str = r#"
 pub async fn sync_log_page(
     State(state): State<AppState>,
     claims: OidcClaims<EmptyAdditionalClaims>,
+    lang: crate::i18n::Lang,
     Path(public_id): Path<String>,
 ) -> impl IntoResponse {
-    let cal = match owned_calendar_or_error(&state, &claims, &public_id).await {
+    let cal = match owned_calendar_or_error(&state, &claims, &public_id, lang).await {
         Ok(cal) => cal,
         Err(resp) => return resp,
     };

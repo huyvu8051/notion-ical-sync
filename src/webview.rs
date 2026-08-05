@@ -11,10 +11,14 @@ use tracing::error;
 use crate::auth::{find_or_create_user, html_escape};
 use crate::AppState;
 
-async fn current_user_id(state: &AppState, claims: &OidcClaims<EmptyAdditionalClaims>) -> Result<i64, StatusCode> {
+async fn current_user_id(
+    state: &AppState,
+    claims: &OidcClaims<EmptyAdditionalClaims>,
+    lang: crate::i18n::Lang,
+) -> Result<i64, StatusCode> {
     let sub = claims.subject().as_str();
     let email = claims.email().map(|e| e.as_str()).unwrap_or("");
-    find_or_create_user(&state.db, sub, email).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
+    find_or_create_user(state, sub, email, lang).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
 }
 
 /// Every `/app/{public_id}/...` handler needs this same check: the calendar
@@ -27,8 +31,9 @@ async fn require_owned_calendar(
     state: &AppState,
     claims: &OidcClaims<EmptyAdditionalClaims>,
     public_id: &str,
+    lang: crate::i18n::Lang,
 ) -> Result<crate::caldav::CalendarRow, StatusCode> {
-    let user_id = current_user_id(state, claims).await?;
+    let user_id = current_user_id(state, claims, lang).await?;
     match state.calendar_by_public_id(public_id).await {
         Some(cal) if cal.user_id == user_id => Ok(cal),
         Some(_) => Err(StatusCode::FORBIDDEN),
@@ -123,7 +128,7 @@ pub async fn handle_webview_page(
     Path(public_id): Path<String>,
     lang: crate::i18n::Lang,
 ) -> impl IntoResponse {
-    let cal = match require_owned_calendar(&state, &claims, &public_id).await {
+    let cal = match require_owned_calendar(&state, &claims, &public_id, lang).await {
         Ok(cal) => cal,
         Err(status) => return status.into_response(),
     };
@@ -417,9 +422,10 @@ document.addEventListener('DOMContentLoaded', function() {{
 pub async fn handle_list_events(
     State(state): State<AppState>,
     claims: OidcClaims<EmptyAdditionalClaims>,
+    lang: crate::i18n::Lang,
     Path(public_id): Path<String>,
 ) -> impl IntoResponse {
-    let cal = match require_owned_calendar(&state, &claims, &public_id).await {
+    let cal = match require_owned_calendar(&state, &claims, &public_id, lang).await {
         Ok(cal) => cal,
         Err(status) => return status.into_response(),
     };
@@ -459,7 +465,7 @@ pub async fn handle_create_event(
     lang: crate::i18n::Lang,
     Json(body): Json<CreateEventBody>,
 ) -> impl IntoResponse {
-    let cal = match require_owned_calendar(&state, &claims, &public_id).await {
+    let cal = match require_owned_calendar(&state, &claims, &public_id, lang).await {
         Ok(cal) => cal,
         Err(status) => return status.into_response(),
     };
@@ -519,7 +525,7 @@ pub async fn handle_update_event(
     lang: crate::i18n::Lang,
     Json(body): Json<UpdateEventBody>,
 ) -> impl IntoResponse {
-    let cal = match require_owned_calendar(&state, &claims, &public_id).await {
+    let cal = match require_owned_calendar(&state, &claims, &public_id, lang).await {
         Ok(cal) => cal,
         Err(status) => return status.into_response(),
     };
@@ -558,9 +564,10 @@ pub async fn handle_update_event(
 pub async fn handle_delete_event(
     State(state): State<AppState>,
     claims: OidcClaims<EmptyAdditionalClaims>,
+    lang: crate::i18n::Lang,
     Path((public_id, event_id)): Path<(String, String)>,
 ) -> impl IntoResponse {
-    let cal = match require_owned_calendar(&state, &claims, &public_id).await {
+    let cal = match require_owned_calendar(&state, &claims, &public_id, lang).await {
         Ok(cal) => cal,
         Err(status) => return status.into_response(),
     };

@@ -73,16 +73,35 @@ pub async fn build_oidc_client(
 }
 
 /// Find-or-create the `users` row for this Keycloak login, returning its id.
-pub async fn find_or_create_user(pool: &sqlx::PgPool, keycloak_sub: &str, email: &str) -> Result<i64, sqlx::Error> {
-    sqlx::query_scalar(
-        "INSERT INTO users (keycloak_sub, email) VALUES ($1, $2)
+/// Also the single choke point for the welcome email: `(xmax = 0)` tells us
+/// whether this INSERT actually inserted a new row vs. hit the ON CONFLICT
+/// branch, so every one of this function's callers gets welcome-email
+/// coverage for free instead of needing their own "is this a new user" check.
+pub async fn find_or_create_user(
+    state: &AppState,
+    keycloak_sub: &str,
+    email: &str,
+    lang: crate::i18n::Lang,
+) -> Result<i64, sqlx::Error> {
+    let (id, inserted): (i64, bool) = sqlx::query_as(
+        "INSERT INTO users (keycloak_sub, email, preferred_lang) VALUES ($1, $2, $3)
          ON CONFLICT (keycloak_sub) DO UPDATE SET email = EXCLUDED.email
-         RETURNING id",
+         RETURNING id, (xmax = 0) AS inserted",
     )
     .bind(keycloak_sub)
     .bind(email)
-    .fetch_one(pool)
-    .await
+    .bind(lang.code())
+    .fetch_one(&state.db)
+    .await?;
+
+    if inserted {
+        if let Some(cfg) = state.email.clone() {
+            let (subject, html) = crate::email::welcome_email(lang);
+            crate::email::spawn_send(cfg, email.to_string(), subject.to_string(), html);
+        }
+    }
+
+    Ok(id)
 }
 
 pub(crate) fn html_escape(s: &str) -> String {
@@ -274,7 +293,7 @@ pub async fn me(
     let sub = claims.subject().as_str();
     let email = claims.email().map(|e| e.as_str()).unwrap_or("").to_string();
 
-    let user_id = match find_or_create_user(&state.db, sub, &email).await {
+    let user_id = match find_or_create_user(&state, sub, &email, lang).await {
         Ok(id) => id,
         Err(_) => return (axum::http::StatusCode::INTERNAL_SERVER_ERROR, l.error_generic).into_response(),
     };

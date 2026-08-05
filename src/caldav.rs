@@ -86,6 +86,11 @@ pub struct AppState {
     /// `/billing/checkout` ("not configured" page), same posture as
     /// `notion_oauth`/`webhook_secret`/`password_enc_key`.
     pub stripe: Option<crate::billing::StripeConfig>,
+    /// SMTP credentials for transactional email (self-hosted Stalwart). None
+    /// disables sending — welcome/billing emails are silently skipped rather
+    /// than failing the request they'd otherwise piggyback on, same posture
+    /// as `stripe`/`notion_oauth`/`webhook_secret`.
+    pub email: Option<crate::email::EmailConfig>,
 }
 
 // Notion API response types
@@ -138,6 +143,7 @@ impl AppState {
         notion_oauth: Option<crate::oauth::NotionOAuthConfig>,
         password_enc_key: Option<[u8; 32]>,
         stripe: Option<crate::billing::StripeConfig>,
+        email: Option<crate::email::EmailConfig>,
     ) -> Self {
         Self {
             client: Client::builder()
@@ -151,6 +157,7 @@ impl AppState {
             notion_oauth,
             password_enc_key,
             stripe,
+            email,
         }
     }
 

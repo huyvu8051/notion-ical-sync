@@ -32,6 +32,16 @@ impl Lang {
         }
     }
 
+    /// Reads back a value stored via `code()` (e.g. `users.preferred_lang`).
+    /// Anything unrecognized falls back to Vietnamese, same default as `detect()`.
+    pub fn from_code(code: &str) -> Self {
+        if code == "en" {
+            Lang::En
+        } else {
+            Lang::Vi
+        }
+    }
+
     fn from_cookie_header(cookie_header: &str) -> Option<Self> {
         cookie_header.split(';').find_map(|pair| {
             let (key, value) = pair.trim().split_once('=')?;
