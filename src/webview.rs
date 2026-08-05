@@ -175,6 +175,23 @@ body {{ background-color: #fbf9f9; color: #1b1c1c; -webkit-font-smoothing: antia
 .fc {{ --fc-border-color: #e5e5e5; --fc-button-bg-color: #fff; --fc-button-border-color: #e5e5e5; --fc-button-text-color: #1b1c1c;
   --fc-button-active-bg-color: #000; --fc-button-active-border-color: #000; --fc-today-bg-color: #f5f3f3; font-family: 'Inter', sans-serif; }}
 .fc .fc-button {{ box-shadow: none !important; text-transform: none; font-weight: 500; }}
+/* FullCalendar's default toolbar (prev/next/today | title | month/week/list)
+   has a natural min-width around 545px from its button labels alone — it
+   doesn't reflow on its own, so below that it either overflows or crams
+   together. Let it wrap onto its own rows instead, and shrink the header's
+   own spacing/text so both fit on real phone widths (~375-430px). */
+@media (max-width: 640px) {{
+  #calendar {{ padding: 12px; }}
+  .fc-header-toolbar {{ flex-wrap: wrap; row-gap: 8px; justify-content: center !important; }}
+  .fc-toolbar-chunk {{ display: flex; flex-wrap: wrap; justify-content: center; gap: 4px; }}
+  .fc-toolbar-title {{ font-size: 1.1em !important; }}
+  .fc .fc-button {{ padding: 4px 8px !important; font-size: 0.8em !important; }}
+  header.h-16 {{ padding-left: 12px; padding-right: 12px; }}
+  header .text-h1 {{ font-size: 18px; max-width: 40vw; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }}
+}}
+@media (max-width: 420px) {{
+  header .back-label {{ display: none; }}
+}}
 </style>
 </head>
 <body class="bg-background text-on-surface">
@@ -182,7 +199,7 @@ body {{ background-color: #fbf9f9; color: #1b1c1c; -webkit-font-smoothing: antia
 <div class="flex items-center gap-md">
 <a class="flex items-center gap-xs text-on-surface-variant hover:text-primary transition-colors text-label-md" href="/me">
 <span class="material-symbols-outlined">arrow_back</span>
-{back_to_all}
+<span class="back-label">{back_to_all}</span>
 </a>
 <div class="h-6 w-[1px] bg-outline-variant mx-sm"></div>
 <h1 class="text-h1 tracking-tight">{title}</h1>
