@@ -10,6 +10,22 @@ use tracing::info;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 use notion_ical_sync::{auth, oauth, AppState, CaldavAllowWrites, create_app};
 
+// Postgres advisory-lock keys for the periodic background jobs below —
+// arbitrary but must stay unique per job and stable across deploys.
+const JOB_LOCK_REFRESH_ALL: i64 = 90001;
+const JOB_LOCK_TRIAL_REMINDERS: i64 = 90002;
+
+/// Transaction-scoped advisory lock: `pg_try_advisory_xact_lock` releases
+/// automatically on commit/rollback, so there's no separate unlock call to
+/// forget or leak if the job panics. Returns `None` (skip this tick — another
+/// replica already holds it) rather than blocking, since these are periodic
+/// jobs, not queued work worth waiting for.
+async fn advisory_lock(pool: &sqlx::PgPool, key: i64) -> Option<sqlx::Transaction<'static, sqlx::Postgres>> {
+    let mut tx = pool.begin().await.ok()?;
+    let (locked,): (bool,) = sqlx::query_as("SELECT pg_try_advisory_xact_lock($1)").bind(key).fetch_one(&mut *tx).await.ok()?;
+    locked.then_some(tx)
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     dotenvy::dotenv().ok();
@@ -102,23 +118,35 @@ async fn main() -> anyhow::Result<()> {
     // Periodic refresh: every 10 minutes. Webhooks (see webhook.rs) cover the
     // realtime case by refreshing the affected database immediately, so this
     // poll is now just the fallback/catch-up path for anything a webhook missed.
+    // Guarded by a Postgres advisory lock since the deployment now runs 2
+    // replicas (rolling updates) — without it, both pods would double the
+    // Notion API calls on every tick.
     let state2 = state.clone();
     tokio::spawn(async move {
         let mut interval = tokio::time::interval(Duration::from_secs(600));
         loop {
             interval.tick().await;
-            state2.refresh_all().await;
+            if let Some(lock) = advisory_lock(&state2.db, JOB_LOCK_REFRESH_ALL).await {
+                state2.refresh_all().await;
+                let _ = lock.commit().await;
+            }
         }
     });
 
     // Daily check for trials ending within 7 days — same spawn/interval shape
     // as the refresh loop above, just once a day instead of every 10 minutes.
+    // Same advisory-lock guard: without it, 2 replicas would each independently
+    // SELECT the same due users before either UPDATEs trial_reminder_sent_at,
+    // sending the reminder twice.
     let state3 = state.clone();
     tokio::spawn(async move {
         let mut interval = tokio::time::interval(Duration::from_secs(86400));
         loop {
             interval.tick().await;
-            notion_ical_sync::billing::send_trial_reminders(&state3).await;
+            if let Some(lock) = advisory_lock(&state3.db, JOB_LOCK_TRIAL_REMINDERS).await {
+                notion_ical_sync::billing::send_trial_reminders(&state3).await;
+                let _ = lock.commit().await;
+            }
         }
     });
 
