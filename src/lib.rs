@@ -1,3 +1,6 @@
+#![allow(clippy::too_many_arguments)]
+#![allow(clippy::needless_borrow)]
+
 pub mod auth;
 pub mod billing;
 pub mod caldav;

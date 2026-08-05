@@ -186,7 +186,7 @@ async fn test_caldav_server_operations() {
     let propfind_res = client
         .request(
             reqwest::Method::from_bytes(b"PROPFIND").unwrap(),
-            &format!("{}/cal/{}", base_url, db_id),
+            format!("{}/cal/{}", base_url, db_id),
         )
         .header("Depth", "0")
         .header("Authorization", &auth_header)
@@ -202,7 +202,7 @@ async fn test_caldav_server_operations() {
     let propfind_depth1_res = client
         .request(
             reqwest::Method::from_bytes(b"PROPFIND").unwrap(),
-            &format!("{}/cal/{}", base_url, db_id),
+            format!("{}/cal/{}", base_url, db_id),
         )
         .header("Depth", "1")
         .header("Authorization", &auth_header)
@@ -217,7 +217,7 @@ async fn test_caldav_server_operations() {
     let report_res = client
         .request(
             reqwest::Method::from_bytes(b"REPORT").unwrap(),
-            &format!("{}/cal/{}", base_url, db_id),
+            format!("{}/cal/{}", base_url, db_id),
         )
         .header("Authorization", &auth_header)
         .send()
@@ -230,7 +230,7 @@ async fn test_caldav_server_operations() {
 
     // 6. Test GET /cal/{db_id}/{event_id}.ics
     let get_res = client
-        .get(&format!("{}/cal/{}/{}.ics", base_url, db_id, event_id))
+        .get(format!("{}/cal/{}/{}.ics", base_url, db_id, event_id))
         .header("Authorization", &auth_header)
         .send()
         .await
@@ -260,7 +260,7 @@ END:VEVENT
 END:VCALENDAR"#;
 
     let put_res = client
-        .put(&format!("{}/cal/{}/{}.ics", base_url, db_id, new_event_id))
+        .put(format!("{}/cal/{}/{}.ics", base_url, db_id, new_event_id))
         .header("Authorization", &auth_header)
         .body(new_ics)
         .send()
@@ -275,7 +275,7 @@ END:VCALENDAR"#;
     // Since the Notion write failed, the event must never have been cached
     // (no silent local-only state that later gets wiped by a real refresh).
     let get_new_res = client
-        .get(&format!("{}/cal/{}/{}.ics", base_url, db_id, new_event_id))
+        .get(format!("{}/cal/{}/{}.ics", base_url, db_id, new_event_id))
         .header("Authorization", &auth_header)
         .send()
         .await
@@ -288,7 +288,7 @@ END:VCALENDAR"#;
     // something that was never created can't be tested here since create
     // itself can't succeed without a real token).
     let delete_res = client
-        .delete(&format!("{}/cal/{}/{}.ics", base_url, db_id, event_id))
+        .delete(format!("{}/cal/{}/{}.ics", base_url, db_id, event_id))
         .header("Authorization", &auth_header)
         .send()
         .await
@@ -297,7 +297,7 @@ END:VCALENDAR"#;
 
     // Still there — the failed Notion call must not have removed it locally.
     let get_still_there_res = client
-        .get(&format!("{}/cal/{}/{}.ics", base_url, db_id, event_id))
+        .get(format!("{}/cal/{}/{}.ics", base_url, db_id, event_id))
         .header("Authorization", &auth_header)
         .send()
         .await
@@ -390,7 +390,7 @@ async fn test_caldav_host_based_routing() {
 
     // 5. Test calendar.opendiy.vn GET /eventcal111.ics
     let res = client
-        .get(&format!("{}/eventcal111.ics", base_url))
+        .get(format!("{}/eventcal111.ics", base_url))
         .header("Host", "calendar.opendiy.vn")
         .header("Authorization", &auth_cal)
         .send()
@@ -415,7 +415,7 @@ async fn test_caldav_host_based_routing() {
 
     // 7. Test mytime.opendiy.vn GET /eventtime222.ics
     let res = client
-        .get(&format!("{}/eventtime222.ics", base_url))
+        .get(format!("{}/eventtime222.ics", base_url))
         .header("Host", "mytime.opendiy.vn")
         .header("Authorization", &auth_time)
         .send()
@@ -430,7 +430,7 @@ async fn test_caldav_host_based_routing() {
     // point of Phase 4's DB-backed auth: a valid credential for one
     // calendar must not open a different one just because both exist.
     let res = client
-        .get(&format!("{}/eventtime222.ics", base_url))
+        .get(format!("{}/eventtime222.ics", base_url))
         .header("Host", "mytime.opendiy.vn")
         .header("Authorization", &auth_cal)
         .send()
@@ -440,7 +440,7 @@ async fn test_caldav_host_based_routing() {
 
     // 8. Test fallback path-based routing on calendar.opendiy.vn or localhost
     let res = client
-        .get(&format!("{}/cal/{}/eventcal111.ics", base_url, db_id_cal))
+        .get(format!("{}/cal/{}/eventcal111.ics", base_url, db_id_cal))
         .header("Authorization", &auth_cal)
         .send()
         .await
@@ -452,7 +452,7 @@ async fn test_caldav_host_based_routing() {
     // 9. Test unmapped host (should return 404, given valid credentials —
     // otherwise auth itself would reject before the handler even runs)
     let res = client
-        .get(&format!("{}/eventcal111.ics", base_url))
+        .get(format!("{}/eventcal111.ics", base_url))
         .header("Host", "other.opendiy.vn")
         .header("Authorization", &auth_cal)
         .send()
@@ -499,7 +499,7 @@ async fn test_caldav_new_endpoints_and_auth() {
 
     // 1. Test unauthorized request
     let unauth_res = client
-        .put(&format!("{}/cal/{}/unauth-event.ics", base_url, db_id))
+        .put(format!("{}/cal/{}/unauth-event.ics", base_url, db_id))
         .body("BEGIN:VCALENDAR\nEND:VCALENDAR")
         .send()
         .await
@@ -521,7 +521,7 @@ async fn test_caldav_new_endpoints_and_auth() {
         base64_light::base64_encode(&format!("{}:wrong-password", username))
     );
     let bad_res = client
-        .put(&format!("{}/cal/{}/unauth-event.ics", base_url, db_id))
+        .put(format!("{}/cal/{}/unauth-event.ics", base_url, db_id))
         .header("Authorization", &bad_auth)
         .body("BEGIN:VCALENDAR\nEND:VCALENDAR")
         .send()
@@ -537,7 +537,7 @@ async fn test_caldav_new_endpoints_and_auth() {
         .unwrap();
 
     let redirect_res = no_redirect_client
-        .get(&format!("{}/.well-known/caldav", base_url))
+        .get(format!("{}/.well-known/caldav", base_url))
         .header("Authorization", &auth_header_val)
         .send()
         .await
@@ -561,7 +561,7 @@ async fn test_caldav_new_endpoints_and_auth() {
     let propfind_princ_res = client
         .request(
             reqwest::Method::from_bytes(b"PROPFIND").unwrap(),
-            &format!("{}/principals/", base_url),
+            format!("{}/principals/", base_url),
         )
         .header("Authorization", &auth_header_val)
         .send()
@@ -577,7 +577,7 @@ async fn test_caldav_new_endpoints_and_auth() {
     let propfind_cal_res = client
         .request(
             reqwest::Method::from_bytes(b"PROPFIND").unwrap(),
-            &format!("{}/calendars/{}/", base_url, username),
+            format!("{}/calendars/{}/", base_url, username),
         )
         .header("Authorization", &auth_header_val)
         .send()
@@ -593,7 +593,7 @@ async fn test_caldav_new_endpoints_and_auth() {
     let root_propfind_res = client
         .request(
             reqwest::Method::from_bytes(b"PROPFIND").unwrap(),
-            &format!("{}/", base_url),
+            format!("{}/", base_url),
         )
         .header("Authorization", &auth_header_val)
         .send()
@@ -608,7 +608,7 @@ async fn test_caldav_new_endpoints_and_auth() {
     let report_cal_res = client
         .request(
             reqwest::Method::from_bytes(b"REPORT").unwrap(),
-            &format!("{}/calendars/{}/", base_url, username),
+            format!("{}/calendars/{}/", base_url, username),
         )
         .header("Authorization", &auth_header_val)
         .send()
@@ -620,7 +620,7 @@ async fn test_caldav_new_endpoints_and_auth() {
 
     // 7. Test OPTIONS / (Auth bypass)
     let options_res = client
-        .request(reqwest::Method::OPTIONS, &format!("{}/", base_url))
+        .request(reqwest::Method::OPTIONS, format!("{}/", base_url))
         .send()
         .await
         .unwrap();
@@ -649,7 +649,7 @@ async fn test_caldav_readonly_mode() {
 
     // 1. Verify health endpoint returns caldav_allow_writes: "false"
     let health_res = client
-        .get(&format!("{}/health", base_url))
+        .get(format!("{}/health", base_url))
         .send()
         .await
         .unwrap();
@@ -661,7 +661,7 @@ async fn test_caldav_readonly_mode() {
     // credentials pass auth — CaldavAllowWrites::False is checked inside the
     // handler, after the DB-backed Basic Auth middleware).
     let put_res = client
-        .put(&format!("{}/cal/{}/event123.ics", base_url, db_id))
+        .put(format!("{}/cal/{}/event123.ics", base_url, db_id))
         .header("Authorization", &auth_header)
         .body("BEGIN:VCALENDAR\nEND:VCALENDAR")
         .send()
@@ -671,7 +671,7 @@ async fn test_caldav_readonly_mode() {
 
     // 3. Test DELETE on event -> 403 Forbidden
     let delete_res = client
-        .delete(&format!("{}/cal/{}/event123.ics", base_url, db_id))
+        .delete(format!("{}/cal/{}/event123.ics", base_url, db_id))
         .header("Authorization", &auth_header)
         .send()
         .await
@@ -682,7 +682,7 @@ async fn test_caldav_readonly_mode() {
     let proppatch_res = client
         .request(
             reqwest::Method::from_bytes(b"PROPPATCH").unwrap(),
-            &format!("{}/cal/{}", base_url, db_id),
+            format!("{}/cal/{}", base_url, db_id),
         )
         .header("Authorization", &auth_header)
         .body("<xml></xml>")
@@ -719,7 +719,7 @@ async fn test_app_webview_requires_oidc_not_basic_auth() {
     // (they're different identities, see auth.rs vs oauth.rs), and no
     // session at all should force a login redirect rather than a CalDAV 401.
     let res = no_redirect_client
-        .get(&format!("{}/app", base_url))
+        .get(format!("{}/app", base_url))
         .header("Authorization", &caldav_auth)
         .send()
         .await
@@ -820,7 +820,7 @@ async fn test_calendars_propfind_scoped_to_authenticated_calendar_not_whole_acco
     let res = client
         .request(
             reqwest::Method::from_bytes(b"PROPFIND").unwrap(),
-            &format!("{}/calendars/{}/", base_url, username_a),
+            format!("{}/calendars/{}/", base_url, username_a),
         )
         .header("Authorization", &auth_a)
         .header("Depth", "1")
