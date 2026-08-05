@@ -110,6 +110,7 @@ pub(crate) enum OauthError {
     FailedToListDatabases,
     InvalidRequest,
     CalendarNotFound,
+    AccessDenied,
     FailedToDeleteCalendar,
     RevealPasswordNotConfigured,
     PasswordPredatesReveal,
@@ -152,6 +153,8 @@ impl OauthError {
             (Self::InvalidRequest, Lang::En) => "Invalid request.".to_string(),
             (Self::CalendarNotFound, Lang::Vi) => "Không tìm thấy calendar này.".to_string(),
             (Self::CalendarNotFound, Lang::En) => "This calendar wasn't found.".to_string(),
+            (Self::AccessDenied, Lang::Vi) => "Bạn không có quyền truy cập calendar này.".to_string(),
+            (Self::AccessDenied, Lang::En) => "You don't have access to this calendar.".to_string(),
             (Self::FailedToDeleteCalendar, Lang::Vi) => "Không thể xoá calendar này.".to_string(),
             (Self::FailedToDeleteCalendar, Lang::En) => "Failed to delete this calendar.".to_string(),
             (Self::RevealPasswordNotConfigured, Lang::Vi) => {

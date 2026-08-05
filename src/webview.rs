@@ -200,6 +200,16 @@ pub async fn handle_webview_page(
 ) -> impl IntoResponse {
     let cal = match require_owned_calendar(&state, &claims, &public_id, lang).await {
         Ok(cal) => cal,
+        // Unlike the JSON API handlers below (which correctly return a bare
+        // status for fetch()-based JS), this is a real page a browser
+        // navigates to directly — a bare 403/404 with no body/back-link left
+        // the user stranded on a blank page (see plan Phase 5).
+        Err(StatusCode::FORBIDDEN) => {
+            return crate::oauth::error_page(lang, crate::oauth::OauthError::AccessDenied)
+        }
+        Err(StatusCode::NOT_FOUND) => {
+            return crate::oauth::error_page(lang, crate::oauth::OauthError::CalendarNotFound)
+        }
         Err(status) => return status.into_response(),
     };
     let l = match lang {
