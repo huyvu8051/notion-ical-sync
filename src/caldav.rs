@@ -806,85 +806,90 @@ impl AppState {
             })
             .unwrap_or_default()
     }
+}
 
-    /// Builds the `properties` entries for the optional fields (Location,
-    /// Notes, Priority, Busy/Free, Reminder, Travel time) — only for
-    /// whichever ones are both `Some` in `fields` *and* present on `schema`
-    /// with a compatible type; anything else is silently skipped rather than
-    /// erroring, same "auto-detect, tolerate absence" posture as the read
-    /// side (`extract_*` helpers near `refresh_db`).
-    fn optional_event_properties(
-        &self,
-        schema: &HashMap<String, (String, String)>,
-        fields: &ExtraEventFields,
-    ) -> serde_json::Map<String, serde_json::Value> {
-        let mut properties = serde_json::Map::new();
+/// Builds the `properties` entries for the optional fields (Location, Notes,
+/// Priority, Busy/Free, Reminder, Travel time) — only for whichever ones are
+/// both `Some` in `fields` *and* present on `schema` with a compatible type;
+/// anything else is silently skipped rather than erroring, same
+/// "auto-detect, tolerate absence" posture as the read side (`extract_*`
+/// helpers near `refresh_db`). Free function (doesn't need `&self`) so it's
+/// directly unit-testable without a real `AppState`.
+fn optional_event_properties(
+    schema: &HashMap<String, (String, String)>,
+    fields: &ExtraEventFields,
+) -> serde_json::Map<String, serde_json::Value> {
+    let mut properties = serde_json::Map::new();
 
-        if let Some(location) = fields.location {
-            if let Some((name, ptype)) = schema.get("location") {
-                let value = match ptype.as_str() {
-                    "rich_text" => Some(
-                        serde_json::json!({ "rich_text": [{ "text": { "content": location } }] }),
-                    ),
-                    "url" => Some(serde_json::json!({ "url": location })),
-                    _ => None,
-                };
-                if let Some(v) = value {
-                    properties.insert(name.clone(), v);
+    if let Some(location) = fields.location {
+        if let Some((name, ptype)) = schema.get("location") {
+            let value = match ptype.as_str() {
+                "rich_text" => {
+                    Some(serde_json::json!({ "rich_text": [{ "text": { "content": location } }] }))
                 }
+                "url" => Some(serde_json::json!({ "url": location })),
+                _ => None,
+            };
+            if let Some(v) = value {
+                properties.insert(name.clone(), v);
             }
         }
-        if let Some(notes) = fields.notes {
-            if let Some((name, ptype)) = schema.get("notes") {
-                if ptype == "rich_text" {
+    }
+    if let Some(notes) = fields.notes {
+        if let Some((name, ptype)) = schema.get("notes") {
+            if ptype == "rich_text" {
+                properties.insert(
+                    name.clone(),
+                    serde_json::json!({ "rich_text": [{ "text": { "content": notes } }] }),
+                );
+            }
+        }
+    }
+    if let Some(priority) = fields.priority {
+        if let Some((name, ptype)) = schema.get("priority") {
+            if ptype == "select" {
+                if let Some(option_name) = priority_number_to_select_name(priority) {
                     properties.insert(
                         name.clone(),
-                        serde_json::json!({ "rich_text": [{ "text": { "content": notes } }] }),
+                        serde_json::json!({ "select": { "name": option_name } }),
                     );
                 }
             }
         }
-        if let Some(priority) = fields.priority {
-            if let Some((name, ptype)) = schema.get("priority") {
-                if ptype == "select" {
-                    if let Some(option_name) = priority_number_to_select_name(priority) {
-                        properties.insert(
-                            name.clone(),
-                            serde_json::json!({ "select": { "name": option_name } }),
-                        );
-                    }
-                }
+    }
+    if let Some(busy) = fields.busy {
+        if let Some((name, ptype)) = schema.get("busy") {
+            if ptype == "checkbox" {
+                properties.insert(name.clone(), serde_json::json!({ "checkbox": busy }));
+            }
+        } else if let Some((name, ptype)) = schema.get("show as") {
+            if ptype == "select" {
+                properties.insert(
+                    name.clone(),
+                    serde_json::json!({ "select": { "name": if busy { "Busy" } else { "Free" } } }),
+                );
             }
         }
-        if let Some(busy) = fields.busy {
-            if let Some((name, ptype)) = schema.get("busy") {
-                if ptype == "checkbox" {
-                    properties.insert(name.clone(), serde_json::json!({ "checkbox": busy }));
-                }
-            } else if let Some((name, ptype)) = schema.get("show as") {
-                if ptype == "select" {
-                    properties.insert(name.clone(), serde_json::json!({ "select": { "name": if busy { "Busy" } else { "Free" } } }));
-                }
+    }
+    if let Some(minutes) = fields.reminder_minutes {
+        if let Some((name, ptype)) = schema.get("reminder") {
+            if ptype == "number" {
+                properties.insert(name.clone(), serde_json::json!({ "number": minutes }));
             }
         }
-        if let Some(minutes) = fields.reminder_minutes {
-            if let Some((name, ptype)) = schema.get("reminder") {
-                if ptype == "number" {
-                    properties.insert(name.clone(), serde_json::json!({ "number": minutes }));
-                }
+    }
+    if let Some(minutes) = fields.travel_minutes {
+        if let Some((name, ptype)) = schema.get("travel time") {
+            if ptype == "number" {
+                properties.insert(name.clone(), serde_json::json!({ "number": minutes }));
             }
         }
-        if let Some(minutes) = fields.travel_minutes {
-            if let Some((name, ptype)) = schema.get("travel time") {
-                if ptype == "number" {
-                    properties.insert(name.clone(), serde_json::json!({ "number": minutes }));
-                }
-            }
-        }
-
-        properties
     }
 
+    properties
+}
+
+impl AppState {
     /// Create a new Notion page under `data_source_id` with a title and the
     /// configured date property set, mirroring what the webview's "add
     /// event" flow needs. Notion is always the source of truth: this writes
@@ -898,6 +903,7 @@ impl AppState {
         title: &str,
         start: &str,
         end: Option<&str>,
+        extra: &ExtraEventFields<'_>,
     ) -> Result<String, String> {
         let mut properties = serde_json::Map::new();
         properties.insert(
@@ -908,6 +914,10 @@ impl AppState {
             date_property.to_string(),
             serde_json::json!({ "date": self.date_property_value(start, end) }),
         );
+        let schema = self
+            .get_data_source_properties(data_source_id, notion_token)
+            .await;
+        properties.extend(optional_event_properties(&schema, extra));
 
         let body = serde_json::json!({
             "parent": { "type": "data_source_id", "data_source_id": data_source_id },
@@ -953,11 +963,13 @@ impl AppState {
     pub async fn notion_update_event(
         &self,
         page_id: &str,
+        data_source_id: &str,
         date_property: &str,
         notion_token: &str,
         title: Option<&str>,
         start: Option<&str>,
         end: Option<Option<&str>>,
+        extra: &ExtraEventFields<'_>,
     ) -> Result<(), String> {
         let mut properties = serde_json::Map::new();
         if let Some(t) = title {
@@ -972,6 +984,10 @@ impl AppState {
                 serde_json::json!({ "date": self.date_property_value(s, end.flatten()) }),
             );
         }
+        let schema = self
+            .get_data_source_properties(data_source_id, notion_token)
+            .await;
+        properties.extend(optional_event_properties(&schema, extra));
 
         if properties.is_empty() {
             return Ok(());
@@ -1213,17 +1229,36 @@ pub fn parse_ics_to_page_info(ics_content: &str, default_id: &str) -> PageInfo {
     let mut title = "(untitled)".to_string();
     let mut start = "".to_string();
     let mut end = None;
-    let mut description = "".to_string();
+    let mut notes = None;
+    let mut location = None;
+    let mut priority = None;
+    let mut busy = None;
+    let mut reminder_minutes = None;
     let mut uid = default_id.to_string();
+    let mut in_valarm = false;
+
+    fn unescape(s: &str) -> String {
+        s.replace("\\,", ",")
+            .replace("\\;", ";")
+            .replace("\\n", "\n")
+            .replace("\\\\", "\\")
+    }
 
     for line in ics_content.lines() {
         let line = line.trim();
-        if let Some(rest) = line.strip_prefix("SUMMARY:") {
-            title = rest
-                .replace("\\,", ",")
-                .replace("\\;", ";")
-                .replace("\\n", "\n")
-                .replace("\\\\", "\\");
+        if line == "BEGIN:VALARM" {
+            in_valarm = true;
+        } else if line == "END:VALARM" {
+            in_valarm = false;
+        } else if in_valarm {
+            if let Some(rest) = line
+                .strip_prefix("TRIGGER:-PT")
+                .and_then(|s| s.strip_suffix('M'))
+            {
+                reminder_minutes = rest.parse::<i64>().ok();
+            }
+        } else if let Some(rest) = line.strip_prefix("SUMMARY:") {
+            title = unescape(rest);
         } else if let Some(rest) = line.strip_prefix("DTSTART:") {
             start = parse_ics_date(rest);
         } else if let Some(rest) = line.strip_prefix("DTSTART;VALUE=DATE:") {
@@ -1233,11 +1268,23 @@ pub fn parse_ics_to_page_info(ics_content: &str, default_id: &str) -> PageInfo {
         } else if let Some(rest) = line.strip_prefix("DTEND;VALUE=DATE:") {
             end = Some(parse_ics_date(rest));
         } else if let Some(rest) = line.strip_prefix("DESCRIPTION:") {
-            description = rest
-                .replace("\\,", ",")
-                .replace("\\;", ";")
-                .replace("\\n", "\n")
-                .replace("\\\\", "\\");
+            let text = unescape(rest);
+            if !text.is_empty() {
+                notes = Some(text);
+            }
+        } else if let Some(rest) = line.strip_prefix("LOCATION:") {
+            let text = unescape(rest);
+            if !text.is_empty() {
+                location = Some(text);
+            }
+        } else if let Some(rest) = line.strip_prefix("PRIORITY:") {
+            priority = rest.parse::<u8>().ok();
+        } else if let Some(rest) = line.strip_prefix("TRANSP:") {
+            busy = match rest {
+                "OPAQUE" => Some(true),
+                "TRANSPARENT" => Some(false),
+                _ => None,
+            };
         } else if let Some(rest) = line.strip_prefix("UID:") {
             uid = rest.to_string();
         }
@@ -1248,16 +1295,20 @@ pub fn parse_ics_to_page_info(ics_content: &str, default_id: &str) -> PageInfo {
         title,
         start,
         end,
-        url: description,
+        // Not a real Notion property today — regenerated server-side on
+        // every read from `refresh_db`, so what a client sends here (if
+        // anything) is irrelevant; kept empty rather than reusing it for
+        // notes now that DESCRIPTION has a real meaning of its own.
+        url: String::new(),
         last_edited: chrono::Utc::now().to_rfc3339(),
-        // Location/Notes/Priority/Busy get wired up in Phase 2 (write-back);
-        // Repeat/Attendees are read-only from Notion by design, never parsed
-        // out of a client's PUT — see plan Decisions.
-        location: None,
-        notes: None,
-        priority: None,
-        busy: None,
-        reminder_minutes: None,
+        location,
+        notes,
+        priority,
+        busy,
+        reminder_minutes,
+        // Travel time has no iCal-standard input line worth trusting from
+        // an arbitrary client — Notion stays the source of truth for it,
+        // same as Repeat/Attendees below.
         travel_minutes: None,
         repeat_rule: None,
         attendees: Vec::new(),
@@ -1700,15 +1751,25 @@ pub async fn handle_calendar_event_impl(
                 .await;
             return axum::http::StatusCode::FORBIDDEN.into_response();
         }
+        let extra = ExtraEventFields {
+            location: new_page.location.as_deref(),
+            notes: new_page.notes.as_deref(),
+            priority: new_page.priority,
+            busy: new_page.busy,
+            reminder_minutes: new_page.reminder_minutes,
+            travel_minutes: None,
+        };
         let result = if let Some(page_id) = existing_id {
             state
                 .notion_update_event(
                     &page_id,
+                    &cal.data_source_id,
                     &cal.date_property,
                     &cal.notion_access_token,
                     Some(&new_page.title),
                     Some(&new_page.start),
                     Some(new_page.end.as_deref()),
+                    &extra,
                 )
                 .await
                 .map(|_| (axum::http::StatusCode::NO_CONTENT, page_id))
@@ -1721,6 +1782,7 @@ pub async fn handle_calendar_event_impl(
                     &new_page.title,
                     &new_page.start,
                     new_page.end.as_deref(),
+                    &extra,
                 )
                 .await
             {
@@ -2871,5 +2933,73 @@ mod new_field_tests {
             extract_text_or_url_property(&props, "Location"),
             Some("https://x.com".to_string())
         );
+    }
+
+    #[test]
+    fn parse_ics_extracts_location_notes_priority_transp_and_valarm() {
+        let ics = "BEGIN:VEVENT\r\n\
+UID:evt-1\r\n\
+SUMMARY:Standup\r\n\
+DTSTART:20260101T100000Z\r\n\
+LOCATION:Room 4B\r\n\
+DESCRIPTION:Bring the slides\r\n\
+PRIORITY:1\r\n\
+TRANSP:TRANSPARENT\r\n\
+BEGIN:VALARM\r\n\
+ACTION:DISPLAY\r\n\
+TRIGGER:-PT15M\r\n\
+END:VALARM\r\n\
+END:VEVENT\r\n";
+        let page = parse_ics_to_page_info(ics, "fallback-id");
+        assert_eq!(page.id, "evt-1");
+        assert_eq!(page.title, "Standup");
+        assert_eq!(page.location, Some("Room 4B".to_string()));
+        assert_eq!(page.notes, Some("Bring the slides".to_string()));
+        assert_eq!(page.priority, Some(1));
+        assert_eq!(page.busy, Some(false));
+        assert_eq!(page.reminder_minutes, Some(15));
+        assert_eq!(page.url, "");
+    }
+
+    #[test]
+    fn parse_ics_omits_new_fields_when_absent() {
+        let ics = "BEGIN:VEVENT\r\nUID:evt-2\r\nSUMMARY:Plain\r\nDTSTART:20260101T100000Z\r\nEND:VEVENT\r\n";
+        let page = parse_ics_to_page_info(ics, "fallback-id");
+        assert_eq!(page.location, None);
+        assert_eq!(page.notes, None);
+        assert_eq!(page.priority, None);
+        assert_eq!(page.busy, None);
+        assert_eq!(page.reminder_minutes, None);
+    }
+
+    #[test]
+    fn priority_number_to_select_name_covers_full_1_to_9_range() {
+        assert_eq!(priority_number_to_select_name(1), Some("High"));
+        assert_eq!(priority_number_to_select_name(3), Some("High"));
+        assert_eq!(priority_number_to_select_name(4), Some("Medium"));
+        assert_eq!(priority_number_to_select_name(6), Some("Medium"));
+        assert_eq!(priority_number_to_select_name(7), Some("Low"));
+        assert_eq!(priority_number_to_select_name(9), Some("Low"));
+        assert_eq!(priority_number_to_select_name(0), None);
+    }
+
+    #[test]
+    fn optional_event_properties_skips_fields_missing_from_schema() {
+        let mut schema = HashMap::new();
+        schema.insert(
+            "location".to_string(),
+            ("Location".to_string(), "rich_text".to_string()),
+        );
+        let fields = ExtraEventFields {
+            location: Some("Somewhere"),
+            notes: Some("Ignored — no Notes property"),
+            priority: Some(1),
+            busy: Some(true),
+            reminder_minutes: Some(10),
+            travel_minutes: Some(5),
+        };
+        let props = optional_event_properties(&schema, &fields);
+        assert_eq!(props.len(), 1);
+        assert!(props.contains_key("Location"));
     }
 }

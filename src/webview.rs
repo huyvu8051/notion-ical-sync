@@ -66,6 +66,28 @@ struct WebviewLabels {
     alert_delete_failed: &'static str,
     alert_update_date_failed: &'static str,
     alert_quota_exceeded: &'static str,
+    location_label: &'static str,
+    location_placeholder: &'static str,
+    notes_label: &'static str,
+    notes_placeholder: &'static str,
+    priority_label: &'static str,
+    priority_none: &'static str,
+    priority_high: &'static str,
+    priority_medium: &'static str,
+    priority_low: &'static str,
+    busy_label: &'static str,
+    busy_unset: &'static str,
+    busy_busy: &'static str,
+    busy_free: &'static str,
+    reminder_label: &'static str,
+    reminder_none: &'static str,
+    reminder_5min: &'static str,
+    reminder_15min: &'static str,
+    reminder_30min: &'static str,
+    reminder_1hour: &'static str,
+    travel_time_label: &'static str,
+    repeat_display_prefix: &'static str,
+    attendees_display_prefix: &'static str,
 }
 
 const WEBVIEW_LABELS_VI: WebviewLabels = WebviewLabels {
@@ -92,6 +114,28 @@ const WEBVIEW_LABELS_VI: WebviewLabels = WebviewLabels {
     alert_update_date_failed: "Cập nhật ngày thất bại",
     alert_quota_exceeded:
         "Đã đạt giới hạn 10 sự kiện miễn phí hôm nay. Nâng cấp $1/năm để bỏ giới hạn.",
+    location_label: "Địa điểm",
+    location_placeholder: "Nhập địa điểm...",
+    notes_label: "Ghi chú",
+    notes_placeholder: "Nhập ghi chú...",
+    priority_label: "Mức độ ưu tiên",
+    priority_none: "Không đặt",
+    priority_high: "Cao",
+    priority_medium: "Trung bình",
+    priority_low: "Thấp",
+    busy_label: "Trạng thái",
+    busy_unset: "Không đặt",
+    busy_busy: "Bận",
+    busy_free: "Rảnh",
+    reminder_label: "Nhắc nhở",
+    reminder_none: "Không nhắc",
+    reminder_5min: "5 phút trước",
+    reminder_15min: "15 phút trước",
+    reminder_30min: "30 phút trước",
+    reminder_1hour: "1 giờ trước",
+    travel_time_label: "Thời gian di chuyển (phút)",
+    repeat_display_prefix: "Lặp lại: ",
+    attendees_display_prefix: "Người được mời: ",
 };
 
 const WEBVIEW_LABELS_EN: WebviewLabels = WebviewLabels {
@@ -118,6 +162,28 @@ const WEBVIEW_LABELS_EN: WebviewLabels = WebviewLabels {
     alert_update_date_failed: "Failed to update date",
     alert_quota_exceeded:
         "You've hit today's free limit of 10 events. Upgrade for $1/year to remove it.",
+    location_label: "Location",
+    location_placeholder: "Enter location...",
+    notes_label: "Notes",
+    notes_placeholder: "Enter notes...",
+    priority_label: "Priority",
+    priority_none: "Not set",
+    priority_high: "High",
+    priority_medium: "Medium",
+    priority_low: "Low",
+    busy_label: "Status",
+    busy_unset: "Not set",
+    busy_busy: "Busy",
+    busy_free: "Free",
+    reminder_label: "Reminder",
+    reminder_none: "No reminder",
+    reminder_5min: "5 minutes before",
+    reminder_15min: "15 minutes before",
+    reminder_30min: "30 minutes before",
+    reminder_1hour: "1 hour before",
+    travel_time_label: "Travel time (minutes)",
+    repeat_display_prefix: "Repeats: ",
+    attendees_display_prefix: "Invited: ",
 };
 
 /// Server-rendered page shell (no client-side hydration/wasm — Leptos here
@@ -223,7 +289,7 @@ body {{ background-color: #fbf9f9; color: #1b1c1c; -webkit-font-smoothing: antia
 <div id="calendar"></div>
 
 <div class="fixed inset-0 bg-black/40 z-50 hidden items-center justify-center" id="modal-backdrop">
-<div class="bg-white w-full max-w-lg mx-4 rounded-xl modal-shadow overflow-hidden" id="modal-content">
+<div class="bg-white w-full max-w-lg mx-4 rounded-xl modal-shadow overflow-hidden max-h-[90vh] overflow-y-auto" id="modal-content">
 <div class="px-lg py-md border-b border-outline-variant flex items-center justify-between">
 <h2 class="text-h2" id="modal-title">{modal_title_add}</h2>
 <button class="p-1 hover:bg-surface-container-low rounded-lg transition-colors" onclick="closeModal()">
@@ -249,6 +315,51 @@ body {{ background-color: #fbf9f9; color: #1b1c1c; -webkit-font-smoothing: antia
 <input class="w-4 h-4 rounded text-primary focus:ring-primary border-outline-variant" id="modal-field-allday" type="checkbox">
 <label class="cursor-pointer" for="modal-field-allday">{allday_label}</label>
 </div>
+<div class="space-y-xs">
+<label class="text-label-md text-on-surface-variant">{location_label}</label>
+<input class="w-full h-10 px-md border border-outline-variant rounded-lg focus:border-secondary focus:ring-1 focus:ring-secondary/10 outline-none transition-all" id="modal-field-location" placeholder="{location_placeholder}" type="text">
+</div>
+<div class="space-y-xs">
+<label class="text-label-md text-on-surface-variant">{notes_label}</label>
+<textarea class="w-full px-md py-sm border border-outline-variant rounded-lg focus:border-secondary focus:ring-1 focus:ring-secondary/10 outline-none transition-all" id="modal-field-notes" placeholder="{notes_placeholder}" rows="2"></textarea>
+</div>
+<div class="grid grid-cols-2 gap-md">
+<div class="space-y-xs">
+<label class="text-label-md text-on-surface-variant">{priority_label}</label>
+<select class="w-full h-10 px-md border border-outline-variant rounded-lg focus:border-secondary focus:ring-1 focus:ring-secondary/10 outline-none transition-all" id="modal-field-priority">
+<option value="">{priority_none}</option>
+<option value="1">{priority_high}</option>
+<option value="5">{priority_medium}</option>
+<option value="9">{priority_low}</option>
+</select>
+</div>
+<div class="space-y-xs">
+<label class="text-label-md text-on-surface-variant">{busy_label}</label>
+<select class="w-full h-10 px-md border border-outline-variant rounded-lg focus:border-secondary focus:ring-1 focus:ring-secondary/10 outline-none transition-all" id="modal-field-busy">
+<option value="">{busy_unset}</option>
+<option value="true">{busy_busy}</option>
+<option value="false">{busy_free}</option>
+</select>
+</div>
+</div>
+<div class="grid grid-cols-2 gap-md">
+<div class="space-y-xs">
+<label class="text-label-md text-on-surface-variant">{reminder_label}</label>
+<select class="w-full h-10 px-md border border-outline-variant rounded-lg focus:border-secondary focus:ring-1 focus:ring-secondary/10 outline-none transition-all" id="modal-field-reminder">
+<option value="">{reminder_none}</option>
+<option value="5">{reminder_5min}</option>
+<option value="15">{reminder_15min}</option>
+<option value="30">{reminder_30min}</option>
+<option value="60">{reminder_1hour}</option>
+</select>
+</div>
+<div class="space-y-xs">
+<label class="text-label-md text-on-surface-variant">{travel_time_label}</label>
+<input class="w-full h-10 px-md border border-outline-variant rounded-lg focus:border-secondary focus:ring-1 focus:ring-secondary/10 outline-none transition-all" id="modal-field-travel" type="number" min="0">
+</div>
+</div>
+<div class="hidden text-label-md text-on-surface-variant" id="modal-repeat-display"></div>
+<div class="hidden text-label-md text-on-surface-variant" id="modal-attendees-display"></div>
 <a class="hidden items-center gap-xs text-secondary hover:underline text-label-md" href="#" id="modal-notion-link" target="_blank" rel="noopener">
 {open_in_notion}
 <span class="material-symbols-outlined text-[14px]">open_in_new</span>
@@ -277,6 +388,26 @@ body {{ background-color: #fbf9f9; color: #1b1c1c; -webkit-font-smoothing: antia
         start_label = l.start_label,
         end_label = l.end_label,
         allday_label = l.allday_label,
+        location_label = l.location_label,
+        location_placeholder = l.location_placeholder,
+        notes_label = l.notes_label,
+        notes_placeholder = l.notes_placeholder,
+        priority_label = l.priority_label,
+        priority_none = l.priority_none,
+        priority_high = l.priority_high,
+        priority_medium = l.priority_medium,
+        priority_low = l.priority_low,
+        busy_label = l.busy_label,
+        busy_unset = l.busy_unset,
+        busy_busy = l.busy_busy,
+        busy_free = l.busy_free,
+        reminder_label = l.reminder_label,
+        reminder_none = l.reminder_none,
+        reminder_5min = l.reminder_5min,
+        reminder_15min = l.reminder_15min,
+        reminder_30min = l.reminder_30min,
+        reminder_1hour = l.reminder_1hour,
+        travel_time_label = l.travel_time_label,
         open_in_notion = l.open_in_notion,
         delete_btn = l.delete_btn,
         cancel_btn = l.cancel_btn,
@@ -307,6 +438,17 @@ function toLocalInputValue(dateStr) {{
   return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()) + 'T' + pad(d.getHours()) + ':' + pad(d.getMinutes());
 }}
 
+function resetOptionalModalFields() {{
+  document.getElementById('modal-field-location').value = '';
+  document.getElementById('modal-field-notes').value = '';
+  document.getElementById('modal-field-priority').value = '';
+  document.getElementById('modal-field-busy').value = '';
+  document.getElementById('modal-field-reminder').value = '';
+  document.getElementById('modal-field-travel').value = '';
+  document.getElementById('modal-repeat-display').classList.add('hidden');
+  document.getElementById('modal-attendees-display').classList.add('hidden');
+}}
+
 function openCreateModal(startStr, endStr, allDay) {{
   editingEventId = null;
   document.getElementById('modal-title').textContent = '{modal_title_add}';
@@ -314,6 +456,7 @@ function openCreateModal(startStr, endStr, allDay) {{
   document.getElementById('modal-field-start').value = startStr ? toLocalInputValue(startStr) : '';
   document.getElementById('modal-field-end').value = endStr ? toLocalInputValue(endStr) : '';
   document.getElementById('modal-field-allday').checked = !!allDay;
+  resetOptionalModalFields();
   document.getElementById('modal-notion-link').classList.add('hidden');
   document.getElementById('modal-delete-btn').classList.add('hidden');
   showModal();
@@ -326,6 +469,24 @@ function openEditModal(info) {{
   document.getElementById('modal-field-start').value = toLocalInputValue(info.event.startStr);
   document.getElementById('modal-field-end').value = info.event.endStr ? toLocalInputValue(info.event.endStr) : '';
   document.getElementById('modal-field-allday').checked = info.event.allDay;
+  resetOptionalModalFields();
+  var props = info.event.extendedProps;
+  document.getElementById('modal-field-location').value = props.location || '';
+  document.getElementById('modal-field-notes').value = props.notes || '';
+  document.getElementById('modal-field-priority').value = props.priority || '';
+  document.getElementById('modal-field-busy').value = (props.busy === true) ? 'true' : (props.busy === false) ? 'false' : '';
+  document.getElementById('modal-field-reminder').value = props.reminderMinutes || '';
+  document.getElementById('modal-field-travel').value = props.travelMinutes || '';
+  if (props.repeatRule) {{
+    var repeatEl = document.getElementById('modal-repeat-display');
+    repeatEl.textContent = '{repeat_display_prefix}' + props.repeatRule;
+    repeatEl.classList.remove('hidden');
+  }}
+  if (props.attendees && props.attendees.length) {{
+    var attendeesEl = document.getElementById('modal-attendees-display');
+    attendeesEl.textContent = '{attendees_display_prefix}' + props.attendees.join(', ');
+    attendeesEl.classList.remove('hidden');
+  }}
   var notionUrl = info.event.extendedProps.notionUrl;
   var link = document.getElementById('modal-notion-link');
   if (notionUrl) {{
@@ -361,11 +522,29 @@ function saveFromModal() {{
   var start = allDay ? startVal.slice(0, 10) : startVal;
   var end = endVal ? (allDay ? endVal.slice(0, 10) : endVal) : null;
 
+  // Blank/unset fields are left out entirely (not sent as empty string/null)
+  // so saving without touching e.g. Location doesn't clear whatever's
+  // already on the Notion page — same "only update what's provided" posture
+  // notion_update_event already has server-side.
+  var payload = {{ title: title, start: start, end: end }};
+  var location = document.getElementById('modal-field-location').value.trim();
+  if (location) payload.location = location;
+  var notes = document.getElementById('modal-field-notes').value.trim();
+  if (notes) payload.notes = notes;
+  var priority = document.getElementById('modal-field-priority').value;
+  if (priority) payload.priority = parseInt(priority, 10);
+  var busy = document.getElementById('modal-field-busy').value;
+  if (busy) payload.busy = (busy === 'true');
+  var reminder = document.getElementById('modal-field-reminder').value;
+  if (reminder) payload.reminder_minutes = parseInt(reminder, 10);
+  var travel = document.getElementById('modal-field-travel').value.trim();
+  if (travel) payload.travel_minutes = parseInt(travel, 10);
+
   if (editingEventId) {{
     fetch('{events_url}/' + encodeURIComponent(editingEventId), {{
       method: 'PATCH',
       headers: {{ 'Content-Type': 'application/json' }},
-      body: JSON.stringify({{ title: title, start: start, end: end }})
+      body: JSON.stringify(payload)
     }}).then(function(r) {{
       if (!r.ok) {{ alert(r.status === 429 ? '{alert_quota_exceeded}' : '{alert_update_failed}'); return; }}
       closeModal();
@@ -375,7 +554,7 @@ function saveFromModal() {{
     fetch('{events_url}', {{
       method: 'POST',
       headers: {{ 'Content-Type': 'application/json' }},
-      body: JSON.stringify({{ title: title, start: start, end: end }})
+      body: JSON.stringify(payload)
     }}).then(function(r) {{
       if (!r.ok) {{ alert(r.status === 429 ? '{alert_quota_exceeded}' : '{alert_create_failed}'); return; }}
       closeModal();
@@ -449,6 +628,8 @@ document.addEventListener('DOMContentLoaded', function() {{
         alert_delete_failed = js_escape(l.alert_delete_failed),
         alert_update_date_failed = js_escape(l.alert_update_date_failed),
         alert_quota_exceeded = js_escape(l.alert_quota_exceeded),
+        repeat_display_prefix = js_escape(l.repeat_display_prefix),
+        attendees_display_prefix = js_escape(l.attendees_display_prefix),
     )
 }
 
@@ -478,6 +659,14 @@ pub async fn handle_list_events(
                 // — this lands in event.extendedProps.notionUrl instead, for
                 // the edit modal's "Mở trong Notion" link.
                 "notionUrl": p.url,
+                "location": p.location,
+                "notes": p.notes,
+                "priority": p.priority,
+                "busy": p.busy,
+                "reminderMinutes": p.reminder_minutes,
+                "travelMinutes": p.travel_minutes,
+                "repeatRule": p.repeat_rule,
+                "attendees": p.attendees,
             })
         })
         .collect();
@@ -489,6 +678,18 @@ pub struct CreateEventBody {
     title: String,
     start: String,
     end: Option<String>,
+    #[serde(default)]
+    location: Option<String>,
+    #[serde(default)]
+    notes: Option<String>,
+    #[serde(default)]
+    priority: Option<u8>,
+    #[serde(default)]
+    busy: Option<bool>,
+    #[serde(default)]
+    reminder_minutes: Option<i64>,
+    #[serde(default)]
+    travel_minutes: Option<i64>,
 }
 
 pub async fn handle_create_event(
@@ -523,6 +724,14 @@ pub async fn handle_create_event(
         };
         return (StatusCode::TOO_MANY_REQUESTS, l.alert_quota_exceeded).into_response();
     }
+    let extra = crate::caldav::ExtraEventFields {
+        location: body.location.as_deref(),
+        notes: body.notes.as_deref(),
+        priority: body.priority,
+        busy: body.busy,
+        reminder_minutes: body.reminder_minutes,
+        travel_minutes: body.travel_minutes,
+    };
     match state
         .notion_create_event(
             &cal.data_source_id,
@@ -531,6 +740,7 @@ pub async fn handle_create_event(
             &body.title,
             &body.start,
             body.end.as_deref(),
+            &extra,
         )
         .await
     {
@@ -561,6 +771,18 @@ pub struct UpdateEventBody {
     start: Option<String>,
     #[serde(default, deserialize_with = "deserialize_optional_field")]
     end: Option<Option<String>>,
+    #[serde(default)]
+    location: Option<String>,
+    #[serde(default)]
+    notes: Option<String>,
+    #[serde(default)]
+    priority: Option<u8>,
+    #[serde(default)]
+    busy: Option<bool>,
+    #[serde(default)]
+    reminder_minutes: Option<i64>,
+    #[serde(default)]
+    travel_minutes: Option<i64>,
 }
 
 // Distinguishes "end omitted" (None) from "end explicitly cleared" (Some(None))
@@ -604,14 +826,24 @@ pub async fn handle_update_event(
         };
         return (StatusCode::TOO_MANY_REQUESTS, l.alert_quota_exceeded).into_response();
     }
+    let extra = crate::caldav::ExtraEventFields {
+        location: body.location.as_deref(),
+        notes: body.notes.as_deref(),
+        priority: body.priority,
+        busy: body.busy,
+        reminder_minutes: body.reminder_minutes,
+        travel_minutes: body.travel_minutes,
+    };
     match state
         .notion_update_event(
             &event_id,
+            &cal.data_source_id,
             &cal.date_property,
             &cal.notion_access_token,
             body.title.as_deref(),
             body.start.as_deref(),
             body.end.as_ref().map(|o| o.as_deref()),
+            &extra,
         )
         .await
     {
