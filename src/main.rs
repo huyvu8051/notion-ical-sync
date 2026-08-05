@@ -1,14 +1,11 @@
-use std::{
-    env,
-    time::Duration,
-};
+use notion_ical_sync::{auth, create_app, oauth, AppState, CaldavAllowWrites};
+use std::{env, time::Duration};
 use tower_sessions::cookie::time::Duration as CookieDuration;
 use tower_sessions::cookie::SameSite;
 use tower_sessions::{Expiry, SessionManagerLayer};
 use tower_sessions_sqlx_store::PostgresStore;
 use tracing::info;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
-use notion_ical_sync::{auth, oauth, AppState, CaldavAllowWrites, create_app};
 
 // Postgres advisory-lock keys for the periodic background jobs below —
 // arbitrary but must stay unique per job and stable across deploys.
@@ -20,9 +17,16 @@ const JOB_LOCK_TRIAL_REMINDERS: i64 = 90002;
 /// forget or leak if the job panics. Returns `None` (skip this tick — another
 /// replica already holds it) rather than blocking, since these are periodic
 /// jobs, not queued work worth waiting for.
-async fn advisory_lock(pool: &sqlx::PgPool, key: i64) -> Option<sqlx::Transaction<'static, sqlx::Postgres>> {
+async fn advisory_lock(
+    pool: &sqlx::PgPool,
+    key: i64,
+) -> Option<sqlx::Transaction<'static, sqlx::Postgres>> {
     let mut tx = pool.begin().await.ok()?;
-    let (locked,): (bool,) = sqlx::query_as("SELECT pg_try_advisory_xact_lock($1)").bind(key).fetch_one(&mut *tx).await.ok()?;
+    let (locked,): (bool,) = sqlx::query_as("SELECT pg_try_advisory_xact_lock($1)")
+        .bind(key)
+        .fetch_one(&mut *tx)
+        .await
+        .ok()?;
     locked.then_some(tx)
 }
 
@@ -30,7 +34,10 @@ async fn advisory_lock(pool: &sqlx::PgPool, key: i64) -> Option<sqlx::Transactio
 async fn main() -> anyhow::Result<()> {
     dotenvy::dotenv().ok();
     tracing_subscriber::registry()
-        .with(tracing_subscriber::EnvFilter::from_default_env().add_directive(tracing::Level::INFO.into()))
+        .with(
+            tracing_subscriber::EnvFilter::from_default_env()
+                .add_directive(tracing::Level::INFO.into()),
+        )
         .with(tracing_subscriber::fmt::layer())
         .init();
 
@@ -59,7 +66,8 @@ async fn main() -> anyhow::Result<()> {
         .await
         .expect("failed to run migrations");
 
-    let app_base_url = env::var("APP_BASE_URL").unwrap_or_else(|_| format!("http://localhost:{port}"));
+    let app_base_url =
+        env::var("APP_BASE_URL").unwrap_or_else(|_| format!("http://localhost:{port}"));
     let notion_oauth = oauth::NotionOAuthConfig::from_env(&app_base_url);
     if notion_oauth.is_none() {
         tracing::warn!(
@@ -110,7 +118,15 @@ async fn main() -> anyhow::Result<()> {
     }
 
     let caldav_allow_writes = CaldavAllowWrites::from_env();
-    let state = AppState::new(pool.clone(), caldav_allow_writes, webhook_secret, notion_oauth, password_enc_key, stripe, email);
+    let state = AppState::new(
+        pool.clone(),
+        caldav_allow_writes,
+        webhook_secret,
+        notion_oauth,
+        password_enc_key,
+        stripe,
+        email,
+    );
 
     // Initial refresh
     state.refresh_all().await;
@@ -168,13 +184,18 @@ async fn main() -> anyhow::Result<()> {
     .await;
 
     let session_store = PostgresStore::new(pool);
-    session_store.migrate().await.expect("failed to run session store migrations");
+    session_store
+        .migrate()
+        .await
+        .expect("failed to run session store migrations");
     let session_layer = SessionManagerLayer::new(session_store)
         .with_secure(app_base_url.starts_with("https://"))
         .with_same_site(SameSite::Lax)
         .with_expiry(Expiry::OnInactivity(CookieDuration::days(7)));
 
-    let app_config = auth::AppConfig { base_url: app_base_url };
+    let app_config = auth::AppConfig {
+        base_url: app_base_url,
+    };
 
     let app = create_app(state, oidc_client, app_config).layer(session_layer);
 

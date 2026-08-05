@@ -49,12 +49,16 @@ impl NotionOAuthConfig {
 fn generate_token(len: usize) -> String {
     const CHARSET: &[u8] = b"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
     let mut rng = rand::thread_rng();
-    (0..len).map(|_| CHARSET[rng.gen_range(0..CHARSET.len())] as char).collect()
+    (0..len)
+        .map(|_| CHARSET[rng.gen_range(0..CHARSET.len())] as char)
+        .collect()
 }
 
 fn hash_password(password: &str) -> Result<String, argon2::password_hash::Error> {
     let salt = SaltString::generate(&mut rand::thread_rng());
-    Ok(Argon2::default().hash_password(password.as_bytes(), &salt)?.to_string())
+    Ok(Argon2::default()
+        .hash_password(password.as_bytes(), &salt)?
+        .to_string())
 }
 
 /// Encrypts a CalDAV password for storage in `caldav_password_encrypted`, so
@@ -73,7 +77,9 @@ fn encrypt_password(key: &[u8; 32], plaintext: &str) -> Option<String> {
 }
 
 fn decrypt_password(key: &[u8; 32], encoded: &str) -> Option<String> {
-    let combined = base64::engine::general_purpose::STANDARD.decode(encoded).ok()?;
+    let combined = base64::engine::general_purpose::STANDARD
+        .decode(encoded)
+        .ok()?;
     if combined.len() < 12 {
         return None;
     }
@@ -284,7 +290,10 @@ const CONNECT_NOTION_LABELS_EN: ConnectNotionLabels = ConnectNotionLabels {
 
 /// Step 1 confirmation screen (matches the Stitch "Kết nối Notion" design) —
 /// shown before we actually redirect away to Notion's consent screen.
-pub async fn connect_notion_page(claims: OidcClaims<EmptyAdditionalClaims>, lang: crate::i18n::Lang) -> impl IntoResponse {
+pub async fn connect_notion_page(
+    claims: OidcClaims<EmptyAdditionalClaims>,
+    lang: crate::i18n::Lang,
+) -> impl IntoResponse {
     let email = claims.email().map(|e| e.as_str()).unwrap_or("");
     let l = match lang {
         crate::i18n::Lang::Vi => &CONNECT_NOTION_LABELS_VI,
@@ -447,10 +456,26 @@ pub async fn notion_oauth_callback(
         }
     };
 
-    let access_token = body.get("access_token").and_then(|v| v.as_str()).unwrap_or_default().to_string();
-    let workspace_id = body.get("workspace_id").and_then(|v| v.as_str()).unwrap_or_default().to_string();
-    let workspace_name = body.get("workspace_name").and_then(|v| v.as_str()).unwrap_or_default().to_string();
-    let bot_id = body.get("bot_id").and_then(|v| v.as_str()).unwrap_or_default().to_string();
+    let access_token = body
+        .get("access_token")
+        .and_then(|v| v.as_str())
+        .unwrap_or_default()
+        .to_string();
+    let workspace_id = body
+        .get("workspace_id")
+        .and_then(|v| v.as_str())
+        .unwrap_or_default()
+        .to_string();
+    let workspace_name = body
+        .get("workspace_name")
+        .and_then(|v| v.as_str())
+        .unwrap_or_default()
+        .to_string();
+    let bot_id = body
+        .get("bot_id")
+        .and_then(|v| v.as_str())
+        .unwrap_or_default()
+        .to_string();
 
     if access_token.is_empty() || workspace_id.is_empty() {
         return error_page(lang, OauthError::NotionResponseMissingFields);
@@ -490,7 +515,10 @@ pub async fn notion_oauth_callback(
         }
     };
 
-    Redirect::to(&format!("/connect/notion/databases?connection_id={connection_id}")).into_response()
+    Redirect::to(&format!(
+        "/connect/notion/databases?connection_id={connection_id}"
+    ))
+    .into_response()
 }
 
 struct DatabaseCandidate {
@@ -510,7 +538,10 @@ struct DatabaseCandidate {
 /// for `data_source` objects directly rather than `database` objects) the
 /// user granted access to, checking each one for a date property (needed
 /// for both sync and this picker's compatibility check).
-async fn list_syncable_databases(client: &reqwest::Client, token: &str) -> Result<Vec<DatabaseCandidate>, String> {
+async fn list_syncable_databases(
+    client: &reqwest::Client,
+    token: &str,
+) -> Result<Vec<DatabaseCandidate>, String> {
     let resp = client
         .post("https://api.notion.com/v1/search")
         .bearer_auth(token)
@@ -526,12 +557,21 @@ async fn list_syncable_databases(client: &reqwest::Client, token: &str) -> Resul
         return Err(format!("Notion search error {status}: {txt}"));
     }
 
-    let body: serde_json::Value = resp.json().await.map_err(|e| format!("parse failed: {e}"))?;
-    let results = body.get("results").and_then(|r| r.as_array()).cloned().unwrap_or_default();
+    let body: serde_json::Value = resp
+        .json()
+        .await
+        .map_err(|e| format!("parse failed: {e}"))?;
+    let results = body
+        .get("results")
+        .and_then(|r| r.as_array())
+        .cloned()
+        .unwrap_or_default();
 
     let mut candidates = Vec::new();
     for ds in results {
-        let Some(data_source_id) = ds.get("id").and_then(|v| v.as_str()) else { continue };
+        let Some(data_source_id) = ds.get("id").and_then(|v| v.as_str()) else {
+            continue;
+        };
         let Some(database_id) = ds
             .get("parent")
             .and_then(|p| p.get("database_id"))
@@ -576,7 +616,11 @@ async fn list_syncable_databases(client: &reqwest::Client, token: &str) -> Resul
     Ok(candidates)
 }
 
-async fn connection_token_for_user(state: &AppState, connection_id: i64, user_id: i64) -> Option<String> {
+async fn connection_token_for_user(
+    state: &AppState,
+    connection_id: i64,
+    user_id: i64,
+) -> Option<String> {
     sqlx::query_scalar(
         "SELECT notion_access_token FROM notion_connections WHERE id = $1 AND user_id = $2",
     )
@@ -608,7 +652,8 @@ pub async fn pick_databases_page(
         Err(_) => return error_page(lang, OauthError::Generic),
     };
 
-    let Some(access_token) = connection_token_for_user(&state, params.connection_id, user_id).await else {
+    let Some(access_token) = connection_token_for_user(&state, params.connection_id, user_id).await
+    else {
         return error_page(lang, OauthError::ConnectionNotFound);
     };
 
@@ -750,7 +795,10 @@ impl CreateCalendarsForm {
                 _ => {}
             }
         }
-        Some(Self { connection_id: connection_id?, db_ids })
+        Some(Self {
+            connection_id: connection_id?,
+            db_ids,
+        })
     }
 }
 
@@ -778,7 +826,8 @@ pub async fn create_calendars(
         Err(_) => return error_page(lang, OauthError::Generic),
     };
 
-    let Some(access_token) = connection_token_for_user(&state, form.connection_id, user_id).await else {
+    let Some(access_token) = connection_token_for_user(&state, form.connection_id, user_id).await
+    else {
         return error_page(lang, OauthError::ConnectionNotFound);
     };
 
@@ -806,7 +855,10 @@ pub async fn create_calendars(
     let mut already_connected: Vec<String> = Vec::new();
 
     for db_id in &form.db_ids {
-        let Some(candidate) = candidates.iter().find(|c| &c.database_id == db_id && c.date_property.is_some()) else {
+        let Some(candidate) = candidates
+            .iter()
+            .find(|c| &c.database_id == db_id && c.date_property.is_some())
+        else {
             continue;
         };
         let date_property = candidate.date_property.clone().expect("checked above");
@@ -846,21 +898,29 @@ pub async fn create_calendars(
         .await;
 
         match result {
-            Ok(r) if r.rows_affected() > 0 => new_credentials.push((candidate.title.clone(), caldav_username, caldav_password)),
+            Ok(r) if r.rows_affected() > 0 => {
+                new_credentials.push((candidate.title.clone(), caldav_username, caldav_password))
+            }
             Ok(_) => already_connected.push(candidate.title.clone()),
             Err(e) => error!("failed to insert calendar {}: {}", candidate.database_id, e),
         }
     }
 
     if !new_credentials.is_empty() {
-        if let Err(e) = session.insert("new_calendar_credentials", &new_credentials).await {
+        if let Err(e) = session
+            .insert("new_calendar_credentials", &new_credentials)
+            .await
+        {
             error!("failed to stash new calendar credentials in session: {}", e);
         }
         state.refresh_all().await;
     }
 
     if !already_connected.is_empty() {
-        if let Err(e) = session.insert("calendar_connect_errors", &already_connected).await {
+        if let Err(e) = session
+            .insert("calendar_connect_errors", &already_connected)
+            .await
+        {
             error!("failed to stash calendar connect errors in session: {}", e);
         }
     }
@@ -904,16 +964,21 @@ pub async fn delete_calendar(
         Err(resp) => return resp,
     };
 
-    if let Err(e) = sqlx::query("DELETE FROM calendars WHERE id = $1").bind(cal.id).execute(&state.db).await {
+    if let Err(e) = sqlx::query("DELETE FROM calendars WHERE id = $1")
+        .bind(cal.id)
+        .execute(&state.db)
+        .await
+    {
         error!("failed to delete calendar {}: {}", cal.id, e);
         return error_page(lang, OauthError::FailedToDeleteCalendar);
     }
 
-    let still_referenced: i64 = sqlx::query_scalar("SELECT count(*) FROM calendars WHERE database_id = $1")
-        .bind(&cal.database_id)
-        .fetch_one(&state.db)
-        .await
-        .unwrap_or(1);
+    let still_referenced: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM calendars WHERE database_id = $1")
+            .bind(&cal.database_id)
+            .fetch_one(&state.db)
+            .await
+            .unwrap_or(1);
     if still_referenced == 0 {
         state.cache.write().await.remove(&cal.database_id);
     }
@@ -943,17 +1008,25 @@ pub async fn reveal_password(
         return error_page(lang, OauthError::RevealPasswordNotConfigured);
     };
 
-    let encrypted: String = sqlx::query_scalar("SELECT caldav_password_encrypted FROM calendars WHERE id = $1")
-        .bind(cal.id)
-        .fetch_one(&state.db)
-        .await
-        .unwrap_or_default();
+    let encrypted: String =
+        sqlx::query_scalar("SELECT caldav_password_encrypted FROM calendars WHERE id = $1")
+            .bind(cal.id)
+            .fetch_one(&state.db)
+            .await
+            .unwrap_or_default();
 
-    let Some(password) = (!encrypted.is_empty()).then(|| decrypt_password(key, &encrypted)).flatten() else {
+    let Some(password) = (!encrypted.is_empty())
+        .then(|| decrypt_password(key, &encrypted))
+        .flatten()
+    else {
         return error_page(lang, OauthError::PasswordPredatesReveal);
     };
 
-    let stash = vec![(cal.display_name.clone(), cal.caldav_username.clone(), password)];
+    let stash = vec![(
+        cal.display_name.clone(),
+        cal.caldav_username.clone(),
+        password,
+    )];
     if let Err(e) = session.insert("new_calendar_credentials", &stash).await {
         error!("failed to stash revealed password in session: {}", e);
     }
@@ -997,7 +1070,11 @@ pub async fn regenerate_password(
         return error_page(lang, OauthError::FailedToRegeneratePassword);
     }
 
-    let stash = vec![(cal.display_name.clone(), cal.caldav_username.clone(), new_password)];
+    let stash = vec![(
+        cal.display_name.clone(),
+        cal.caldav_username.clone(),
+        new_password,
+    )];
     if let Err(e) = session.insert("new_calendar_credentials", &stash).await {
         error!("failed to stash regenerated password in session: {}", e);
     }
@@ -1008,21 +1085,40 @@ pub async fn regenerate_password(
 /// Reads and clears the one-time post-onboarding credential stash written by
 /// `create_calendars` (and by `reveal_password`/`regenerate_password`),
 /// keyed by caldav_username for `me()` to display.
-pub async fn take_new_calendar_credentials(session: &tower_sessions::Session) -> HashMap<String, String> {
-    let stashed: Vec<(String, String, String)> = session.get("new_calendar_credentials").await.ok().flatten().unwrap_or_default();
+pub async fn take_new_calendar_credentials(
+    session: &tower_sessions::Session,
+) -> HashMap<String, String> {
+    let stashed: Vec<(String, String, String)> = session
+        .get("new_calendar_credentials")
+        .await
+        .ok()
+        .flatten()
+        .unwrap_or_default();
     if !stashed.is_empty() {
-        let _ = session.remove::<Vec<(String, String, String)>>("new_calendar_credentials").await;
+        let _ = session
+            .remove::<Vec<(String, String, String)>>("new_calendar_credentials")
+            .await;
     }
-    stashed.into_iter().map(|(_, username, password)| (username, password)).collect()
+    stashed
+        .into_iter()
+        .map(|(_, username, password)| (username, password))
+        .collect()
 }
 
 /// Reads and clears the one-time stash of database titles that were already
 /// connected under this same account (see `create_calendars`) — `me()` shows
 /// these as a notice instead of the previous silent no-op.
 pub async fn take_calendar_connect_errors(session: &tower_sessions::Session) -> Vec<String> {
-    let stashed: Vec<String> = session.get("calendar_connect_errors").await.ok().flatten().unwrap_or_default();
+    let stashed: Vec<String> = session
+        .get("calendar_connect_errors")
+        .await
+        .ok()
+        .flatten()
+        .unwrap_or_default();
     if !stashed.is_empty() {
-        let _ = session.remove::<Vec<String>>("calendar_connect_errors").await;
+        let _ = session
+            .remove::<Vec<String>>("calendar_connect_errors")
+            .await;
     }
     stashed
 }
@@ -1088,11 +1184,16 @@ pub async fn sync_log_page(
 
     let name = html_escape(&cal.display_name);
     let rows_html = if rows.is_empty() {
-        r#"<tr><td colspan="6" class="empty">Chưa có hoạt động đồng bộ nào được ghi lại.</td></tr>"#.to_string()
+        r#"<tr><td colspan="6" class="empty">Chưa có hoạt động đồng bộ nào được ghi lại.</td></tr>"#
+            .to_string()
     } else {
         rows.iter()
             .map(|r| {
-                let status_class = if r.status == "ok" { "status-ok" } else { "status-error" };
+                let status_class = if r.status == "ok" {
+                    "status-ok"
+                } else {
+                    "status-error"
+                };
                 let status_label = if r.status == "ok" { "OK" } else { "Lỗi" };
                 let page_link = if r.notion_page_id.is_empty() {
                     "—".to_string()
@@ -1115,14 +1216,21 @@ pub async fn sync_log_page(
                     time = html_escape(&r.occurred_at),
                     source = html_escape(&r.source),
                     action = html_escape(&r.action),
-                    uid = if r.event_uid.is_empty() { "—".to_string() } else { html_escape(&r.event_uid) },
+                    uid = if r.event_uid.is_empty() {
+                        "—".to_string()
+                    } else {
+                        html_escape(&r.event_uid)
+                    },
                     page_link = page_link,
                     status_class = status_class,
                     status_label = status_label,
                     detail = if r.detail.is_empty() {
                         String::new()
                     } else {
-                        format!(r#"<div class="detail-cell">{}</div>"#, html_escape(&r.detail))
+                        format!(
+                            r#"<div class="detail-cell">{}</div>"#,
+                            html_escape(&r.detail)
+                        )
                     },
                 )
             })

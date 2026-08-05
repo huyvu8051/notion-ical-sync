@@ -1,4 +1,9 @@
-use axum::{body::Bytes, extract::State, http::{HeaderMap, StatusCode}, response::{IntoResponse, Redirect}};
+use axum::{
+    body::Bytes,
+    extract::State,
+    http::{HeaderMap, StatusCode},
+    response::{IntoResponse, Redirect},
+};
 use axum_oidc::{EmptyAdditionalClaims, OidcClaims};
 use chrono::{DateTime, Months, Utc};
 use hmac::{Hmac, Mac};
@@ -24,7 +29,9 @@ pub enum AccessLevel {
 }
 
 pub fn trial_end(trial_started_at: DateTime<Utc>) -> DateTime<Utc> {
-    trial_started_at.checked_add_months(Months::new(TRIAL_MONTHS)).unwrap_or(trial_started_at)
+    trial_started_at
+        .checked_add_months(Months::new(TRIAL_MONTHS))
+        .unwrap_or(trial_started_at)
 }
 
 /// Single source of truth for "can this user write right now" — reused by
@@ -49,7 +56,10 @@ pub async fn effective_access(state: &AppState, user_id: i64) -> AccessLevel {
     }
 
     let used_today = count_writes_today(&state.db, user_id).await;
-    AccessLevel::Quota { used_today, limit: FREE_DAILY_QUOTA }
+    AccessLevel::Quota {
+        used_today,
+        limit: FREE_DAILY_QUOTA,
+    }
 }
 
 async fn count_writes_today(pool: &sqlx::PgPool, user_id: i64) -> i64 {
@@ -124,7 +134,10 @@ pub async fn create_checkout_session(
         ("line_items[0][quantity]", "1".to_string()),
         ("client_reference_id", user_id.to_string()),
         ("success_url", format!("{app_base_url}/me?checkout=success")),
-        ("cancel_url", format!("{app_base_url}/me?checkout=cancelled")),
+        (
+            "cancel_url",
+            format!("{app_base_url}/me?checkout=cancelled"),
+        ),
     ];
     match existing_customer_id {
         Some(customer_id) => params.push(("customer", customer_id.to_string())),
@@ -148,10 +161,15 @@ pub async fn create_checkout_session(
     if !resp.status().is_success() {
         let status = resp.status();
         let body = resp.text().await.unwrap_or_default();
-        return Err(format!("Stripe checkout session creation failed ({status}): {body}"));
+        return Err(format!(
+            "Stripe checkout session creation failed ({status}): {body}"
+        ));
     }
 
-    resp.json::<CheckoutSessionResponse>().await.map(|r| r.url).map_err(|e| e.to_string())
+    resp.json::<CheckoutSessionResponse>()
+        .await
+        .map(|r| r.url)
+        .map_err(|e| e.to_string())
 }
 
 /// Verifies `Stripe-Signature: t=<unix_ts>,v1=<hex>[,v1=<hex>...]` — HMAC-SHA256
@@ -168,37 +186,52 @@ fn verify_stripe_signature(secret: &str, header: &str, body: &[u8]) -> bool {
             signatures.push(v1);
         }
     }
-    let Some(timestamp) = timestamp else { return false };
+    let Some(timestamp) = timestamp else {
+        return false;
+    };
     if signatures.is_empty() {
         return false;
     }
 
     let signed_payload = [timestamp.as_bytes(), b".", body].concat();
     signatures.iter().any(|sig_hex| {
-        let Ok(expected) = hex_decode(sig_hex) else { return false };
-        let Ok(mut mac) = HmacSha256::new_from_slice(secret.as_bytes()) else { return false };
+        let Ok(expected) = hex_decode(sig_hex) else {
+            return false;
+        };
+        let Ok(mut mac) = HmacSha256::new_from_slice(secret.as_bytes()) else {
+            return false;
+        };
         mac.update(&signed_payload);
         mac.verify_slice(&expected).is_ok()
     })
 }
 
 fn hex_decode(s: &str) -> Result<Vec<u8>, ()> {
-    if s.len() % 2 != 0 {
+    if !s.len().is_multiple_of(2) {
         return Err(());
     }
-    (0..s.len()).step_by(2).map(|i| u8::from_str_radix(&s[i..i + 2], 16).map_err(|_| ())).collect()
+    (0..s.len())
+        .step_by(2)
+        .map(|i| u8::from_str_radix(&s[i..i + 2], 16).map_err(|_| ()))
+        .collect()
 }
 
 /// Handles Stripe's webhook events for the $1/year subscription: links a
 /// Stripe customer/subscription to our user on checkout completion, then
 /// keeps `subscription_status` in sync as Stripe's own status changes.
-pub async fn handle_stripe_webhook(State(state): State<AppState>, headers: HeaderMap, body: Bytes) -> StatusCode {
+pub async fn handle_stripe_webhook(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> StatusCode {
     let Some(stripe) = state.stripe.as_ref() else {
         warn!("stripe webhook: STRIPE_* not configured, dropping event");
         return StatusCode::OK;
     };
 
-    let signature = headers.get("stripe-signature").and_then(|v| v.to_str().ok());
+    let signature = headers
+        .get("stripe-signature")
+        .and_then(|v| v.to_str().ok());
     let Some(signature) = signature else {
         warn!("stripe webhook: missing Stripe-Signature header");
         return StatusCode::BAD_REQUEST;
@@ -216,16 +249,24 @@ pub async fn handle_stripe_webhook(State(state): State<AppState>, headers: Heade
         }
     };
 
-    let event_type = json.get("type").and_then(|v| v.as_str()).unwrap_or("unknown");
+    let event_type = json
+        .get("type")
+        .and_then(|v| v.as_str())
+        .unwrap_or("unknown");
     let data = json.pointer("/data/object").cloned().unwrap_or_default();
     info!(event_type, "-> Stripe webhook event verified");
 
     match event_type {
         "checkout.session.completed" => {
-            let user_id = data.get("client_reference_id").and_then(|v| v.as_str()).and_then(|s| s.parse::<i64>().ok());
+            let user_id = data
+                .get("client_reference_id")
+                .and_then(|v| v.as_str())
+                .and_then(|s| s.parse::<i64>().ok());
             let customer_id = data.get("customer").and_then(|v| v.as_str());
             let subscription_id = data.get("subscription").and_then(|v| v.as_str());
-            if let (Some(user_id), Some(customer_id), Some(subscription_id)) = (user_id, customer_id, subscription_id) {
+            if let (Some(user_id), Some(customer_id), Some(subscription_id)) =
+                (user_id, customer_id, subscription_id)
+            {
                 if let Err(e) = sqlx::query(
                     "UPDATE users SET stripe_customer_id = $1, stripe_subscription_id = $2, subscription_status = 'trialing' WHERE id = $3",
                 )
@@ -250,36 +291,61 @@ pub async fn handle_stripe_webhook(State(state): State<AppState>, headers: Heade
             let customer_id = data.get("customer").and_then(|v| v.as_str());
             let status = data.get("status").and_then(|v| v.as_str());
             if let (Some(customer_id), Some(status)) = (customer_id, status) {
-                if let Err(e) = sqlx::query("UPDATE users SET subscription_status = $1 WHERE stripe_customer_id = $2")
-                    .bind(status)
-                    .bind(customer_id)
-                    .execute(&state.db)
-                    .await
+                if let Err(e) = sqlx::query(
+                    "UPDATE users SET subscription_status = $1 WHERE stripe_customer_id = $2",
+                )
+                .bind(status)
+                .bind(customer_id)
+                .execute(&state.db)
+                .await
                 {
-                    warn!("stripe webhook: failed to update subscription_status for customer {}: {}", customer_id, e);
+                    warn!(
+                        "stripe webhook: failed to update subscription_status for customer {}: {}",
+                        customer_id, e
+                    );
                 }
             }
         }
         "customer.subscription.deleted" => {
             let customer_id = data.get("customer").and_then(|v| v.as_str());
-            let status = data.get("status").and_then(|v| v.as_str()).unwrap_or("canceled");
+            let status = data
+                .get("status")
+                .and_then(|v| v.as_str())
+                .unwrap_or("canceled");
             if let Some(customer_id) = customer_id {
-                if let Err(e) = sqlx::query("UPDATE users SET subscription_status = $1 WHERE stripe_customer_id = $2")
-                    .bind(status)
-                    .bind(customer_id)
-                    .execute(&state.db)
-                    .await
+                if let Err(e) = sqlx::query(
+                    "UPDATE users SET subscription_status = $1 WHERE stripe_customer_id = $2",
+                )
+                .bind(status)
+                .bind(customer_id)
+                .execute(&state.db)
+                .await
                 {
-                    warn!("stripe webhook: failed to update subscription_status for customer {}: {}", customer_id, e);
+                    warn!(
+                        "stripe webhook: failed to update subscription_status for customer {}: {}",
+                        customer_id, e
+                    );
                 } else if let Some(cfg) = state.email.clone() {
-                    notify_user_by_customer_id(&state, cfg, customer_id, crate::email::subscription_canceled_email).await;
+                    notify_user_by_customer_id(
+                        &state,
+                        cfg,
+                        customer_id,
+                        crate::email::subscription_canceled_email,
+                    )
+                    .await;
                 }
             }
         }
         "invoice.payment_failed" => {
             if let Some(customer_id) = data.get("customer").and_then(|v| v.as_str()) {
                 if let Some(cfg) = state.email.clone() {
-                    notify_user_by_customer_id(&state, cfg, customer_id, crate::email::payment_failed_email).await;
+                    notify_user_by_customer_id(
+                        &state,
+                        cfg,
+                        customer_id,
+                        crate::email::payment_failed_email,
+                    )
+                    .await;
                 }
             }
         }
@@ -299,7 +365,12 @@ async fn notify_user_by_id(
     template: fn(crate::i18n::Lang) -> (&'static str, String),
 ) {
     let row: Option<(String, String)> =
-        sqlx::query_as("SELECT email, preferred_lang FROM users WHERE id = $1").bind(user_id).fetch_optional(&state.db).await.ok().flatten();
+        sqlx::query_as("SELECT email, preferred_lang FROM users WHERE id = $1")
+            .bind(user_id)
+            .fetch_optional(&state.db)
+            .await
+            .ok()
+            .flatten();
     if let Some((email, lang_code)) = row {
         let (subject, html) = template(crate::i18n::Lang::from_code(&lang_code));
         crate::email::spawn_send(cfg, email, subject.to_string(), html);
@@ -314,12 +385,13 @@ async fn notify_user_by_customer_id(
     customer_id: &str,
     template: fn(crate::i18n::Lang) -> (&'static str, String),
 ) {
-    let row: Option<(String, String)> = sqlx::query_as("SELECT email, preferred_lang FROM users WHERE stripe_customer_id = $1")
-        .bind(customer_id)
-        .fetch_optional(&state.db)
-        .await
-        .ok()
-        .flatten();
+    let row: Option<(String, String)> =
+        sqlx::query_as("SELECT email, preferred_lang FROM users WHERE stripe_customer_id = $1")
+            .bind(customer_id)
+            .fetch_optional(&state.db)
+            .await
+            .ok()
+            .flatten();
     if let Some((email, lang_code)) = row {
         let (subject, html) = template(crate::i18n::Lang::from_code(&lang_code));
         crate::email::spawn_send(cfg, email, subject.to_string(), html);
@@ -375,8 +447,14 @@ pub async fn start_checkout(
     {
         Ok(url) => Redirect::to(&url).into_response(),
         Err(e) => {
-            warn!("failed to create stripe checkout session for user {}: {}", user_id, e);
-            crate::oauth::error_page(lang, crate::oauth::OauthError::FailedToCreateCheckoutSession)
+            warn!(
+                "failed to create stripe checkout session for user {}: {}",
+                user_id, e
+            );
+            crate::oauth::error_page(
+                lang,
+                crate::oauth::OauthError::FailedToCreateCheckoutSession,
+            )
         }
     }
 }
@@ -386,7 +464,9 @@ pub async fn start_checkout(
 /// months end within the next 7 days and who hasn't subscribed, then stamps
 /// `trial_reminder_sent_at` so a later run of this same job never resends it.
 pub async fn send_trial_reminders(state: &AppState) {
-    let Some(cfg) = state.email.clone() else { return };
+    let Some(cfg) = state.email.clone() else {
+        return;
+    };
 
     let rows: Vec<(i64, String, String, DateTime<Utc>)> = sqlx::query_as(
         "SELECT id, email, preferred_lang, trial_started_at FROM users
@@ -403,11 +483,19 @@ pub async fn send_trial_reminders(state: &AppState) {
 
     for (user_id, email, lang_code, trial_started_at) in rows {
         let free_until = trial_end(trial_started_at).format("%Y-%m-%d").to_string();
-        let (subject, html) = crate::email::trial_ending_email(crate::i18n::Lang::from_code(&lang_code), &free_until);
+        let (subject, html) =
+            crate::email::trial_ending_email(crate::i18n::Lang::from_code(&lang_code), &free_until);
         crate::email::spawn_send(cfg.clone(), email, subject.to_string(), html);
 
-        if let Err(e) = sqlx::query("UPDATE users SET trial_reminder_sent_at = now() WHERE id = $1").bind(user_id).execute(&state.db).await {
-            error!("failed to stamp trial_reminder_sent_at for user {}: {}", user_id, e);
+        if let Err(e) = sqlx::query("UPDATE users SET trial_reminder_sent_at = now() WHERE id = $1")
+            .bind(user_id)
+            .execute(&state.db)
+            .await
+        {
+            error!(
+                "failed to stamp trial_reminder_sent_at for user {}: {}",
+                user_id, e
+            );
         }
     }
 }

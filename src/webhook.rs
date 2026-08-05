@@ -31,7 +31,10 @@ pub async fn handle_notion_webhook(
     };
 
     if let Some(token) = json.get("verification_token").and_then(|v| v.as_str()) {
-        info!(verification_token = token, "notion webhook verification handshake received");
+        info!(
+            verification_token = token,
+            "notion webhook verification handshake received"
+        );
         return "ok";
     }
 
@@ -55,14 +58,19 @@ pub async fn handle_notion_webhook(
         return "ignored";
     };
 
-    let mut mac = HmacSha256::new_from_slice(secret.as_bytes()).expect("HMAC accepts any key length");
+    let mut mac =
+        HmacSha256::new_from_slice(secret.as_bytes()).expect("HMAC accepts any key length");
     mac.update(&body);
     if mac.verify_slice(&expected).is_err() {
         warn!("notion webhook: signature verification failed, dropping event");
         return "ignored";
     }
 
-    let event_type = json.get("type").and_then(|v| v.as_str()).unwrap_or("unknown").to_string();
+    let event_type = json
+        .get("type")
+        .and_then(|v| v.as_str())
+        .unwrap_or("unknown")
+        .to_string();
     let data_source_id = json
         .pointer("/data/parent/data_source_id")
         .and_then(|v| v.as_str())
@@ -70,7 +78,11 @@ pub async fn handle_notion_webhook(
     // `data.id` is the affected page's id for page.* events — absent for
     // database/data_source-level events, which is fine, sync_log just shows
     // an empty event_uid for those.
-    let page_id = json.pointer("/data/id").and_then(|v| v.as_str()).unwrap_or("").to_string();
+    let page_id = json
+        .pointer("/data/id")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
 
     info!(event_type = %event_type, data_source_id = data_source_id.as_deref(), "notion webhook event verified");
 
@@ -82,7 +94,9 @@ pub async fn handle_notion_webhook(
             // post-write refresh — this is specifically the "Notion pushed
             // us a change" case a user watching their sync log cares about.
             if let Some(cal) = state.calendar_by_data_source_id(&ds_id).await {
-                state.log_sync(cal.id, "notion", &event_type, &page_id, &page_id, "ok", "").await;
+                state
+                    .log_sync(cal.id, "notion", &event_type, &page_id, &page_id, "ok", "")
+                    .await;
             }
             state.refresh_by_data_source(&ds_id).await;
         });
@@ -92,7 +106,7 @@ pub async fn handle_notion_webhook(
 }
 
 fn hex_decode(s: &str) -> Result<Vec<u8>, ()> {
-    if s.len() % 2 != 0 {
+    if !s.len().is_multiple_of(2) {
         return Err(());
     }
     (0..s.len())

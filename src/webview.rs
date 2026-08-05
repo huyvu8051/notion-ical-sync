@@ -18,7 +18,9 @@ async fn current_user_id(
 ) -> Result<i64, StatusCode> {
     let sub = claims.subject().as_str();
     let email = claims.email().map(|e| e.as_str()).unwrap_or("");
-    find_or_create_user(state, sub, email, lang).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
+    find_or_create_user(state, sub, email, lang)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
 }
 
 /// Every `/app/{public_id}/...` handler needs this same check: the calendar
@@ -88,7 +90,8 @@ const WEBVIEW_LABELS_VI: WebviewLabels = WebviewLabels {
     confirm_delete_event: "Xoá sự kiện này?",
     alert_delete_failed: "Xoá thất bại",
     alert_update_date_failed: "Cập nhật ngày thất bại",
-    alert_quota_exceeded: "Đã đạt giới hạn 10 sự kiện miễn phí hôm nay. Nâng cấp $1/năm để bỏ giới hạn.",
+    alert_quota_exceeded:
+        "Đã đạt giới hạn 10 sự kiện miễn phí hôm nay. Nâng cấp $1/năm để bỏ giới hạn.",
 };
 
 const WEBVIEW_LABELS_EN: WebviewLabels = WebviewLabels {
@@ -113,7 +116,8 @@ const WEBVIEW_LABELS_EN: WebviewLabels = WebviewLabels {
     confirm_delete_event: "Delete this event?",
     alert_delete_failed: "Delete failed",
     alert_update_date_failed: "Failed to update date",
-    alert_quota_exceeded: "You've hit today's free limit of 10 events. Upgrade for $1/year to remove it.",
+    alert_quota_exceeded:
+        "You've hit today's free limit of 10 events. Upgrade for $1/year to remove it.",
 };
 
 /// Server-rendered page shell (no client-side hydration/wasm — Leptos here
@@ -136,7 +140,11 @@ pub async fn handle_webview_page(
         crate::i18n::Lang::En => &WEBVIEW_LABELS_EN,
         crate::i18n::Lang::Vi => &WEBVIEW_LABELS_VI,
     };
-    let calendar_name = if cal.display_name.is_empty() { "Notion Calendar".to_string() } else { cal.display_name.clone() };
+    let calendar_name = if cal.display_name.is_empty() {
+        "Notion Calendar".to_string()
+    } else {
+        cal.display_name.clone()
+    };
     let lang_toggle = crate::i18n::lang_toggle(lang, &format!("/app/{}", public_id));
 
     let events_url = format!("/app/{}/api/events", public_id);
@@ -494,8 +502,21 @@ pub async fn handle_create_event(
         Ok(cal) => cal,
         Err(status) => return status.into_response(),
     };
-    if crate::billing::enforce_quota(&state, cal.user_id).await.is_err() {
-        state.log_sync(cal.id, "webview", "create", "", "", "error", "daily quota exceeded").await;
+    if crate::billing::enforce_quota(&state, cal.user_id)
+        .await
+        .is_err()
+    {
+        state
+            .log_sync(
+                cal.id,
+                "webview",
+                "create",
+                "",
+                "",
+                "error",
+                "daily quota exceeded",
+            )
+            .await;
         let l = match lang {
             crate::i18n::Lang::En => &WEBVIEW_LABELS_EN,
             crate::i18n::Lang::Vi => &WEBVIEW_LABELS_VI,
@@ -514,13 +535,21 @@ pub async fn handle_create_event(
         .await
     {
         Ok(page_id) => {
-            state.log_sync(cal.id, "webview", "create", "", &page_id, "ok", "").await;
+            state
+                .log_sync(cal.id, "webview", "create", "", &page_id, "ok", "")
+                .await;
             state.refresh_by_data_source(&cal.data_source_id).await;
-            (StatusCode::CREATED, Json(serde_json::json!({ "id": page_id }))).into_response()
+            (
+                StatusCode::CREATED,
+                Json(serde_json::json!({ "id": page_id })),
+            )
+                .into_response()
         }
         Err(e) => {
             error!("webview create event failed: {}", e);
-            state.log_sync(cal.id, "webview", "create", "", "", "error", &e).await;
+            state
+                .log_sync(cal.id, "webview", "create", "", "", "error", &e)
+                .await;
             (StatusCode::BAD_GATEWAY, e).into_response()
         }
     }
@@ -554,8 +583,21 @@ pub async fn handle_update_event(
         Ok(cal) => cal,
         Err(status) => return status.into_response(),
     };
-    if crate::billing::enforce_quota(&state, cal.user_id).await.is_err() {
-        state.log_sync(cal.id, "webview", "update", &event_id, "", "error", "daily quota exceeded").await;
+    if crate::billing::enforce_quota(&state, cal.user_id)
+        .await
+        .is_err()
+    {
+        state
+            .log_sync(
+                cal.id,
+                "webview",
+                "update",
+                &event_id,
+                "",
+                "error",
+                "daily quota exceeded",
+            )
+            .await;
         let l = match lang {
             crate::i18n::Lang::En => &WEBVIEW_LABELS_EN,
             crate::i18n::Lang::Vi => &WEBVIEW_LABELS_VI,
@@ -574,13 +616,19 @@ pub async fn handle_update_event(
         .await
     {
         Ok(()) => {
-            state.log_sync(cal.id, "webview", "update", &event_id, &event_id, "ok", "").await;
+            state
+                .log_sync(cal.id, "webview", "update", &event_id, &event_id, "ok", "")
+                .await;
             state.refresh_by_data_source(&cal.data_source_id).await;
             StatusCode::NO_CONTENT.into_response()
         }
         Err(e) => {
             error!("webview update event failed: {}", e);
-            state.log_sync(cal.id, "webview", "update", &event_id, &event_id, "error", &e).await;
+            state
+                .log_sync(
+                    cal.id, "webview", "update", &event_id, &event_id, "error", &e,
+                )
+                .await;
             (StatusCode::BAD_GATEWAY, e).into_response()
         }
     }
@@ -596,15 +644,24 @@ pub async fn handle_delete_event(
         Ok(cal) => cal,
         Err(status) => return status.into_response(),
     };
-    match state.notion_delete_event(&event_id, &cal.notion_access_token).await {
+    match state
+        .notion_delete_event(&event_id, &cal.notion_access_token)
+        .await
+    {
         Ok(()) => {
-            state.log_sync(cal.id, "webview", "delete", &event_id, &event_id, "ok", "").await;
+            state
+                .log_sync(cal.id, "webview", "delete", &event_id, &event_id, "ok", "")
+                .await;
             state.refresh_by_data_source(&cal.data_source_id).await;
             StatusCode::NO_CONTENT.into_response()
         }
         Err(e) => {
             error!("webview delete event failed: {}", e);
-            state.log_sync(cal.id, "webview", "delete", &event_id, &event_id, "error", &e).await;
+            state
+                .log_sync(
+                    cal.id, "webview", "delete", &event_id, &event_id, "error", &e,
+                )
+                .await;
             (StatusCode::BAD_GATEWAY, e).into_response()
         }
     }
@@ -640,7 +697,12 @@ mod tests {
                 .stderr(Stdio::piped())
                 .spawn()
                 .expect("failed to spawn node");
-            child.stdin.take().unwrap().write_all(js.as_bytes()).unwrap();
+            child
+                .stdin
+                .take()
+                .unwrap()
+                .write_all(js.as_bytes())
+                .unwrap();
             let output = child.wait_with_output().unwrap();
             assert!(
                 output.status.success(),

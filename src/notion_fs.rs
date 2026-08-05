@@ -1,16 +1,14 @@
 //! Notion-backed CalDAV filesystem.
 
 use std::collections::HashMap;
-use std::pin::Pin;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use chrono::TimeZone;
 use dav_server::{
     davpath::DavPath,
-    fs::{self, DavFileSystem, DavMetaData, DavProp, FsError, FsFuture, FsResult, FsStream},
+    fs::{self, DavFileSystem, DavMetaData, FsError, FsFuture, FsResult, FsStream},
 };
-use futures_util::{future, FutureExt, StreamExt};
+use futures_util::{FutureExt, StreamExt};
 use icalendar::Component;
 use parking_lot::Mutex;
 
@@ -22,6 +20,12 @@ use crate::notion::{CalendarInfo, NotionCalendarEvent};
 
 #[derive(Debug, Clone)]
 pub struct NotionFsTree(pub Arc<Mutex<Vec<(u64, HashMap<String, CalendarInfo>)>>>);
+
+impl Default for NotionFsTree {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 impl NotionFsTree {
     pub fn new() -> Self {
@@ -53,10 +57,12 @@ impl NotionFsTree {
     pub fn get_calendar_by_slug(&self, slug: &str) -> Option<(u64, CalendarInfo)> {
         let snap = self.0.lock();
         snap.iter().find_map(|(i, m)| {
-            m.values().find(|c| {
-                let s = db_id_to_slug(&c.db_id);
-                s == slug
-            }).map(|c| (*i, c.clone()))
+            m.values()
+                .find(|c| {
+                    let s = db_id_to_slug(&c.db_id);
+                    s == slug
+                })
+                .map(|c| (*i, c.clone()))
         })
     }
 
@@ -71,7 +77,8 @@ impl NotionFsTree {
                 if db_id_to_slug(&cal.db_id) != db_slug {
                     return None;
                 }
-                cal.events.values()
+                cal.events
+                    .values()
                     .find(|ev| event_id_to_slug(&ev.page_id_str) == event_slug)
                     .map(|ev| (*i, cal.clone(), ev.clone()))
             })
@@ -86,13 +93,21 @@ impl NotionFsTree {
 #[derive(Debug, Clone)]
 pub enum CalPath<'a> {
     CalendarsRoot,
-    CalendarRoot { db_slug: std::borrow::Cow<'a, [u8]> },
-    Event { db_slug: std::borrow::Cow<'a, [u8]>, event_slug: std::borrow::Cow<'a, [u8]> },
+    CalendarRoot {
+        db_slug: std::borrow::Cow<'a, [u8]>,
+    },
+    Event {
+        db_slug: std::borrow::Cow<'a, [u8]>,
+        event_slug: std::borrow::Cow<'a, [u8]>,
+    },
 }
 
 fn split_path(path: &DavPath) -> Option<CalPath<'static>> {
     let bytes = path.as_bytes();
-    let parts: Vec<&[u8]> = bytes.split(|&b| b == b'/').filter(|s| !s.is_empty()).collect();
+    let parts: Vec<&[u8]> = bytes
+        .split(|&b| b == b'/')
+        .filter(|s| !s.is_empty())
+        .collect();
 
     match parts.as_slice() {
         [b"calendars"] => Some(CalPath::CalendarsRoot),
@@ -136,7 +151,9 @@ pub fn ical_datetime_string(dt: icalendar::CalendarDateTime) -> String {
     match dt {
         icalendar::CalendarDateTime::Utc(dt) => dt.format("%Y%m%dT%H%M%SZ").to_string(),
         icalendar::CalendarDateTime::Floating(dt) => dt.format("%Y%m%dT%H%M%S").to_string(),
-        icalendar::CalendarDateTime::WithTimezone { date_time, .. } => date_time.format("%Y%m%dT%H%M%S").to_string(),
+        icalendar::CalendarDateTime::WithTimezone { date_time, .. } => {
+            date_time.format("%Y%m%dT%H%M%S").to_string()
+        }
     }
 }
 
@@ -149,9 +166,15 @@ pub fn make_ics_bytes(cal: &CalendarInfo, ev: &NotionCalendarEvent, now: u64) ->
     e.uid(&uid);
     e.summary(&ev.name);
     e.description(&ev.description);
-    e.url(&format!("https://notion.so/{}", ev.page_id_str.replace('-', "")));
+    e.url(&format!(
+        "https://notion.so/{}",
+        ev.page_id_str.replace('-', "")
+    ));
     e.append_property(Property::new("X-NOTION-URL", ev.notion_url.clone()));
-    e.append_property(Property::new("DTSTAMP", ical_datetime_string(datetime_to_icaldatetime(now))));
+    e.append_property(Property::new(
+        "DTSTAMP",
+        ical_datetime_string(datetime_to_icaldatetime(now)),
+    ));
     e.starts(datetime_to_icaldatetime(ev.start_timestamp));
     if let Some(end_ts) = ev.end_timestamp {
         e.ends(datetime_to_icaldatetime(end_ts));
@@ -188,10 +211,14 @@ pub struct NotionMetaData {
 
 impl NotionMetaData {
     pub fn root_dir() -> Self {
-        Self { kind: MetaKind::Root }
+        Self {
+            kind: MetaKind::Root,
+        }
     }
     pub fn calendars() -> Self {
-        Self { kind: MetaKind::Calendars }
+        Self {
+            kind: MetaKind::Calendars,
+        }
     }
     pub fn calendar_dir(cal: &CalendarInfo) -> Self {
         Self {
@@ -203,7 +230,10 @@ impl NotionMetaData {
     }
     pub fn ics_file(size: u64) -> Self {
         Self {
-            kind: MetaKind::Ics { len: size, mtime: SystemTime::now() },
+            kind: MetaKind::Ics {
+                len: size,
+                mtime: SystemTime::now(),
+            },
         }
     }
 }
@@ -225,7 +255,10 @@ impl fs::DavMetaData for NotionMetaData {
     }
 
     fn is_dir(&self) -> bool {
-        matches!(self.kind, MetaKind::Root | MetaKind::Calendars | MetaKind::Calendar { .. })
+        matches!(
+            self.kind,
+            MetaKind::Root | MetaKind::Calendars | MetaKind::Calendar { .. }
+        )
     }
 
     fn is_calendar(&self, path: &DavPath) -> bool {
@@ -257,10 +290,18 @@ struct NotionDirEntry {
 
 impl NotionDirEntry {
     fn new_dir(name: Vec<u8>) -> Self {
-        Self { name, is_dir: true, size: 4096 }
+        Self {
+            name,
+            is_dir: true,
+            size: 4096,
+        }
     }
     fn new_file(name: Vec<u8>, size: u64) -> Self {
-        Self { name, is_dir: false, size }
+        Self {
+            name,
+            is_dir: false,
+            size,
+        }
     }
 }
 
@@ -271,11 +312,20 @@ impl fs::DavDirEntry for NotionDirEntry {
 
     fn metadata<'a>(&'a self) -> FsFuture<'a, Box<dyn fs::DavMetaData>> {
         let kind = if self.is_dir {
-            MetaKind::Calendar { db_id: String::from_utf8_lossy(&self.name).into_owned(), event_count: 0 }
+            MetaKind::Calendar {
+                db_id: String::from_utf8_lossy(&self.name).into_owned(),
+                event_count: 0,
+            }
         } else {
-            MetaKind::Ics { len: self.size, mtime: SystemTime::now() }
+            MetaKind::Ics {
+                len: self.size,
+                mtime: SystemTime::now(),
+            }
         };
-        futures_util::future::ready(Ok(Box::new(NotionMetaData { kind }) as Box<dyn fs::DavMetaData>)).boxed()
+        futures_util::future::ready(Ok(
+            Box::new(NotionMetaData { kind }) as Box<dyn fs::DavMetaData>
+        ))
+        .boxed()
     }
 }
 
@@ -296,23 +346,18 @@ impl NotionDavFile {
 }
 
 impl fs::DavFile for NotionDavFile {
-    fn metadata<'a>(
-        &'a mut self,
-    ) -> FsFuture<'a, Box<dyn fs::DavMetaData>> {
-        futures_util::future::ready(Ok(Box::new(NotionMetaData::ics_file(self.data.len() as u64)) as Box<dyn fs::DavMetaData>)).boxed()
+    fn metadata<'a>(&'a mut self) -> FsFuture<'a, Box<dyn fs::DavMetaData>> {
+        futures_util::future::ready(Ok(
+            Box::new(NotionMetaData::ics_file(self.data.len() as u64)) as Box<dyn fs::DavMetaData>,
+        ))
+        .boxed()
     }
 
-    fn write_buf<'a>(
-        &'a mut self,
-        _buf: Box<dyn bytes::Buf + Send>,
-    ) -> FsFuture<'a, ()> {
+    fn write_buf<'a>(&'a mut self, _buf: Box<dyn bytes::Buf + Send>) -> FsFuture<'a, ()> {
         futures_util::future::ready(Err(FsError::Forbidden)).boxed()
     }
 
-    fn write_bytes<'a>(
-        &'a mut self,
-        _buf: bytes::Bytes,
-    ) -> FsFuture<'a, ()> {
+    fn write_bytes<'a>(&'a mut self, _buf: bytes::Bytes) -> FsFuture<'a, ()> {
         futures_util::future::ready(Err(FsError::Forbidden)).boxed()
     }
 
@@ -359,10 +404,7 @@ impl NotionDavFs {
 }
 
 impl DavFileSystem for NotionDavFs {
-    fn metadata<'a>(
-        &'a self,
-        path: &'a DavPath,
-    ) -> FsFuture<'a, Box<dyn fs::DavMetaData>> {
+    fn metadata<'a>(&'a self, path: &'a DavPath) -> FsFuture<'a, Box<dyn fs::DavMetaData>> {
         async move {
             let bytes = path.as_bytes();
 
@@ -374,7 +416,9 @@ impl DavFileSystem for NotionDavFs {
                 Some(c) => c,
                 None => {
                     if bytes == b"calendars" || bytes == b"/calendars" {
-                        return Ok(Box::new(NotionMetaData::calendars()) as Box<dyn fs::DavMetaData>);
+                        return Ok(
+                            Box::new(NotionMetaData::calendars()) as Box<dyn fs::DavMetaData>
+                        );
                     }
                     return Err(FsError::NotFound);
                 }
@@ -390,16 +434,21 @@ impl DavFileSystem for NotionDavFs {
                     let (_, cal) = res.ok_or(FsError::NotFound)?;
                     Ok(Box::new(NotionMetaData::calendar_dir(&cal)) as Box<dyn fs::DavMetaData>)
                 }
-                CalPath::Event { db_slug, event_slug } => {
+                CalPath::Event {
+                    db_slug,
+                    event_slug,
+                } => {
                     let db_str = String::from_utf8_lossy(&db_slug);
                     let ev_str = String::from_utf8_lossy(&event_slug);
                     let res = self.events.get_event_by_slugs(&db_str, &ev_str);
                     let (_, cal, ev) = res.ok_or(FsError::NotFound)?;
                     let bytes = make_ics_bytes(&cal, &ev, now_unix());
-                    Ok(Box::new(NotionMetaData::ics_file(bytes.len() as u64)) as Box<dyn fs::DavMetaData>)
+                    Ok(Box::new(NotionMetaData::ics_file(bytes.len() as u64))
+                        as Box<dyn fs::DavMetaData>)
                 }
             }
-        }.boxed()
+        }
+        .boxed()
     }
 
     fn read_dir<'a>(
@@ -413,8 +462,10 @@ impl DavFileSystem for NotionDavFs {
             if bytes.is_empty() || bytes == b"/" {
                 let entries: Vec<Box<dyn fs::DavDirEntry>> =
                     vec![Box::new(NotionDirEntry::new_dir(b"calendars".to_vec()))];
-                return Ok(Box::pin(futures_util::stream::iter(entries.into_iter().map(Ok)))
-                    as FsStream<Box<dyn fs::DavDirEntry>>);
+                return Ok(
+                    Box::pin(futures_util::stream::iter(entries.into_iter().map(Ok)))
+                        as FsStream<Box<dyn fs::DavDirEntry>>,
+                );
             }
 
             if bytes == b"calendars" || bytes == b"/calendars" {
@@ -427,8 +478,10 @@ impl DavFileSystem for NotionDavFs {
                         )) as Box<dyn fs::DavDirEntry>
                     })
                     .collect();
-                return Ok(Box::pin(futures_util::stream::iter(entries.into_iter().map(Ok)))
-                    as FsStream<Box<dyn fs::DavDirEntry>>);
+                return Ok(
+                    Box::pin(futures_util::stream::iter(entries.into_iter().map(Ok)))
+                        as FsStream<Box<dyn fs::DavDirEntry>>,
+                );
             }
 
             let cpath = match split_path(path) {
@@ -439,7 +492,8 @@ impl DavFileSystem for NotionDavFs {
             match cpath {
                 CalPath::CalendarRoot { db_slug } => {
                     let slug_str = String::from_utf8_lossy(&db_slug);
-                    let (_, cal) = self.events
+                    let (_, cal) = self
+                        .events
                         .get_calendar_by_slug(&slug_str)
                         .ok_or(FsError::NotFound)?;
 
@@ -455,13 +509,16 @@ impl DavFileSystem for NotionDavFs {
                         })
                         .collect();
 
-                    Ok(Box::pin(futures_util::stream::iter(entries.into_iter().map(Ok)))
-                        as FsStream<Box<dyn fs::DavDirEntry>>)
+                    Ok(
+                        Box::pin(futures_util::stream::iter(entries.into_iter().map(Ok)))
+                            as FsStream<Box<dyn fs::DavDirEntry>>,
+                    )
                 }
                 CalPath::Event { .. } => Err(FsError::Forbidden),
                 CalPath::CalendarsRoot => Err(FsError::Forbidden),
             }
-        }.boxed()
+        }
+        .boxed()
     }
 
     fn open<'a>(
@@ -483,7 +540,10 @@ impl DavFileSystem for NotionDavFs {
             };
 
             match cpath {
-                CalPath::Event { db_slug, event_slug } => {
+                CalPath::Event {
+                    db_slug,
+                    event_slug,
+                } => {
                     let db_str = String::from_utf8_lossy(&db_slug);
                     let ev_str = String::from_utf8_lossy(&event_slug);
                     let res = self.events.get_event_by_slugs(&db_str, &ev_str);
@@ -493,6 +553,7 @@ impl DavFileSystem for NotionDavFs {
                 }
                 _ => Err(FsError::NotFound),
             }
-        }.boxed()
+        }
+        .boxed()
     }
 }

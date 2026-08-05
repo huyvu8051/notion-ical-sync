@@ -2,7 +2,6 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
-use parking_lot::Mutex;
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -59,6 +58,12 @@ impl CalendarInfo {
 #[derive(Debug, Clone)]
 pub struct NotionFsTree(pub Arc<parking_lot::Mutex<Vec<(u64, HashMap<String, CalendarInfo>)>>>);
 
+impl Default for NotionFsTree {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl NotionFsTree {
     pub fn new() -> Self {
         Self(Arc::new(parking_lot::Mutex::new(Vec::new())))
@@ -105,4 +110,3 @@ pub struct NotionDbResponse {
 pub struct NotionTitleItem {
     pub plain_text: String,
 }
-

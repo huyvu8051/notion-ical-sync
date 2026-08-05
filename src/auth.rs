@@ -9,7 +9,9 @@ use axum::http::request::Parts;
 use axum::response::{Html, IntoResponse, Redirect};
 use axum_oidc::openidconnect::core::CoreGenderClaim;
 use axum_oidc::openidconnect::{ClientId, ClientSecret, IssuerUrl, Scope};
-use axum_oidc::{EmptyAdditionalClaims, OidcClaims, OidcClient, OidcRpInitiatedLogout, OidcSession};
+use axum_oidc::{
+    EmptyAdditionalClaims, OidcClaims, OidcClient, OidcRpInitiatedLogout, OidcSession,
+};
 
 use crate::AppState;
 
@@ -34,11 +36,16 @@ impl<S: Send + Sync> FromRequestParts<S> for SessionWrapper {
 impl axum_oidc::Session<EmptyAdditionalClaims> for SessionWrapper {
     type Error = tower_sessions::session::Error;
 
-    async fn get(&self) -> Result<OidcSession<EmptyAdditionalClaims, CoreGenderClaim>, Self::Error> {
+    async fn get(
+        &self,
+    ) -> Result<OidcSession<EmptyAdditionalClaims, CoreGenderClaim>, Self::Error> {
         Ok(self.0.get("axum-oidc").await?.unwrap_or_default())
     }
 
-    async fn set(&mut self, value: OidcSession<EmptyAdditionalClaims, CoreGenderClaim>) -> Result<(), Self::Error> {
+    async fn set(
+        &mut self,
+        value: OidcSession<EmptyAdditionalClaims, CoreGenderClaim>,
+    ) -> Result<(), Self::Error> {
         self.0.insert("axum-oidc", value).await?;
         Ok(())
     }
@@ -224,7 +231,8 @@ struct MeLabels {
 const ME_LABELS_VI: MeLabels = MeLabels {
     html_lang: "vi",
     error_generic: "Có lỗi xảy ra.",
-    new_password_notice: "Mật khẩu CalDAV bên dưới sẽ không tự động hiển thị lại — lưu lại hoặc copy ngay.",
+    new_password_notice:
+        "Mật khẩu CalDAV bên dưới sẽ không tự động hiển thị lại — lưu lại hoặc copy ngay.",
     already_connected_suffix: "đã được kết nối trong tài khoản của bạn rồi — không có gì thay đổi.",
     caldav_password_label: "Mật khẩu CalDAV",
     caldav_url_label: "CalDAV URL",
@@ -237,12 +245,14 @@ const ME_LABELS_VI: MeLabels = MeLabels {
     regenerate_confirm: "Tạo mật khẩu mới? Mật khẩu cũ sẽ ngừng hoạt động ngay.",
     view_log: "Xem log đồng bộ",
     delete: "Xoá",
-    delete_confirm: "Xoá calendar này? Dữ liệu trên Notion không bị ảnh hưởng, nhưng lịch sẽ ngừng đồng bộ.",
+    delete_confirm:
+        "Xoá calendar này? Dữ liệu trên Notion không bị ảnh hưởng, nhưng lịch sẽ ngừng đồng bộ.",
     empty_state: "Chưa có calendar nào — kết nối Notion để bắt đầu.",
     page_title: "Trang của bạn — NotionCal",
     logout_title: "Đăng xuất",
     heading: "Calendar của bạn",
-    subheading: "Quản lý và đồng bộ hóa các cơ sở dữ liệu Notion với ứng dụng lịch yêu thích của bạn.",
+    subheading:
+        "Quản lý và đồng bộ hóa các cơ sở dữ liệu Notion với ứng dụng lịch yêu thích của bạn.",
     connect_more: "Kết nối thêm cơ sở dữ liệu",
     billing_free_until: "Miễn phí đến {date}",
     billing_subscribed: "Đã đăng ký — $1/năm",
@@ -253,7 +263,8 @@ const ME_LABELS_VI: MeLabels = MeLabels {
 const ME_LABELS_EN: MeLabels = MeLabels {
     html_lang: "en",
     error_generic: "Something went wrong.",
-    new_password_notice: "The CalDAV password below won't be shown again automatically — save or copy it now.",
+    new_password_notice:
+        "The CalDAV password below won't be shown again automatically — save or copy it now.",
     already_connected_suffix: "is already connected to your account — nothing changed.",
     caldav_password_label: "CalDAV password",
     caldav_url_label: "CalDAV URL",
@@ -266,7 +277,8 @@ const ME_LABELS_EN: MeLabels = MeLabels {
     regenerate_confirm: "Generate a new password? The old one will stop working immediately.",
     view_log: "View sync log",
     delete: "Delete",
-    delete_confirm: "Delete this calendar? Your Notion data is untouched, but it will stop syncing.",
+    delete_confirm:
+        "Delete this calendar? Your Notion data is untouched, but it will stop syncing.",
     empty_state: "No calendars yet — connect Notion to get started.",
     page_title: "Your calendars — NotionCal",
     logout_title: "Log out",
@@ -295,7 +307,13 @@ pub async fn me(
 
     let user_id = match find_or_create_user(&state, sub, &email, lang).await {
         Ok(id) => id,
-        Err(_) => return (axum::http::StatusCode::INTERNAL_SERVER_ERROR, l.error_generic).into_response(),
+        Err(_) => {
+            return (
+                axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                l.error_generic,
+            )
+                .into_response()
+        }
     };
 
     let billing_card = {
@@ -306,7 +324,8 @@ pub async fn me(
                 .await
                 .ok()
                 .flatten();
-        let (trial_started_at, subscription_status) = row.unwrap_or((chrono::Utc::now(), "none".to_string()));
+        let (trial_started_at, subscription_status) =
+            row.unwrap_or((chrono::Utc::now(), "none".to_string()));
         let subscribed = matches!(subscription_status.as_str(), "trialing" | "active");
 
         let (status_text, show_cta) = if subscribed {
@@ -314,11 +333,15 @@ pub async fn me(
         } else {
             match crate::billing::effective_access(&state, user_id).await {
                 crate::billing::AccessLevel::Unlimited => {
-                    let free_until = crate::billing::trial_end(trial_started_at).format("%Y-%m-%d").to_string();
+                    let free_until = crate::billing::trial_end(trial_started_at)
+                        .format("%Y-%m-%d")
+                        .to_string();
                     (l.billing_free_until.replace("{date}", &free_until), true)
                 }
                 crate::billing::AccessLevel::Quota { used_today, limit } => (
-                    l.billing_quota.replace("{used}", &used_today.to_string()).replace("{limit}", &limit.to_string()),
+                    l.billing_quota
+                        .replace("{used}", &used_today.to_string())
+                        .replace("{limit}", &limit.to_string()),
                     true,
                 ),
             }
@@ -373,7 +396,11 @@ pub async fn me(
     let error_banner = if connect_errors.is_empty() {
         String::new()
     } else {
-        let names = connect_errors.iter().map(|n| html_escape(n)).collect::<Vec<_>>().join(", ");
+        let names = connect_errors
+            .iter()
+            .map(|n| html_escape(n))
+            .collect::<Vec<_>>()
+            .join(", ");
         format!(
             r#"<div class="flex items-center gap-sm p-md error-banner-gradient border border-[#fecaca] rounded-lg">
 <div class="flex items-center justify-center w-6 h-6 bg-[#fecaca] text-error rounded-full shrink-0">
@@ -525,7 +552,11 @@ function copyToClipboard(text, btn) {{
     .into_response()
 }
 
-pub async fn logout(logout: OidcRpInitiatedLogout, State(state): State<AppState>, cfg: axum::Extension<AppConfig>) -> impl IntoResponse {
+pub async fn logout(
+    logout: OidcRpInitiatedLogout,
+    State(state): State<AppState>,
+    cfg: axum::Extension<AppConfig>,
+) -> impl IntoResponse {
     let _ = &state;
     let redirect_uri = cfg
         .base_url

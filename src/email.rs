@@ -32,9 +32,18 @@ impl EmailConfig {
     }
 }
 
-pub async fn send_email(cfg: &EmailConfig, to: &str, subject: &str, html: &str) -> Result<(), String> {
+pub async fn send_email(
+    cfg: &EmailConfig,
+    to: &str,
+    subject: &str,
+    html: &str,
+) -> Result<(), String> {
     let email = Message::builder()
-        .from(cfg.from.parse().map_err(|e| format!("invalid from address: {e}"))?)
+        .from(
+            cfg.from
+                .parse()
+                .map_err(|e| format!("invalid from address: {e}"))?,
+        )
         .to(to.parse().map_err(|e| format!("invalid to address: {e}"))?)
         .subject(subject)
         .header(ContentType::TEXT_HTML)
@@ -63,7 +72,10 @@ pub async fn send_email(cfg: &EmailConfig, to: &str, subject: &str, html: &str) 
         .credentials(Credentials::new(cfg.username.clone(), cfg.password.clone()))
         .build();
 
-    mailer.send(email).await.map_err(|e| format!("failed to send email: {e}"))?;
+    mailer
+        .send(email)
+        .await
+        .map_err(|e| format!("failed to send email: {e}"))?;
     Ok(())
 }
 

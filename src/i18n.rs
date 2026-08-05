@@ -61,7 +61,12 @@ impl Lang {
     /// default since that's the app's primary audience and every existing
     /// page was written in Vietnamese first.
     fn from_accept_language(header_val: &str) -> Self {
-        let first_tag = header_val.split(',').next().unwrap_or("").trim().to_lowercase();
+        let first_tag = header_val
+            .split(',')
+            .next()
+            .unwrap_or("")
+            .trim()
+            .to_lowercase();
         if first_tag.starts_with("en") {
             Lang::En
         } else {
@@ -95,14 +100,20 @@ impl<S: Sync> FromRequestParts<S> for Lang {
 /// redirects back. `next` must be a same-app relative path; anything else
 /// (missing, or not starting with `/`) falls back to `/` rather than acting
 /// as an open redirect.
-pub async fn set_lang(Path(code): Path<String>, Query(params): Query<HashMap<String, String>>) -> impl IntoResponse {
+pub async fn set_lang(
+    Path(code): Path<String>,
+    Query(params): Query<HashMap<String, String>>,
+) -> impl IntoResponse {
     let lang = if code == "en" { Lang::En } else { Lang::Vi };
     let next = params
         .get("next")
         .filter(|n| n.starts_with('/') && !n.starts_with("//"))
         .cloned()
         .unwrap_or_else(|| "/".to_string());
-    let cookie = format!("lang={}; Path=/; Max-Age=31536000; SameSite=Lax", lang.code());
+    let cookie = format!(
+        "lang={}; Path=/; Max-Age=31536000; SameSite=Lax",
+        lang.code()
+    );
     ([(header::SET_COOKIE, cookie)], Redirect::to(&next))
 }
 

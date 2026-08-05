@@ -1,7 +1,7 @@
-use notion_ical_sync::{auth, AppState, CaldavAllowWrites, PageInfo, create_app};
 use axum::Router;
-use tokio::net::TcpListener;
+use notion_ical_sync::{auth, create_app, AppState, CaldavAllowWrites, PageInfo};
 use std::sync::Mutex;
+use tokio::net::TcpListener;
 
 static TEST_MUTEX: Mutex<()> = Mutex::new(());
 
@@ -17,7 +17,11 @@ fn caldav_username(db_id: &str) -> String {
 fn basic_auth_header(db_id: &str) -> String {
     format!(
         "Basic {}",
-        base64_light::base64_encode(&format!("{}:{}", caldav_username(db_id), TEST_CALDAV_PASSWORD))
+        base64_light::base64_encode(&format!(
+            "{}:{}",
+            caldav_username(db_id),
+            TEST_CALDAV_PASSWORD
+        ))
     )
 }
 
@@ -25,7 +29,10 @@ fn test_caldav_password_hash() -> String {
     use argon2::password_hash::{PasswordHasher, SaltString};
     use argon2::Argon2;
     let salt = SaltString::generate(&mut rand::thread_rng());
-    Argon2::default().hash_password(TEST_CALDAV_PASSWORD.as_bytes(), &salt).unwrap().to_string()
+    Argon2::default()
+        .hash_password(TEST_CALDAV_PASSWORD.as_bytes(), &salt)
+        .unwrap()
+        .to_string()
 }
 
 /// create_app now also wires the SaaS's own Keycloak login, which needs a
@@ -48,13 +55,16 @@ async fn test_create_app(state: AppState) -> Router {
         "http://localhost:0/oidc".to_string(),
     )
     .await;
-    let app_config = auth::AppConfig { base_url: "http://localhost:0".to_string() };
+    let app_config = auth::AppConfig {
+        base_url: "http://localhost:0".to_string(),
+    };
     // oidc_auth_service (applied inside create_app, wrapping every route
     // including the plain CalDAV/Basic-Auth ones) needs a live
     // tower_sessions::Session to be extractable on every request, or it
     // 500s instead of passing through — a real session store, not just
     // required for actual login flows.
-    let session_layer = tower_sessions::SessionManagerLayer::new(tower_sessions::MemoryStore::default());
+    let session_layer =
+        tower_sessions::SessionManagerLayer::new(tower_sessions::MemoryStore::default());
     create_app(state, oidc_client, app_config).layer(session_layer)
 }
 
@@ -78,10 +88,16 @@ async fn test_state_multi(calendars: &[(&str, &str)], allow_writes: CaldavAllowW
     // real Notion database_ids (the ones get_db_id_for_host maps host names
     // to) as fixtures, and once clobbered those rows' auth/tokens/data
     // don't match what's actually connected in Notion.
-    let db_url = std::env::var("TEST_DATABASE_URL")
-        .unwrap_or_else(|_| "postgres://biolink:biolink@localhost:5433/notion_saas_test".to_string());
-    let pool = sqlx::PgPool::connect(&db_url).await.expect("connect to test db");
-    sqlx::migrate!("./migrations").run(&pool).await.expect("run migrations");
+    let db_url = std::env::var("TEST_DATABASE_URL").unwrap_or_else(|_| {
+        "postgres://biolink:biolink@localhost:5433/notion_saas_test".to_string()
+    });
+    let pool = sqlx::PgPool::connect(&db_url)
+        .await
+        .expect("connect to test db");
+    sqlx::migrate!("./migrations")
+        .run(&pool)
+        .await
+        .expect("run migrations");
 
     let password_hash = test_caldav_password_hash();
 
@@ -147,6 +163,7 @@ async fn test_caldav_server_operations() {
         end: Some("2026-07-18T11:00:00Z".to_string()),
         url: "https://notion.so/event-abc-98765".to_string(),
         last_edited: "2026-07-18T00:00:00Z".to_string(),
+        ..PageInfo::default()
     };
     {
         let mut cache = state.cache.write().await;
@@ -167,7 +184,10 @@ async fn test_caldav_server_operations() {
 
     // 3. Test PROPFIND /cal/{db_id} (Depth: 0)
     let propfind_res = client
-        .request(reqwest::Method::from_bytes(b"PROPFIND").unwrap(), &format!("{}/cal/{}", base_url, db_id))
+        .request(
+            reqwest::Method::from_bytes(b"PROPFIND").unwrap(),
+            &format!("{}/cal/{}", base_url, db_id),
+        )
         .header("Depth", "0")
         .header("Authorization", &auth_header)
         .send()
@@ -180,7 +200,10 @@ async fn test_caldav_server_operations() {
 
     // 4. Test PROPFIND /cal/{db_id} (Depth: 1)
     let propfind_depth1_res = client
-        .request(reqwest::Method::from_bytes(b"PROPFIND").unwrap(), &format!("{}/cal/{}", base_url, db_id))
+        .request(
+            reqwest::Method::from_bytes(b"PROPFIND").unwrap(),
+            &format!("{}/cal/{}", base_url, db_id),
+        )
         .header("Depth", "1")
         .header("Authorization", &auth_header)
         .send()
@@ -192,7 +215,10 @@ async fn test_caldav_server_operations() {
 
     // 5. Test REPORT /cal/{db_id}
     let report_res = client
-        .request(reqwest::Method::from_bytes(b"REPORT").unwrap(), &format!("{}/cal/{}", base_url, db_id))
+        .request(
+            reqwest::Method::from_bytes(b"REPORT").unwrap(),
+            &format!("{}/cal/{}", base_url, db_id),
+        )
         .header("Authorization", &auth_header)
         .send()
         .await
@@ -240,7 +266,11 @@ END:VCALENDAR"#;
         .send()
         .await
         .unwrap();
-    assert_eq!(put_res.status(), 502, "PUT with an invalid Notion token must fail loudly, not fake success");
+    assert_eq!(
+        put_res.status(),
+        502,
+        "PUT with an invalid Notion token must fail loudly, not fake success"
+    );
 
     // Since the Notion write failed, the event must never have been cached
     // (no silent local-only state that later gets wiped by a real refresh).
@@ -299,6 +329,7 @@ async fn test_caldav_host_based_routing() {
         end: Some("2026-07-18T11:00:00Z".to_string()),
         url: "https://notion.so/event-cal-111".to_string(),
         last_edited: "2026-07-18T00:00:00Z".to_string(),
+        ..PageInfo::default()
     };
 
     // Seed mock event for mytime.opendiy.vn
@@ -310,6 +341,7 @@ async fn test_caldav_host_based_routing() {
         end: Some("2026-07-18T13:00:00Z".to_string()),
         url: "https://notion.so/event-time-222".to_string(),
         last_edited: "2026-07-18T00:00:00Z".to_string(),
+        ..PageInfo::default()
     };
 
     {
@@ -447,6 +479,7 @@ async fn test_caldav_new_endpoints_and_auth() {
         end: Some("2026-07-18T11:00:00Z".to_string()),
         url: "https://notion.so/event-abc-98765".to_string(),
         last_edited: "2026-07-18T00:00:00Z".to_string(),
+        ..PageInfo::default()
     };
     {
         let mut cache = state.cache.write().await;
@@ -472,10 +505,21 @@ async fn test_caldav_new_endpoints_and_auth() {
         .await
         .unwrap();
     assert_eq!(unauth_res.status(), 401);
-    assert_eq!(unauth_res.headers().get("WWW-Authenticate").unwrap().to_str().unwrap(), "Basic realm=\"CalDAV Server\"");
+    assert_eq!(
+        unauth_res
+            .headers()
+            .get("WWW-Authenticate")
+            .unwrap()
+            .to_str()
+            .unwrap(),
+        "Basic realm=\"CalDAV Server\""
+    );
 
     // 1b. Test wrong-password request (real credential lookup, not just "any header present")
-    let bad_auth = format!("Basic {}", base64_light::base64_encode(&format!("{}:wrong-password", username)));
+    let bad_auth = format!(
+        "Basic {}",
+        base64_light::base64_encode(&format!("{}:wrong-password", username))
+    );
     let bad_res = client
         .put(&format!("{}/cal/{}/unauth-event.ics", base_url, db_id))
         .header("Authorization", &bad_auth)
@@ -499,12 +543,26 @@ async fn test_caldav_new_endpoints_and_auth() {
         .await
         .unwrap();
     assert_eq!(redirect_res.status(), 301);
-    assert_eq!(redirect_res.headers().get("Location").unwrap().to_str().unwrap(), "/principals/");
-    assert_eq!(redirect_res.headers().get("dav").unwrap().to_str().unwrap(), "1, 3, calendar-access");
+    assert_eq!(
+        redirect_res
+            .headers()
+            .get("Location")
+            .unwrap()
+            .to_str()
+            .unwrap(),
+        "/principals/"
+    );
+    assert_eq!(
+        redirect_res.headers().get("dav").unwrap().to_str().unwrap(),
+        "1, 3, calendar-access"
+    );
 
     // 3. Test PROPFIND /principals/
     let propfind_princ_res = client
-        .request(reqwest::Method::from_bytes(b"PROPFIND").unwrap(), &format!("{}/principals/", base_url))
+        .request(
+            reqwest::Method::from_bytes(b"PROPFIND").unwrap(),
+            &format!("{}/principals/", base_url),
+        )
         .header("Authorization", &auth_header_val)
         .send()
         .await
@@ -517,7 +575,10 @@ async fn test_caldav_new_endpoints_and_auth() {
 
     // 4. Test PROPFIND /calendars/{username}/
     let propfind_cal_res = client
-        .request(reqwest::Method::from_bytes(b"PROPFIND").unwrap(), &format!("{}/calendars/{}/", base_url, username))
+        .request(
+            reqwest::Method::from_bytes(b"PROPFIND").unwrap(),
+            &format!("{}/calendars/{}/", base_url, username),
+        )
         .header("Authorization", &auth_header_val)
         .send()
         .await
@@ -530,7 +591,10 @@ async fn test_caldav_new_endpoints_and_auth() {
 
     // 5. Test PROPFIND / (Root probe, unmapped host)
     let root_propfind_res = client
-        .request(reqwest::Method::from_bytes(b"PROPFIND").unwrap(), &format!("{}/", base_url))
+        .request(
+            reqwest::Method::from_bytes(b"PROPFIND").unwrap(),
+            &format!("{}/", base_url),
+        )
         .header("Authorization", &auth_header_val)
         .send()
         .await
@@ -542,7 +606,10 @@ async fn test_caldav_new_endpoints_and_auth() {
 
     // 6. Test REPORT /calendars/{username}/
     let report_cal_res = client
-        .request(reqwest::Method::from_bytes(b"REPORT").unwrap(), &format!("{}/calendars/{}/", base_url, username))
+        .request(
+            reqwest::Method::from_bytes(b"REPORT").unwrap(),
+            &format!("{}/calendars/{}/", base_url, username),
+        )
         .header("Authorization", &auth_header_val)
         .send()
         .await
@@ -679,10 +746,16 @@ async fn test_calendars_propfind_scoped_to_authenticated_calendar_not_whole_acco
     // traffic).
     let db_id_a = "acct-cal-a".to_string();
     let db_id_b = "acct-cal-b".to_string();
-    let db_url = std::env::var("TEST_DATABASE_URL")
-        .unwrap_or_else(|_| "postgres://biolink:biolink@localhost:5433/notion_saas_test".to_string());
-    let pool = sqlx::PgPool::connect(&db_url).await.expect("connect to test db");
-    sqlx::migrate!("./migrations").run(&pool).await.expect("run migrations");
+    let db_url = std::env::var("TEST_DATABASE_URL").unwrap_or_else(|_| {
+        "postgres://biolink:biolink@localhost:5433/notion_saas_test".to_string()
+    });
+    let pool = sqlx::PgPool::connect(&db_url)
+        .await
+        .expect("connect to test db");
+    sqlx::migrate!("./migrations")
+        .run(&pool)
+        .await
+        .expect("run migrations");
 
     let password_hash = test_caldav_password_hash();
     let user_id: i64 = sqlx::query_scalar(
@@ -772,7 +845,10 @@ async fn test_caldav_uid_mapping_survives_and_resolves() {
     // connection the test environment doesn't have.
     let db_id = "test-db-uid-mapping".to_string();
     let state = test_state(&db_id, "mock-ds-id", CaldavAllowWrites::True).await;
-    let cal = state.calendar_by_public_id(&db_id).await.expect("seeded calendar must exist");
+    let cal = state
+        .calendar_by_public_id(&db_id)
+        .await
+        .expect("seeded calendar must exist");
 
     let caldav_uid = "CLIENT-GENERATED-UID-1234";
     assert_eq!(
@@ -781,7 +857,9 @@ async fn test_caldav_uid_mapping_survives_and_resolves() {
         "no mapping should exist yet"
     );
 
-    state.store_caldav_uid_mapping(cal.id, caldav_uid, "fake-notion-page-id-1").await;
+    state
+        .store_caldav_uid_mapping(cal.id, caldav_uid, "fake-notion-page-id-1")
+        .await;
     assert_eq!(
         state.lookup_caldav_uid(cal.id, caldav_uid).await,
         Some("fake-notion-page-id-1".to_string()),
@@ -790,8 +868,13 @@ async fn test_caldav_uid_mapping_survives_and_resolves() {
 
     // A later edit re-storing under the same UID updates the mapping in
     // place (ON CONFLICT DO UPDATE) rather than erroring or duplicating.
-    state.store_caldav_uid_mapping(cal.id, caldav_uid, "fake-notion-page-id-1").await;
-    assert_eq!(state.lookup_caldav_uid(cal.id, caldav_uid).await, Some("fake-notion-page-id-1".to_string()));
+    state
+        .store_caldav_uid_mapping(cal.id, caldav_uid, "fake-notion-page-id-1")
+        .await;
+    assert_eq!(
+        state.lookup_caldav_uid(cal.id, caldav_uid).await,
+        Some("fake-notion-page-id-1".to_string())
+    );
 
     state.delete_caldav_uid_mapping(cal.id, caldav_uid).await;
     assert_eq!(
