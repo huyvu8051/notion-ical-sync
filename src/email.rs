@@ -45,11 +45,15 @@ pub async fn send_email(cfg: &EmailConfig, to: &str, subject: &str, html: &str) 
     // implicit TLS) — not 587 (STARTTLS submission) — confirmed empirically, so
     // this connects with implicit TLS (`Tls::Wrapper`) rather than STARTTLS.
     // Stalwart has no ACME cert (no inbound path for HTTP-01), so it presents a
-    // self-signed one — `dangerous_accept_invalid_certs` skips validation for it.
-    // Safe here: this is an internal, same-cluster, trusted-network hop, not the
-    // public internet.
+    // self-signed one for "localhost" — both cert-chain AND hostname validation
+    // need to be disabled, since `dangerous_accept_invalid_certs` alone still
+    // enforces hostname matching (confirmed empirically: it rejected the cert as
+    // "not valid for name stalwart.stalwart.svc.cluster.local" even with that
+    // flag set). Safe here: this is an internal, same-cluster, trusted-network
+    // hop, not the public internet.
     let tls_parameters = TlsParameters::builder(cfg.host.clone())
         .dangerous_accept_invalid_certs(true)
+        .dangerous_accept_invalid_hostnames(true)
         .build()
         .map_err(|e| format!("failed to configure TLS: {e}"))?;
 
