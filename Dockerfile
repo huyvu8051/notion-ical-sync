@@ -1,11 +1,17 @@
-FROM rust:1 AS builder
+FROM lukemathwalker/cargo-chef:latest-rust-1 AS chef
 WORKDIR /app
-COPY Cargo.toml Cargo.lock ./
-COPY src ./src
-# sqlx::migrate!() is a compile-time macro — it embeds the migration files
-# into the binary by reading this directory during macro expansion, not at
-# runtime, so it has to exist in the build context before `cargo build`.
-COPY migrations ./migrations
+
+FROM chef AS planner
+COPY . .
+RUN cargo chef prepare --recipe-path recipe.json
+
+FROM chef AS builder
+COPY --from=planner /app/recipe.json recipe.json
+# Build dependencies - this layer is cached!
+RUN cargo chef cook --release --recipe-path recipe.json
+
+# Build application
+COPY . .
 RUN cargo build --release --bin notion-ical-sync
 
 FROM debian:bookworm-slim
