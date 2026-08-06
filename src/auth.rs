@@ -553,8 +553,17 @@ function copyToClipboard(text, btn) {{
 }}
 </script>
 <script type="module">
-import init from '/pkg/islands.js';
-init();
+import * as islands from '/pkg/islands.js';
+// leptos::mount::hydrate_islands() doesn't auto-discover/mount islands in
+// this hand-wired (non-cargo-leptos) setup — calling the wasm module's
+// per-island export directly, keyed by the data-component attribute the
+// #[island] macro already emits, does. See crates/islands.
+islands.default().then(() => {{
+  document.querySelectorAll('leptos-island[data-component]').forEach((el) => {{
+    const mount = islands[el.dataset.component];
+    if (mount) mount(el);
+  }});
+}});
 </script>
 </body></html>"#,
         html_lang = l.html_lang,
