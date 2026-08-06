@@ -461,9 +461,7 @@ pub async fn me(
 </form>
 {regenerate_button}
 <a href="/me/calendars/{public_id}/log" class="text-label-md text-secondary hover:underline">{view_log}</a>
-<form method="post" action="/me/calendars/{public_id}/delete" onsubmit="return confirm('{delete_confirm}');" class="ml-auto">
-<button type="submit" class="text-label-md text-error hover:underline">{delete}</button>
-</form>
+<div class="ml-auto">{delete_button}</div>
 </div>
 </div>"#,
                 label = html_escape(label),
@@ -473,22 +471,25 @@ pub async fn me(
                 open_calendar = l.open_calendar,
                 paste_hint = l.paste_hint,
                 reveal_password = l.reveal_password,
-                // Prototype: the ONE confirm() this session replaced with a
-                // Leptos island (see plan) — "click again to confirm" on the
-                // button itself instead of a blocking native dialog. The
-                // other two confirm()s (delete calendar here, delete event
-                // in webview.rs) stay as-is until this is proven out.
                 regenerate_button = view! {
                     <islands::ConfirmButton
                         action=format!("/me/calendars/{public_id}/regenerate-password")
                         label=l.regenerate_password.to_string()
                         confirm_label=l.regenerate_confirm.to_string()
+                        class="text-label-md text-secondary hover:underline".to_string()
                     />
                 }
                 .to_html(),
                 view_log = l.view_log,
-                delete_confirm = l.delete_confirm,
-                delete = l.delete,
+                delete_button = view! {
+                    <islands::ConfirmButton
+                        action=format!("/me/calendars/{public_id}/delete")
+                        label=l.delete.to_string()
+                        confirm_label=l.delete_confirm.to_string()
+                        class="text-label-md text-error hover:underline".to_string()
+                    />
+                }
+                .to_html(),
             )
         })
         .collect();

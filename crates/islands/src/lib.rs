@@ -15,7 +15,12 @@ use wasm_bindgen::prelude::*;
 /// itself. Renders a real `<form>` so the server-side handler this posts to
 /// needs no changes at all.
 #[island]
-pub fn ConfirmButton(action: String, label: String, confirm_label: String) -> impl IntoView {
+pub fn ConfirmButton(
+    action: String,
+    label: String,
+    confirm_label: String,
+    class: String,
+) -> impl IntoView {
     let (confirming, set_confirming) = signal(false);
     let form_ref = NodeRef::<html::Form>::new();
 
@@ -35,14 +40,60 @@ pub fn ConfirmButton(action: String, label: String, confirm_label: String) -> im
 
     view! {
         <form node_ref=form_ref action=action method="post">
-            <button
-                type="button"
-                class="text-label-md text-secondary hover:underline"
-                on:click=on_click
-            >
+            <button type="button" class=class on:click=on_click>
                 {move || if confirming.get() { confirm_label.clone() } else { label.clone() }}
             </button>
         </form>
+    }
+}
+
+#[cfg(feature = "hydrate")]
+fn call_global_fn(name: &str) {
+    use wasm_bindgen::JsCast;
+    let Some(win) = web_sys::window() else {
+        return;
+    };
+    let Ok(val) = js_sys::Reflect::get(&win, &wasm_bindgen::JsValue::from_str(name)) else {
+        return;
+    };
+    if let Ok(func) = val.dyn_into::<js_sys::Function>() {
+        let _ = func.call0(&win);
+    }
+}
+#[cfg(not(feature = "hydrate"))]
+fn call_global_fn(_name: &str) {}
+
+/// Like `ConfirmButton`, but the confirmed action calls a global JS function
+/// by name instead of submitting a form — for cases like webview.rs's
+/// delete-event modal, where the actual target (the currently-open event's
+/// id) is only known client-side at click time, not at server-render time.
+#[island]
+pub fn ConfirmActionButton(
+    id: String,
+    label: String,
+    confirm_label: String,
+    class: String,
+    on_confirm_fn: String,
+) -> impl IntoView {
+    let (confirming, set_confirming) = signal(false);
+
+    let on_click = move |_| {
+        if confirming.get() {
+            set_confirming.set(false);
+            call_global_fn(&on_confirm_fn);
+        } else {
+            set_confirming.set(true);
+            set_timeout(
+                move || set_confirming.set(false),
+                Duration::from_secs(3),
+            );
+        }
+    };
+
+    view! {
+        <button type="button" id=id class=class on:click=on_click>
+            {move || if confirming.get() { confirm_label.clone() } else { label.clone() }}
+        </button>
     }
 }
 

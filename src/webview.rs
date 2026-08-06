@@ -5,6 +5,7 @@ use axum::{
     Json,
 };
 use axum_oidc::{EmptyAdditionalClaims, OidcClaims};
+use leptos::prelude::*;
 use serde::Deserialize;
 use tracing::error;
 
@@ -376,7 +377,7 @@ body {{ background-color: #fbf9f9; color: #1b1c1c; -webkit-font-smoothing: antia
 </a>
 </div>
 <div class="px-lg py-md bg-surface-container-low flex items-center justify-between">
-<button class="text-error text-label-md hover:underline hidden" id="modal-delete-btn" onclick="deleteFromModal()">{delete_btn}</button>
+{delete_button}
 <div class="flex items-center gap-md ml-auto">
 <button class="px-md h-10 border border-outline-variant rounded-lg bg-white hover:bg-surface-container-low text-label-md transition-colors" onclick="closeModal()">{cancel_btn}</button>
 <button class="bg-primary text-on-primary px-lg h-10 rounded-lg text-label-md hover:opacity-90 transition-opacity" onclick="saveFromModal()">{save_btn}</button>
@@ -419,7 +420,16 @@ body {{ background-color: #fbf9f9; color: #1b1c1c; -webkit-font-smoothing: antia
         reminder_1hour = l.reminder_1hour,
         travel_time_label = l.travel_time_label,
         open_in_notion = l.open_in_notion,
-        delete_btn = l.delete_btn,
+        delete_button = view! {
+            <islands::ConfirmActionButton
+                id="modal-delete-btn".to_string()
+                label=l.delete_btn.to_string()
+                confirm_label=l.confirm_delete_event.to_string()
+                class="text-error text-label-md hover:underline hidden".to_string()
+                on_confirm_fn="deleteFromModal".to_string()
+            />
+        }
+        .to_html(),
         cancel_btn = l.cancel_btn,
         save_btn = l.save_btn,
         js = webview_js(&events_url, l),
@@ -573,21 +583,12 @@ function saveFromModal() {{
   }}
 }}
 
+// The arm/confirm-again UI (in place of a blocking native confirm(), which
+// halts all further JS/CDP automation until a human dismisses it) lives in
+// the ConfirmActionButton island wrapping #modal-delete-btn — it calls this
+// function directly once the user has confirmed.
 function deleteFromModal() {{
   if (!editingEventId) return;
-  // Non-blocking confirm: native confirm() halts all further JS/CDP
-  // automation until a human dismisses it, which made this impossible to
-  // test/drive programmatically. Click once to arm, click again within 3s
-  // to actually delete — same intent, no blocking dialog.
-  var btn = document.getElementById('modal-delete-btn');
-  if (btn.dataset.confirming !== '1') {{
-    btn.dataset.confirming = '1';
-    var original = btn.textContent;
-    btn.textContent = '{confirm_delete_event}';
-    setTimeout(function() {{ btn.dataset.confirming = '0'; btn.textContent = original; }}, 3000);
-    return;
-  }}
-  btn.dataset.confirming = '0';
   fetch('{events_url}/' + encodeURIComponent(editingEventId), {{ method: 'DELETE' }})
     .then(function(r) {{
       if (!r.ok) {{ alert('{alert_delete_failed}'); return; }}
@@ -646,7 +647,6 @@ document.addEventListener('DOMContentLoaded', function() {{
         alert_pick_start = js_escape(l.alert_pick_start),
         alert_update_failed = js_escape(l.alert_update_failed),
         alert_create_failed = js_escape(l.alert_create_failed),
-        confirm_delete_event = js_escape(l.confirm_delete_event),
         alert_delete_failed = js_escape(l.alert_delete_failed),
         alert_update_date_failed = js_escape(l.alert_update_date_failed),
         alert_quota_exceeded = js_escape(l.alert_quota_exceeded),
