@@ -36,10 +36,6 @@ fn page(title: &str, data_page: &str, body: String) -> Html<String> {
 <title>{title} — NotionCal</title>{LEGAL_STYLE}</head>
 <body data-page="{data_page}">
 {body}
-<script type="module">
-import init from '/pkg/app.js';
-init();
-</script>
 </body></html>"#
     ))
 }

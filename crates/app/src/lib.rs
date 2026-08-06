@@ -14,6 +14,19 @@ use leptos::prelude::*;
 #[cfg(feature = "hydrate")]
 use wasm_bindgen::prelude::*;
 
+/// Must be the last element of every page's view — the client-side hydration
+/// bootstrap. It has to be part of the Leptos-rendered tree itself, not a
+/// sibling tacked on outside it: `hydrate_body` expects `<body>`'s children
+/// to exactly match what the component rendered, so a `<script>` tag added
+/// by the surrounding hand-written HTML shell (after `{body}`) throws off
+/// the hydration walker's element-by-element matching and crashes with
+/// `tachys::hydration::failed_to_cast_element` the moment it reaches this
+/// position in the tree.
+#[component]
+fn HydrationBootstrap() -> impl IntoView {
+    view! { <script type="module">"import init from '/pkg/app.js'; init();"</script> }
+}
+
 /// A page-local "was this helpful" toggle — deliberately trivial (no network
 /// call, no external JS), just enough real click-handling + reactive
 /// re-render to prove hydration actually attached to a page that otherwise
@@ -132,6 +145,7 @@ pub fn PrivacyPage() -> impl IntoView {
         </p>
 
         <HelpfulToggle />
+        <HydrationBootstrap />
     }
 }
 
@@ -203,6 +217,7 @@ pub fn TermsPage() -> impl IntoView {
         </p>
 
         <HelpfulToggle />
+        <HydrationBootstrap />
     }
 }
 
