@@ -12,6 +12,10 @@ use axum_oidc::openidconnect::{ClientId, ClientSecret, IssuerUrl, Scope};
 use axum_oidc::{
     EmptyAdditionalClaims, OidcClaims, OidcClient, OidcRpInitiatedLogout, OidcSession,
 };
+// `.to_html()` on the island's return value comes from leptos::prelude's
+// `RenderHtml` trait — needed here since `me()` renders `islands::ConfirmButton`
+// (a Leptos island, see crates/islands) server-side into this page's HTML.
+use leptos::prelude::*;
 
 use crate::AppState;
 
@@ -455,9 +459,7 @@ pub async fn me(
 <form method="post" action="/me/calendars/{public_id}/reveal-password">
 <button type="submit" class="text-label-md text-secondary hover:underline">{reveal_password}</button>
 </form>
-<form method="post" action="/me/calendars/{public_id}/regenerate-password" onsubmit="return confirm('{regenerate_confirm}');">
-<button type="submit" class="text-label-md text-secondary hover:underline">{regenerate_password}</button>
-</form>
+{regenerate_button}
 <a href="/me/calendars/{public_id}/log" class="text-label-md text-secondary hover:underline">{view_log}</a>
 <form method="post" action="/me/calendars/{public_id}/delete" onsubmit="return confirm('{delete_confirm}');" class="ml-auto">
 <button type="submit" class="text-label-md text-error hover:underline">{delete}</button>
@@ -471,8 +473,19 @@ pub async fn me(
                 open_calendar = l.open_calendar,
                 paste_hint = l.paste_hint,
                 reveal_password = l.reveal_password,
-                regenerate_confirm = l.regenerate_confirm,
-                regenerate_password = l.regenerate_password,
+                // Prototype: the ONE confirm() this session replaced with a
+                // Leptos island (see plan) — "click again to confirm" on the
+                // button itself instead of a blocking native dialog. The
+                // other two confirm()s (delete calendar here, delete event
+                // in webview.rs) stay as-is until this is proven out.
+                regenerate_button = view! {
+                    <islands::ConfirmButton
+                        action=format!("/me/calendars/{public_id}/regenerate-password")
+                        label=l.regenerate_password.to_string()
+                        confirm_label=l.regenerate_confirm.to_string()
+                    />
+                }
+                .to_html(),
                 view_log = l.view_log,
                 delete_confirm = l.delete_confirm,
                 delete = l.delete,
@@ -538,6 +551,10 @@ function copyToClipboard(text, btn) {{
     setTimeout(() => {{ icon.innerText = original; icon.classList.remove('text-[#166534]'); }}, 2000);
   }});
 }}
+</script>
+<script type="module">
+import init from '/pkg/islands.js';
+init();
 </script>
 </body></html>"#,
         html_lang = l.html_lang,

@@ -1,0 +1,23 @@
+[package]
+name = "islands"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[features]
+# No default features: the server binary (host target) opts into `ssr` to
+# render these components to HTML strings; the separate wasm32 build (see
+# Dockerfile / local `wasm-bindgen` step) opts into `hydrate` instead. Both
+# are never enabled in the same build — `hydrate` pulls in web-sys/DOM APIs
+# that don't exist outside a browser, so it must never be part of the host
+# server binary's dependency graph.
+ssr = ["leptos/ssr"]
+hydrate = ["leptos/hydrate"]
+
+[dependencies]
+leptos = { version = "0.8", default-features = false, features = ["islands"] }
+wasm-bindgen = "0.2"
+console_error_panic_hook = "0.1"
+serde = { version = "1", features = ["derive"] }

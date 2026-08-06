@@ -2784,6 +2784,13 @@ pub fn create_app(
         // header instead (see billing.rs::reset_billing). Dev/test-only tool,
         // 404s entirely unless ADMIN_SECRET is configured.
         .route("/admin/reset-billing", post(crate::billing::reset_billing))
+        // Static WASM/JS for Leptos islands (small interactive widgets —
+        // confirm buttons etc.) — everything else on every page is still
+        // plain server-rendered HTML from this same axum app, never routed
+        // through Leptos/leptos_axum. Built by `wasm-bindgen` into `pkg/`
+        // (see Dockerfile), not `cargo build`, so it isn't produced by a
+        // plain `cargo run` unless that step has been run at least once.
+        .nest_service("/pkg", tower_http::services::ServeDir::new("pkg"))
         // Public/unauthenticated: linked from the Notion OAuth consent step
         // and the dashboard footer, and required for eventual Notion
         // Marketplace submission.

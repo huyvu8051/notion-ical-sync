@@ -575,7 +575,19 @@ function saveFromModal() {{
 
 function deleteFromModal() {{
   if (!editingEventId) return;
-  if (!confirm('{confirm_delete_event}')) return;
+  // Non-blocking confirm: native confirm() halts all further JS/CDP
+  // automation until a human dismisses it, which made this impossible to
+  // test/drive programmatically. Click once to arm, click again within 3s
+  // to actually delete — same intent, no blocking dialog.
+  var btn = document.getElementById('modal-delete-btn');
+  if (btn.dataset.confirming !== '1') {{
+    btn.dataset.confirming = '1';
+    var original = btn.textContent;
+    btn.textContent = '{confirm_delete_event}';
+    setTimeout(function() {{ btn.dataset.confirming = '0'; btn.textContent = original; }}, 3000);
+    return;
+  }}
+  btn.dataset.confirming = '0';
   fetch('{events_url}/' + encodeURIComponent(editingEventId), {{ method: 'DELETE' }})
     .then(function(r) {{
       if (!r.ok) {{ alert('{alert_delete_failed}'); return; }}
