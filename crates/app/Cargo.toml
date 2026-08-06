@@ -1,0 +1,25 @@
+[package]
+name = "app"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[features]
+# Same dual-feature pattern as crates/islands: the server binary (host
+# target) opts into `ssr` to render these components to HTML strings; the
+# separate wasm32 build (see Dockerfile) opts into `hydrate` instead. Never
+# both in the same build — `hydrate` pulls in browser-only web-sys/DOM APIs.
+#
+# Unlike crates/islands (partial hydration of small widgets inside otherwise
+# static HTML), this crate hydrates whole pages: `leptos/hydrate`, not
+# `leptos/islands`.
+ssr = ["leptos/ssr"]
+hydrate = ["leptos/hydrate"]
+
+[dependencies]
+leptos = { version = "0.8", default-features = false }
+wasm-bindgen = "0.2"
+web-sys = { version = "0.3", features = ["Window", "Document", "Element", "HtmlElement"] }
+console_error_panic_hook = "0.1"

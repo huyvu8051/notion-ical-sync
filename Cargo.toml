@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/islands"]
+members = ["crates/islands", "crates/app"]
 
 [package]
 name = "notion-ical-sync"
@@ -27,6 +27,7 @@ axum = "0.8.9"
 base64_light = "0.1.6"
 leptos = { version = "0.8", features = ["ssr"] }
 islands = { path = "crates/islands", default-features = false, features = ["ssr"] }
+app = { path = "crates/app", default-features = false, features = ["ssr"] }
 hmac = "0.12"
 sha2 = "0.10"
 sqlx = { version = "0.8", default-features = false, features = ["postgres", "runtime-tokio", "macros", "migrate", "chrono"] }
