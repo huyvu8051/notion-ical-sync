@@ -64,6 +64,7 @@ fn HelpfulToggle() -> impl IntoView {
 #[component]
 pub fn PrivacyPage() -> impl IntoView {
     view! {
+        <div class="legal-body">
         <div class="top-nav">
             <strong>"NotionCal"</strong>
             <a class="back" href="/me">
@@ -151,12 +152,14 @@ pub fn PrivacyPage() -> impl IntoView {
 
         <HelpfulToggle />
         <HydrationBootstrap />
+        </div>
     }
 }
 
 #[component]
 pub fn TermsPage() -> impl IntoView {
     view! {
+        <div class="legal-body">
         <div class="top-nav">
             <strong>"NotionCal"</strong>
             <a class="back" href="/me">
@@ -223,6 +226,7 @@ pub fn TermsPage() -> impl IntoView {
 
         <HelpfulToggle />
         <HydrationBootstrap />
+        </div>
     }
 }
 
