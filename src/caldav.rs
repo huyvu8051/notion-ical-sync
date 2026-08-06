@@ -2790,7 +2790,23 @@ pub fn create_app(
         // through Leptos/leptos_axum. Built by `wasm-bindgen` into `pkg/`
         // (see Dockerfile), not `cargo build`, so it isn't produced by a
         // plain `cargo run` unless that step has been run at least once.
-        .nest_service("/pkg", tower_http::services::ServeDir::new("pkg"))
+        //
+        // no-cache (not no-store): forces revalidation on every request
+        // instead of trusting a blind TTL. islands.js and islands_bg.wasm
+        // are a matched pair rebuilt together on every deploy — a browser or
+        // CDN caching one past its TTL while refetching the other (observed
+        // in prod: Cloudflare cached islands.js for 4h across a deploy that
+        // changed islands_bg.wasm) produces a WebAssembly LinkError, since
+        // the JS glue's imports no longer match the wasm binary's exports.
+        .nest_service(
+            "/pkg",
+            tower::ServiceBuilder::new()
+                .layer(tower_http::set_header::SetResponseHeaderLayer::overriding(
+                    http::header::CACHE_CONTROL,
+                    http::HeaderValue::from_static("no-cache"),
+                ))
+                .service(tower_http::services::ServeDir::new("pkg")),
+        )
         // Public/unauthenticated: linked from the Notion OAuth consent step
         // and the dashboard footer, and required for eventual Notion
         // Marketplace submission.
