@@ -31,27 +31,32 @@ fn HydrationBootstrap() -> impl IntoView {
 /// call, no external JS), just enough real click-handling + reactive
 /// re-render to prove hydration actually attached to a page that otherwise
 /// has zero interactive elements today.
+///
+/// One persistent `<button>` whose *text* toggles (both closure branches
+/// return a plain `String`), mirroring `crates/islands::ConfirmButton`
+/// exactly — not `.into_any()`-erased branches switching between different
+/// element shapes (a `<span>` vs. a `<button>`-containing fragment), which
+/// panicked in `tachys::hydration::failed_to_cast_element` when hydrating a
+/// whole page via `hydrate_body` (unlike islands' custom-element mount,
+/// which freshly re-renders into its own element rather than matching
+/// pre-existing DOM node-by-node, `hydrate_body` hydration is strict about
+/// matching SSR'd markup exactly, and doesn't tolerate erased-type branches
+/// here).
 #[component]
 fn HelpfulToggle() -> impl IntoView {
     let (answered, set_answered) = signal(false);
 
     view! {
         <p class="helpful">
-            {move || {
-                if answered.get() {
-                    view! { <span>"Thanks for the feedback!"</span> }.into_any()
-                } else {
-                    view! {
-                        <>
-                            "Was this page clear? "
-                            <button type="button" on:click=move |_| set_answered.set(true)>
-                                "👍 Yes"
-                            </button>
-                        </>
+            <button type="button" on:click=move |_| set_answered.set(true)>
+                {move || {
+                    if answered.get() {
+                        "Thanks for the feedback!".to_string()
+                    } else {
+                        "Was this page clear? 👍 Yes".to_string()
                     }
-                        .into_any()
-                }
-            }}
+                }}
+            </button>
         </p>
     }
 }
