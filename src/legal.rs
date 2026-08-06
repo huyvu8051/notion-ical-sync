@@ -143,3 +143,36 @@ means you accept the updated terms.</p>
 "#,
     )
 }
+
+pub async fn robots_txt() -> impl IntoResponse {
+    let body = "User-agent: *\nAllow: /\nSitemap: https://notion-caldav.opendiy.vn/sitemap.xml\n";
+    (
+        [(axum::http::header::CONTENT_TYPE, "text/plain")],
+        body.to_string(),
+    )
+}
+
+pub async fn sitemap_xml() -> impl IntoResponse {
+    let body = r#"<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <url>
+    <loc>https://notion-caldav.opendiy.vn/</loc>
+    <changefreq>monthly</changefreq>
+    <priority>1.0</priority>
+  </url>
+  <url>
+    <loc>https://notion-caldav.opendiy.vn/privacy</loc>
+    <changefreq>monthly</changefreq>
+    <priority>0.5</priority>
+  </url>
+  <url>
+    <loc>https://notion-caldav.opendiy.vn/terms</loc>
+    <changefreq>monthly</changefreq>
+    <priority>0.5</priority>
+  </url>
+</urlset>"#;
+    (
+        [(axum::http::header::CONTENT_TYPE, "application/xml")],
+        body.to_string(),
+    )
+}

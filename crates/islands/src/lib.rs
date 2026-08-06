@@ -31,10 +31,7 @@ pub fn ConfirmButton(
             }
         } else {
             set_confirming.set(true);
-            set_timeout(
-                move || set_confirming.set(false),
-                Duration::from_secs(3),
-            );
+            set_timeout(move || set_confirming.set(false), Duration::from_secs(3));
         }
     };
 
@@ -83,10 +80,7 @@ pub fn ConfirmActionButton(
             call_global_fn(&on_confirm_fn);
         } else {
             set_confirming.set(true);
-            set_timeout(
-                move || set_confirming.set(false),
-                Duration::from_secs(3),
-            );
+            set_timeout(move || set_confirming.set(false), Duration::from_secs(3));
         }
     };
 

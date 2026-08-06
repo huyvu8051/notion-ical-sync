@@ -2796,6 +2796,8 @@ pub fn create_app(
         // Marketplace submission.
         .route("/privacy", get(crate::legal::privacy_policy_page))
         .route("/terms", get(crate::legal::terms_of_service_page))
+        .route("/robots.txt", get(crate::legal::robots_txt))
+        .route("/sitemap.xml", get(crate::legal::sitemap_xml))
         .route("/lang/{code}", get(crate::i18n::set_lang))
         // SaaS login (Keycloak) — separate identity from the CalDAV Basic
         // Auth / Notion OAuth above. /me forces login via oidc_login_service;
