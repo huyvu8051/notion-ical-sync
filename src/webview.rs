@@ -539,8 +539,14 @@ function saveFromModal() {{
   var startVal = document.getElementById('modal-field-start').value;
   var endVal = document.getElementById('modal-field-end').value;
   if (!startVal) {{ alert('{alert_pick_start}'); return; }}
-  var start = allDay ? startVal.slice(0, 10) : startVal;
-  var end = endVal ? (allDay ? endVal.slice(0, 10) : endVal) : null;
+  // startVal/endVal come from <input type="datetime-local">, which holds a
+  // timezone-less wall-clock string (the browser's local time). Sending that
+  // straight to the server made every edit silently shift the stored time by
+  // the browser's UTC offset, since nothing downstream knew it wasn't
+  // already UTC — new Date(...) parses it as local time, so .toISOString()
+  // converts it to the correct UTC instant before it leaves the browser.
+  var start = allDay ? startVal.slice(0, 10) : new Date(startVal).toISOString();
+  var end = endVal ? (allDay ? endVal.slice(0, 10) : new Date(endVal).toISOString()) : null;
 
   // Blank/unset fields are left out entirely (not sent as empty string/null)
   // so saving without touching e.g. Location doesn't clear whatever's

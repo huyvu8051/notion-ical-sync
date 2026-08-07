@@ -55,32 +55,61 @@ impl axum_oidc::Session<EmptyAdditionalClaims> for SessionWrapper {
     }
 }
 
+/// Keycloak and this app land on the same node, so a node-level event
+/// (host reboot, containerd restart) that recreates every pod's sandbox at
+/// once routinely leaves Keycloak still coming back up when this process
+/// starts — a real incident on 2026-08-07 crash-looped the whole app for
+/// about a minute because a single transient 503 from Keycloak's discovery
+/// endpoint was treated as fatal. Retry with backoff instead of panicking on
+/// the first failure; only give up once Keycloak has had a real chance
+/// (~2 minutes) to come back.
+const OIDC_DISCOVERY_MAX_ATTEMPTS: u32 = 8;
+const OIDC_DISCOVERY_INITIAL_BACKOFF: std::time::Duration = std::time::Duration::from_secs(2);
+const OIDC_DISCOVERY_MAX_BACKOFF: std::time::Duration = std::time::Duration::from_secs(30);
+
 pub async fn build_oidc_client(
     issuer: String,
     client_id: String,
     client_secret: Option<String>,
     redirect_url: String,
 ) -> OidcClient<EmptyAdditionalClaims> {
-    let mut builder = OidcClient::<EmptyAdditionalClaims>::builder()
-        .with_default_http_client()
-        .with_redirect_url(
-            redirect_url
-                .parse()
-                .unwrap_or_else(|_| panic!("invalid redirect url: {redirect_url}")),
-        )
-        .with_client_id(ClientId::new(client_id))
-        .add_scope(Scope::new("profile".to_string()))
-        .add_scope(Scope::new("email".to_string()));
+    let mut backoff = OIDC_DISCOVERY_INITIAL_BACKOFF;
+    for attempt in 1..=OIDC_DISCOVERY_MAX_ATTEMPTS {
+        let mut builder = OidcClient::<EmptyAdditionalClaims>::builder()
+            .with_default_http_client()
+            .with_redirect_url(
+                redirect_url
+                    .parse()
+                    .unwrap_or_else(|_| panic!("invalid redirect url: {redirect_url}")),
+            )
+            .with_client_id(ClientId::new(client_id.clone()))
+            .add_scope(Scope::new("profile".to_string()))
+            .add_scope(Scope::new("email".to_string()));
 
-    if let Some(secret) = client_secret {
-        builder = builder.with_client_secret(ClientSecret::new(secret));
+        if let Some(secret) = client_secret.clone() {
+            builder = builder.with_client_secret(ClientSecret::new(secret));
+        }
+
+        let issuer_url =
+            IssuerUrl::new(issuer.clone()).expect("invalid KEYCLOAK_ISSUER_URL");
+        match builder.discover(issuer_url).await {
+            Ok(builder) => return builder.build(),
+            Err(e) if attempt < OIDC_DISCOVERY_MAX_ATTEMPTS => {
+                tracing::warn!(
+                    attempt,
+                    error = %e,
+                    ?backoff,
+                    "Keycloak OIDC discovery failed, retrying"
+                );
+                tokio::time::sleep(backoff).await;
+                backoff = (backoff * 2).min(OIDC_DISCOVERY_MAX_BACKOFF);
+            }
+            Err(e) => panic!(
+                "failed to discover Keycloak OIDC issuer after {OIDC_DISCOVERY_MAX_ATTEMPTS} attempts — is it running? {e}"
+            ),
+        }
     }
-
-    builder
-        .discover(IssuerUrl::new(issuer).expect("invalid KEYCLOAK_ISSUER_URL"))
-        .await
-        .expect("failed to discover Keycloak OIDC issuer — is it running?")
-        .build()
+    unreachable!("loop always returns or panics on the last attempt")
 }
 
 /// Find-or-create the `users` row for this Keycloak login, returning its id.
