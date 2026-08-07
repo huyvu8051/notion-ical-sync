@@ -152,6 +152,27 @@ pub async fn robots_txt() -> impl IntoResponse {
     )
 }
 
+/// A simple calendar glyph matching the brand's black-on-cream palette
+/// (see `LANDING_PAGE_HTML_*` in auth.rs). Served at both `/favicon.svg`
+/// (referenced by `<link rel="icon">`) and `/favicon.ico` (the path browsers
+/// request by convention even without a `<link>` tag) — both need an
+/// explicit unauthenticated route here, otherwise they fall through to the
+/// CalDAV catch-all handlers under Basic Auth and 401 instead of 404/200.
+const FAVICON_SVG: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+<rect x="2" y="2" width="28" height="28" rx="6" fill="#fbf9f9"/>
+<rect x="6" y="9" width="20" height="17" rx="2" fill="none" stroke="#000" stroke-width="2"/>
+<line x1="6" y1="14" x2="26" y2="14" stroke="#000" stroke-width="2"/>
+<line x1="11" y1="6" x2="11" y2="11" stroke="#000" stroke-width="2" stroke-linecap="round"/>
+<line x1="21" y1="6" x2="21" y2="11" stroke="#000" stroke-width="2" stroke-linecap="round"/>
+<circle cx="11" cy="19" r="1.4"/>
+<circle cx="16" cy="19" r="1.4"/>
+<circle cx="21" cy="19" r="1.4"/>
+</svg>"##;
+
+pub async fn favicon() -> impl IntoResponse {
+    ([(axum::http::header::CONTENT_TYPE, "image/svg+xml")], FAVICON_SVG)
+}
+
 pub async fn sitemap_xml() -> impl IntoResponse {
     let body = r#"<?xml version="1.0" encoding="UTF-8"?>
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">

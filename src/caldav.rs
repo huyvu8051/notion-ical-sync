@@ -2814,6 +2814,12 @@ pub fn create_app(
         .route("/terms", get(crate::legal::terms_of_service_page))
         .route("/robots.txt", get(crate::legal::robots_txt))
         .route("/sitemap.xml", get(crate::legal::sitemap_xml))
+        // Without these, /favicon.ico (requested by every browser tab
+        // regardless of a <link rel="icon"> tag) falls through to the
+        // CalDAV catch-all handlers below and 401s under Basic Auth instead
+        // of serving an icon.
+        .route("/favicon.ico", get(crate::legal::favicon))
+        .route("/favicon.svg", get(crate::legal::favicon))
         .route("/lang/{code}", get(crate::i18n::set_lang))
         // SaaS login (Keycloak) — separate identity from the CalDAV Basic
         // Auth / Notion OAuth above. /me forces login via oidc_login_service;

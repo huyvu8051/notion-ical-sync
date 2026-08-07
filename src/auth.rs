@@ -619,6 +619,18 @@ const LANDING_PAGE_HTML_VI: &str = r##"<!doctype html>
 <meta charset="utf-8"/>
 <meta content="width=device-width, initial-scale=1.0" name="viewport"/>
 <title>NotionCal - Đồng bộ hóa Notion với Calendar</title>
+<meta name="description" content="Đồng bộ hóa cơ sở dữ liệu Notion của bạn với Apple Calendar, Google Calendar hoặc bất kỳ ứng dụng CalDAV nào. Chỉnh sửa linh hoạt từ cả hai phía, 6 tháng đầu miễn phí."/>
+<link rel="canonical" href="https://notion-caldav.opendiy.vn/"/>
+<link rel="icon" href="/favicon.svg" type="image/svg+xml"/>
+<meta property="og:site_name" content="NotionCal"/>
+<meta property="og:type" content="website"/>
+<meta property="og:title" content="NotionCal - Đồng bộ hóa Notion với Calendar"/>
+<meta property="og:description" content="Đồng bộ hóa cơ sở dữ liệu Notion của bạn với Apple Calendar, Google Calendar hoặc bất kỳ ứng dụng CalDAV nào. Chỉnh sửa linh hoạt từ cả hai phía, 6 tháng đầu miễn phí."/>
+<meta property="og:url" content="https://notion-caldav.opendiy.vn/"/>
+<meta property="og:locale" content="vi_VN"/>
+<meta name="twitter:card" content="summary"/>
+<meta name="twitter:title" content="NotionCal - Đồng bộ hóa Notion với Calendar"/>
+<meta name="twitter:description" content="Đồng bộ hóa cơ sở dữ liệu Notion của bạn với Apple Calendar, Google Calendar hoặc bất kỳ ứng dụng CalDAV nào."/>
 <script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Geist:wght@400;500&family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap" rel="stylesheet"/>
 <script id="tailwind-config">
@@ -846,6 +858,18 @@ const LANDING_PAGE_HTML_EN: &str = r##"<!doctype html>
 <meta charset="utf-8"/>
 <meta content="width=device-width, initial-scale=1.0" name="viewport"/>
 <title>NotionCal - Sync Notion with your Calendar</title>
+<meta name="description" content="Sync your Notion database with Apple Calendar, Google Calendar, or any CalDAV app. Two-way editing, free for the first 6 months."/>
+<link rel="canonical" href="https://notion-caldav.opendiy.vn/"/>
+<link rel="icon" href="/favicon.svg" type="image/svg+xml"/>
+<meta property="og:site_name" content="NotionCal"/>
+<meta property="og:type" content="website"/>
+<meta property="og:title" content="NotionCal - Sync Notion with your Calendar"/>
+<meta property="og:description" content="Sync your Notion database with Apple Calendar, Google Calendar, or any CalDAV app. Two-way editing, free for the first 6 months."/>
+<meta property="og:url" content="https://notion-caldav.opendiy.vn/"/>
+<meta property="og:locale" content="en_US"/>
+<meta name="twitter:card" content="summary"/>
+<meta name="twitter:title" content="NotionCal - Sync Notion with your Calendar"/>
+<meta name="twitter:description" content="Sync your Notion database with Apple Calendar, Google Calendar, or any CalDAV app."/>
 <script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Geist:wght@400;500&family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap" rel="stylesheet"/>
 <script id="tailwind-config">
