@@ -618,6 +618,7 @@ const LANDING_PAGE_HTML_VI: &str = r##"<!doctype html>
 <html class="light" lang="vi"><head>
 <meta charset="utf-8"/>
 <meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<meta name="msvalidate.01" content="B2ADD65C06672433A78251607DBB1250"/>
 <title>NotionCal - Đồng bộ hóa Notion với Calendar</title>
 <meta name="description" content="Đồng bộ hóa cơ sở dữ liệu Notion của bạn với Apple Calendar, Google Calendar hoặc bất kỳ ứng dụng CalDAV nào. Chỉnh sửa linh hoạt từ cả hai phía, 6 tháng đầu miễn phí."/>
 <link rel="canonical" href="https://notion-caldav.opendiy.vn/"/>
@@ -857,6 +858,7 @@ const LANDING_PAGE_HTML_EN: &str = r##"<!doctype html>
 <html class="light" lang="en"><head>
 <meta charset="utf-8"/>
 <meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<meta name="msvalidate.01" content="B2ADD65C06672433A78251607DBB1250"/>
 <title>NotionCal - Sync Notion with your Calendar</title>
 <meta name="description" content="Sync your Notion database with Apple Calendar, Google Calendar, or any CalDAV app. Two-way editing, free for the first 6 months."/>
 <link rel="canonical" href="https://notion-caldav.opendiy.vn/"/>
