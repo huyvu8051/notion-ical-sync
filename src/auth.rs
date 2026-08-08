@@ -191,33 +191,9 @@ pub(crate) const AUTH_STYLE: &str = r#"
 /// pixel-for-pixel — Tailwind CDN + the exact design-token config from that
 /// screen, rather than the plain hand-rolled CSS the rest of the app uses.
 pub(crate) const DASHBOARD_HEAD: &str = r##"
-<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link rel="stylesheet" href="/assets/style-auth-a.css">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Geist:wght@400;500&display=swap" rel="stylesheet">
-<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap" rel="stylesheet">
-<script id="tailwind-config">
-tailwind.config = {
-  theme: {
-    extend: {
-      colors: {
-        "outline-variant": "#c4c7c7", "outline": "#747878", "on-surface": "#1b1c1c",
-        "primary": "#000000", "on-primary": "#ffffff", "background": "#fbf9f9", "surface": "#fbf9f9",
-        "error": "#ba1a1a", "surface-container-low": "#f5f3f3", "surface-container-high": "#e9e8e7",
-        "surface-container-highest": "#e3e2e2", "on-surface-variant": "#444748"
-      },
-      spacing: { "md": "16px", "lg": "24px", "sm": "8px", "margin-desktop": "32px", "xs": "4px", "xl": "40px", "margin-mobile": "16px" },
-      fontFamily: { "sans": ["Inter"], "code": ["Geist"] },
-      fontSize: {
-        "h2": ["20px", { lineHeight: "1.4", letterSpacing: "-0.01em", fontWeight: "600" }],
-        "h1": ["24px", { lineHeight: "1.3", letterSpacing: "-0.015em", fontWeight: "600" }],
-        "body-lg": ["16px", { lineHeight: "1.6", fontWeight: "400" }],
-        "body-md": ["14px", { lineHeight: "1.5", fontWeight: "400" }],
-        "code": ["13px", { lineHeight: "1.4", fontWeight: "400" }],
-        "label-md": ["13px", { lineHeight: "1", letterSpacing: "0.02em", fontWeight: "500" }]
-      }
-    }
-  }
-}
-</script>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&icon_names=add,arrow_back,arrow_forward,calendar_add_on,calendar_month,calendar_today,check_circle,close,content_copy,database,error,event_available,link,login,logout,open_in_new,security,sync,sync_alt,verified,warning&display=swap" rel="stylesheet">
 <style>
 .material-symbols-outlined { font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24; vertical-align: middle; font-size: 20px; }
 .success-banner-gradient { background: linear-gradient(90deg, rgba(220, 252, 231, 0.5) 0%, rgba(220, 252, 231, 0.2) 100%); }
@@ -661,34 +637,8 @@ const LANDING_PAGE_HTML_VI: &str = r##"<!doctype html>
 <meta name="twitter:card" content="summary"/>
 <meta name="twitter:title" content="NotionCal - Đồng bộ hóa Notion với Calendar"/>
 <meta name="twitter:description" content="Đồng bộ hóa cơ sở dữ liệu Notion của bạn với Apple Calendar, Google Calendar hoặc bất kỳ ứng dụng CalDAV nào."/>
-<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Geist:wght@400;500&family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap" rel="stylesheet"/>
-<script id="tailwind-config">
-tailwind.config = {
-  theme: {
-    extend: {
-      colors: {
-        "outline-variant": "#c4c7c7", "outline": "#747878", "on-surface": "#1b1c1c",
-        "primary": "#000000", "on-primary": "#ffffff", "background": "#fbf9f9", "surface": "#fbf9f9",
-        "secondary": "#0058be", "secondary-container": "#2170e4",
-        "surface-container-low": "#f5f3f3", "surface-container": "#efeded"
-      },
-      spacing: { "md": "16px", "lg": "24px", "sm": "8px", "margin-desktop": "32px", "xs": "4px", "xl": "40px", "margin-mobile": "16px", "gutter": "16px" },
-      fontFamily: { "sans": ["Inter"], "code": ["Geist"] },
-      fontSize: {
-        "display": ["32px", { lineHeight: "1.2", letterSpacing: "-0.02em", fontWeight: "600" }],
-        "h1": ["24px", { lineHeight: "1.3", letterSpacing: "-0.015em", fontWeight: "600" }],
-        "h2": ["20px", { lineHeight: "1.4", letterSpacing: "-0.01em", fontWeight: "600" }],
-        "h3": ["16px", { lineHeight: "1.5", letterSpacing: "-0.01em", fontWeight: "600" }],
-        "body-lg": ["16px", { lineHeight: "1.6", fontWeight: "400" }],
-        "body-md": ["14px", { lineHeight: "1.5", fontWeight: "400" }],
-        "label-md": ["13px", { lineHeight: "1", letterSpacing: "0.02em", fontWeight: "500" }],
-        "code": ["13px", { lineHeight: "1.4", fontWeight: "400" }]
-      }
-    }
-  }
-}
-</script>
+<link rel="stylesheet" href="/assets/style-auth-b.css">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Geist:wght@400;500&family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&icon_names=add,arrow_back,arrow_forward,calendar_add_on,calendar_month,calendar_today,check_circle,close,content_copy,database,error,event_available,link,login,logout,open_in_new,security,sync,sync_alt,verified,warning&display=swap" rel="stylesheet"/>
 <style>
 .material-symbols-outlined { font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24; vertical-align: middle; }
 body { font-family: 'Inter', sans-serif; -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; }
@@ -901,34 +851,8 @@ const LANDING_PAGE_HTML_EN: &str = r##"<!doctype html>
 <meta name="twitter:card" content="summary"/>
 <meta name="twitter:title" content="NotionCal - Sync Notion with your Calendar"/>
 <meta name="twitter:description" content="Sync your Notion database with Apple Calendar, Google Calendar, or any CalDAV app."/>
-<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Geist:wght@400;500&family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap" rel="stylesheet"/>
-<script id="tailwind-config">
-tailwind.config = {
-  theme: {
-    extend: {
-      colors: {
-        "outline-variant": "#c4c7c7", "outline": "#747878", "on-surface": "#1b1c1c",
-        "primary": "#000000", "on-primary": "#ffffff", "background": "#fbf9f9", "surface": "#fbf9f9",
-        "secondary": "#0058be", "secondary-container": "#2170e4",
-        "surface-container-low": "#f5f3f3", "surface-container": "#efeded"
-      },
-      spacing: { "md": "16px", "lg": "24px", "sm": "8px", "margin-desktop": "32px", "xs": "4px", "xl": "40px", "margin-mobile": "16px", "gutter": "16px" },
-      fontFamily: { "sans": ["Inter"], "code": ["Geist"] },
-      fontSize: {
-        "display": ["32px", { lineHeight: "1.2", letterSpacing: "-0.02em", fontWeight: "600" }],
-        "h1": ["24px", { lineHeight: "1.3", letterSpacing: "-0.015em", fontWeight: "600" }],
-        "h2": ["20px", { lineHeight: "1.4", letterSpacing: "-0.01em", fontWeight: "600" }],
-        "h3": ["16px", { lineHeight: "1.5", letterSpacing: "-0.01em", fontWeight: "600" }],
-        "body-lg": ["16px", { lineHeight: "1.6", fontWeight: "400" }],
-        "body-md": ["14px", { lineHeight: "1.5", fontWeight: "400" }],
-        "label-md": ["13px", { lineHeight: "1", letterSpacing: "0.02em", fontWeight: "500" }],
-        "code": ["13px", { lineHeight: "1.4", fontWeight: "400" }]
-      }
-    }
-  }
-}
-</script>
+<link rel="stylesheet" href="/assets/style-auth-b.css">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Geist:wght@400;500&family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&icon_names=add,arrow_back,arrow_forward,calendar_add_on,calendar_month,calendar_today,check_circle,close,content_copy,database,error,event_available,link,login,logout,open_in_new,security,sync,sync_alt,verified,warning&display=swap" rel="stylesheet"/>
 <style>
 .material-symbols-outlined { font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24; vertical-align: middle; }
 body { font-family: 'Inter', sans-serif; -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; }

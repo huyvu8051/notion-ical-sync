@@ -6,6 +6,10 @@ logs/
 # Dockerfile's wasm-builder stage, not committed.
 pkg/
 
+# Compiled Tailwind CSS — built by the Dockerfile's tailwind-builder stage
+# from tailwind/*.config.js, not committed.
+assets/
+
 # terraform state holds resource attributes in plaintext, including the
 # Keycloak client_secret output — must never be committed.
 terraform/.terraform/

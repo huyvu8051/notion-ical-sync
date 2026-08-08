@@ -200,34 +200,8 @@ pub(crate) fn error_page(lang: crate::i18n::Lang, err: OauthError) -> axum::resp
 /// design-token config from the Stitch "Kết nối Notion" / "Chọn cơ sở dữ
 /// liệu" mockups (project 7966553897766226544).
 const ONBOARDING_HEAD: &str = r##"
-<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Geist:wght@400;500&family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap" rel="stylesheet">
-<script id="tailwind-config">
-tailwind.config = {
-  theme: {
-    extend: {
-      colors: {
-        "outline-variant": "#c4c7c7", "outline": "#747878", "on-surface": "#1b1c1c",
-        "primary": "#000000", "on-primary": "#ffffff", "background": "#fbf9f9", "surface": "#fbf9f9",
-        "error": "#ba1a1a", "error-container": "#ffdad6", "on-error-container": "#93000a",
-        "surface-container-low": "#f5f3f3", "surface-container-high": "#e9e8e7", "surface-container-highest": "#e3e2e2",
-        "surface-container": "#efeded", "surface-container-lowest": "#ffffff",
-        "on-surface-variant": "#444748", "secondary": "#0058be"
-      },
-      spacing: { "md": "16px", "lg": "24px", "sm": "8px", "xs": "4px", "margin-desktop": "32px", "margin-mobile": "16px", "xl": "40px", "gutter": "16px" },
-      fontFamily: { "sans": ["Inter"], "code": ["Geist"] },
-      fontSize: {
-        "h1": ["24px", { lineHeight: "1.3", letterSpacing: "-0.015em", fontWeight: "600" }],
-        "h2": ["20px", { lineHeight: "1.4", letterSpacing: "-0.01em", fontWeight: "600" }],
-        "h3": ["16px", { lineHeight: "1.5", letterSpacing: "-0.01em", fontWeight: "600" }],
-        "body-lg": ["16px", { lineHeight: "1.6", fontWeight: "400" }],
-        "body-md": ["14px", { lineHeight: "1.5", fontWeight: "400" }],
-        "label-md": ["13px", { lineHeight: "1", letterSpacing: "0.02em", fontWeight: "500" }]
-      }
-    }
-  }
-}
-</script>
+<link rel="stylesheet" href="/assets/style-oauth.css">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Geist:wght@400;500&family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&icon_names=add,arrow_back,arrow_forward,calendar_add_on,calendar_month,calendar_today,check_circle,close,content_copy,database,error,event_available,link,login,logout,open_in_new,security,sync,sync_alt,verified,warning&display=swap" rel="stylesheet">
 <style>
 body { background-color: #fbf9f9; color: #1b1c1c; -webkit-font-smoothing: antialiased; }
 .material-symbols-outlined { font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24; vertical-align: middle; }

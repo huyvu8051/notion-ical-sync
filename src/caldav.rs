@@ -2807,6 +2807,22 @@ pub fn create_app(
                 ))
                 .service(tower_http::services::ServeDir::new("pkg")),
         )
+        // Statically compiled Tailwind CSS (see tailwind/ + the
+        // tailwind-builder Dockerfile stage) — replaces the old
+        // cdn.tailwindcss.com runtime compiler, which was ~7s of
+        // render-blocking JS on a throttled mobile connection. no-cache for
+        // the same reason as /pkg above: rebuilt on every deploy, and a CDN
+        // holding a stale copy just means outdated styling until it
+        // revalidates, but there's no reason to let that linger.
+        .nest_service(
+            "/assets",
+            tower::ServiceBuilder::new()
+                .layer(tower_http::set_header::SetResponseHeaderLayer::overriding(
+                    http::header::CACHE_CONTROL,
+                    http::HeaderValue::from_static("no-cache"),
+                ))
+                .service(tower_http::services::ServeDir::new("assets")),
+        )
         // Public/unauthenticated: linked from the Notion OAuth consent step
         // and the dashboard footer, and required for eventual Notion
         // Marketplace submission.

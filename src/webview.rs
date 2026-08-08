@@ -231,27 +231,8 @@ pub async fn handle_webview_page(
 <title>{title} — NotionCal</title>
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.15/index.global.min.css">
 <script src="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.15/index.global.min.js"></script>
-<script src="https://cdn.tailwindcss.com?plugins=forms"></script>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Geist:wght@400;500&family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap" rel="stylesheet">
-<script id="tailwind-config">
-tailwind.config = {{
-  theme: {{ extend: {{
-    colors: {{
-      "outline-variant": "#e5e5e5", "outline": "#747878", "on-surface": "#1b1c1c",
-      "primary": "#000000", "on-primary": "#ffffff", "background": "#fbf9f9", "surface": "#fbf9f9",
-      "secondary": "#3B82F6", "error": "#ba1a1a", "surface-container-low": "#f5f3f3",
-      "on-surface-variant": "#444748"
-    }},
-    spacing: {{ "md": "16px", "lg": "24px", "sm": "8px", "xs": "4px" }},
-    fontFamily: {{ "sans": ["Inter"], "code": ["Geist"] }},
-    fontSize: {{
-      "h1": ["24px", {{ lineHeight: "1.3", fontWeight: "600" }}],
-      "h2": ["20px", {{ lineHeight: "1.4", fontWeight: "600" }}],
-      "label-md": ["13px", {{ lineHeight: "1", letterSpacing: "0.02em", fontWeight: "500" }}]
-    }}
-  }} }}
-}}
-</script>
+<link rel="stylesheet" href="/assets/style-webview.css">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Geist:wght@400;500&family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&icon_names=add,arrow_back,arrow_forward,calendar_add_on,calendar_month,calendar_today,check_circle,close,content_copy,database,error,event_available,link,login,logout,open_in_new,security,sync,sync_alt,verified,warning&display=swap" rel="stylesheet">
 <style>
 body {{ background-color: #fbf9f9; color: #1b1c1c; -webkit-font-smoothing: antialiased; }}
 .material-symbols-outlined {{ font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24; vertical-align: middle; font-size: 20px; }}
