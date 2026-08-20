@@ -41,6 +41,11 @@ async fn main() -> anyhow::Result<()> {
         .with(tracing_subscriber::fmt::layer())
         .init();
 
+    // Must run before anything binds a route that renders crates/app's
+    // components (see app::init_executor's doc comment) — no ordering
+    // dependency on anything else in main, so it's first.
+    app::init_executor();
+
     let port = env::var("PORT").unwrap_or_else(|_| "8080".to_string());
 
     let webhook_secret = env::var("NOTION_WEBHOOK_SECRET").ok();

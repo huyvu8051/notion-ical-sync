@@ -2837,6 +2837,12 @@ pub fn create_app(
         .route("/favicon.ico", get(crate::legal::favicon))
         .route("/favicon.svg", get(crate::legal::favicon))
         .route("/lang/{code}", get(crate::i18n::set_lang))
+        // Phase-0 retry of the abandoned full Leptos SSR+CSR migration (see
+        // ~/.claude/plans/mighty-scribbling-floyd.md and crates/app). Not
+        // linked from anywhere — throwaway proof-of-mechanism page only.
+        // Remove once the mechanism is confirmed working (or migration is
+        // re-abandoned again).
+        .route("/dev/leptos-check", get(leptos_axum::render_app_to_stream(app::Shell)))
         // SaaS login (Keycloak) — separate identity from the CalDAV Basic
         // Auth / Notion OAuth above. /me forces login via oidc_login_service;
         // /oidc (callback) and /logout must NOT themselves force a redirect,

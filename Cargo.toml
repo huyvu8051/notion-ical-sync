@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/islands"]
+members = ["crates/islands", "crates/app"]
 
 [package]
 name = "notion-ical-sync"
@@ -27,6 +27,10 @@ axum = "0.8.9"
 base64_light = "0.1.6"
 leptos = { version = "0.8", features = ["ssr"] }
 islands = { path = "crates/islands", default-features = false, features = ["ssr"] }
+# Phase-0 retry (leptos_axum's real SSR pipeline, not the abandoned
+# hand-wired to_html() approach) — see crates/app/src/lib.rs.
+app = { path = "crates/app", default-features = false, features = ["ssr"] }
+leptos_axum = "0.8"
 hmac = "0.12"
 sha2 = "0.10"
 sqlx = { version = "0.8", default-features = false, features = ["postgres", "runtime-tokio", "macros", "migrate", "chrono"] }

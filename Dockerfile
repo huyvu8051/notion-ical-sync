@@ -26,6 +26,15 @@ COPY . .
 RUN cargo build -p islands --release --target wasm32-unknown-unknown --no-default-features --features hydrate
 RUN wasm-bindgen target/wasm32-unknown-unknown/release/islands.wasm --out-dir pkg --target web --no-typescript
 
+# Phase-0 retry of the abandoned full Leptos SSR+CSR migration (see
+# ~/.claude/plans/mighty-scribbling-floyd.md and crates/app) — proves
+# leptos_axum::render_app_to_stream's real SSR pipeline hydrates correctly,
+# via a throwaway page at /dev/leptos-check, before any real page migrates.
+# Separate output names (app.js/app_bg.wasm) so this never collides with the
+# islands.js/islands_bg.wasm pair above.
+RUN cargo build -p app --release --target wasm32-unknown-unknown --no-default-features --features hydrate
+RUN wasm-bindgen target/wasm32-unknown-unknown/release/app.wasm --out-dir pkg --target web --no-typescript
+
 # Compiles Tailwind ahead of time (see tailwind/README.md) instead of
 # shipping the cdn.tailwindcss.com Play CDN script, which was compiling the
 # whole utility set in every visitor's browser — ~7s of render-blocking JS

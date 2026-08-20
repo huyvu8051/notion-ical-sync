@@ -1,0 +1,34 @@
+[package]
+name = "app"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[features]
+# Mirrors crates/islands' ssr/hydrate split: the host server binary opts into
+# `ssr` (pulls in leptos_axum's real render_app_to_stream pipeline, host
+# target only); the separate wasm32 build opts into `hydrate` instead. Never
+# both in the same build — see crates/islands/Cargo.toml for why.
+#
+# Deliberately NOT using leptos_axum's `LeptosRoutes`/route-list machinery —
+# see ~/.claude/plans/mighty-scribbling-floyd.md. This crate exposes a plain
+# axum handler (via render_app_to_stream) that the host wires into its own
+# router with a normal `.route(path, get(handler))` call, same as any other
+# handler in src/caldav.rs. Leptos owns nothing about routing.
+ssr = ["leptos/ssr", "dep:leptos_axum", "dep:any_spawner"]
+hydrate = ["leptos/hydrate"]
+
+[dependencies]
+leptos = { version = "0.8", default-features = false }
+leptos_axum = { version = "0.8", optional = true }
+# render_app_to_stream needs a global reactive-graph executor. cargo-leptos
+# apps get this for free from LeptosRoutes' setup; since we deliberately
+# don't use LeptosRoutes (see feature comment above), the host must call
+# `app::init_executor()` once at startup instead — omitting it panics on the
+# first request ("tried to spawn a Future ... before a global executor was
+# initialized"), caught by running this locally against real Postgres/Keycloak.
+any_spawner = { version = "0.3", optional = true }
+wasm-bindgen = "0.2"
+console_error_panic_hook = "0.1"
