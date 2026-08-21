@@ -1111,24 +1111,19 @@ struct SyncLogRow {
     detail: String,
 }
 
-const SYNC_LOG_STYLE: &str = r#"
-<style>
-  * { box-sizing: border-box; }
-  body { font-family: -apple-system, sans-serif; max-width: 960px; margin: 2rem auto; padding: 0 1.25rem; line-height: 1.5; color: #1a1a1a; }
-  .top-nav { display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.25rem; }
-  .top-nav a.back { font-size: 0.85rem; color: #666; text-decoration: none; }
-  h1 { margin: 0.25rem 0 1.25rem; font-size: 1.3rem; }
-  table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
-  th, td { text-align: left; padding: 0.5rem 0.6rem; border-bottom: 1px solid #eee; vertical-align: top; }
-  th { color: #888; font-weight: 500; font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.02em; }
-  .status-ok { color: #166534; font-weight: 600; }
-  .status-error { color: #991b1b; font-weight: 600; }
-  .source-badge { display: inline-block; padding: 0.1rem 0.5rem; border-radius: 6px; font-size: 0.75rem; background: #f1f1f1; }
-  code { font-family: ui-monospace, monospace; background: #f1f1f1; padding: 0.1rem 0.35rem; border-radius: 4px; font-size: 0.78rem; word-break: break-all; }
-  .detail-cell { max-width: 320px; white-space: pre-wrap; word-break: break-word; color: #991b1b; }
-  .empty { color: #888; padding: 2rem 0; text-align: center; }
-</style>
-"#;
+impl From<SyncLogRow> for app::sync_log::SyncLogRow {
+    fn from(r: SyncLogRow) -> Self {
+        app::sync_log::SyncLogRow {
+            occurred_at: r.occurred_at,
+            source: r.source,
+            action: r.action,
+            event_uid: r.event_uid,
+            notion_page_id: r.notion_page_id,
+            status: r.status,
+            detail: r.detail,
+        }
+    }
+}
 
 /// Shows the last 200 create/update/delete attempts for one calendar
 /// (whether via CalDAV client or the webview), newest first — so a user can
@@ -1136,12 +1131,20 @@ const SYNC_LOG_STYLE: &str = r#"
 /// Notion? what error?) from a browser instead of asking someone to read
 /// the application's raw logs. See AppState::log_sync for what gets
 /// recorded and from where.
+///
+/// Phase 1 of the Leptos SSR+CSR migration retry (see crates/app's module
+/// docs) — first real page (real DB data + real OIDC auth) migrated off
+/// hand-rolled `format!()` HTML. `request` is only here to hand off to
+/// `leptos_axum::render_app_to_stream`'s returned handler; every actual
+/// piece of data this route needs still comes from the extractors above it,
+/// same as before this migration.
 pub async fn sync_log_page(
     State(state): State<AppState>,
     claims: OidcClaims<EmptyAdditionalClaims>,
     lang: crate::i18n::Lang,
     Path(public_id): Path<String>,
-) -> impl IntoResponse {
+    request: axum::extract::Request,
+) -> axum::response::Response {
     let cal = match owned_calendar_or_error(&state, &claims, &public_id, lang).await {
         Ok(cal) => cal,
         Err(resp) => return resp,
@@ -1159,78 +1162,14 @@ pub async fn sync_log_page(
         Vec::new()
     });
 
-    let name = html_escape(&cal.display_name);
-    let rows_html = if rows.is_empty() {
-        r#"<tr><td colspan="6" class="empty">Chưa có hoạt động đồng bộ nào được ghi lại.</td></tr>"#
-            .to_string()
-    } else {
-        rows.iter()
-            .map(|r| {
-                let status_class = if r.status == "ok" {
-                    "status-ok"
-                } else {
-                    "status-error"
-                };
-                let status_label = if r.status == "ok" { "OK" } else { "Lỗi" };
-                let page_link = if r.notion_page_id.is_empty() {
-                    "—".to_string()
-                } else {
-                    format!(
-                        r#"<a href="https://notion.so/{id}" target="_blank">{short}</a>"#,
-                        id = html_escape(&r.notion_page_id.replace('-', "")),
-                        short = html_escape(&r.notion_page_id.chars().take(8).collect::<String>())
-                    )
-                };
-                format!(
-                    r#"<tr>
-  <td>{time}</td>
-  <td><span class="source-badge">{source}</span></td>
-  <td>{action}</td>
-  <td><code>{uid}</code></td>
-  <td>{page_link}</td>
-  <td><span class="{status_class}">{status_label}</span>{detail}</td>
-</tr>"#,
-                    time = html_escape(&r.occurred_at),
-                    source = html_escape(&r.source),
-                    action = html_escape(&r.action),
-                    uid = if r.event_uid.is_empty() {
-                        "—".to_string()
-                    } else {
-                        html_escape(&r.event_uid)
-                    },
-                    page_link = page_link,
-                    status_class = status_class,
-                    status_label = status_label,
-                    detail = if r.detail.is_empty() {
-                        String::new()
-                    } else {
-                        format!(
-                            r#"<div class="detail-cell">{}</div>"#,
-                            html_escape(&r.detail)
-                        )
-                    },
-                )
-            })
-            .collect::<Vec<_>>()
-            .join("\n")
+    let data = app::sync_log::SyncLogPageData {
+        calendar_name: cal.display_name,
+        rows: rows.into_iter().map(Into::into).collect(),
     };
 
-    Html(format!(
-        r#"<!doctype html>
-<html lang="vi"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Log đồng bộ — {name}</title>{SYNC_LOG_STYLE}</head>
-<body>
-<div class="top-nav"><strong>NotionCal</strong><a class="back" href="/me">← Tất cả lịch</a></div>
-<h1>Log đồng bộ — {name}</h1>
-<table>
-  <thead>
-    <tr><th>Thời gian</th><th>Nguồn</th><th>Hành động</th><th>UID sự kiện</th><th>Notion page</th><th>Kết quả</th></tr>
-  </thead>
-  <tbody>
-{rows_html}
-  </tbody>
-</table>
-</body></html>"#
-    ))
-    .into_response()
+    let handler = leptos_axum::render_app_to_stream(move || {
+        let data = data.clone();
+        leptos::view! { <app::sync_log::SyncLogShell data=data/> }
+    });
+    handler(request).await
 }

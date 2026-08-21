@@ -29,6 +29,18 @@ leptos_axum = { version = "0.8", optional = true }
 # `app::init_executor()` once at startup instead — omitting it panics on the
 # first request ("tried to spawn a Future ... before a global executor was
 # initialized"), caught by running this locally against real Postgres/Keycloak.
-any_spawner = { version = "0.3", optional = true }
+# futures-executor: only used by sync_log's #[cfg(test)] render smoke tests
+# (init_futures_executor) — a lighter single-thread executor than pulling in
+# a tokio runtime just to satisfy Leptos's reactive-owner requirement in a
+# plain #[test] fn. The host binary's own init_executor() (see below) still
+# uses init_tokio for the real server.
+any_spawner = { version = "0.3", optional = true, features = ["futures-executor"] }
 wasm-bindgen = "0.2"
 console_error_panic_hook = "0.1"
+# Page data (e.g. SyncLogPageData) crosses the SSR/hydrate boundary as a JSON
+# blob embedded in the SSR'd HTML — the server serializes it once, the client
+# bootstrap script reads it back and re-mounts the identical component tree
+# with it (see SyncLogShell). Needed unconditionally: the ssr build encodes,
+# the hydrate build decodes.
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"

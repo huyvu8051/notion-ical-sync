@@ -9,12 +9,22 @@
 //! standalone, without `LeptosRoutes` owning the router, before migrating
 //! any real page again.
 //!
-//! This crate is exactly that proof, nothing more: one throwaway page
-//! (`TestApp`, mounted by the host at `/dev/leptos-check`) with a single
-//! interactive counter, so hydration success/failure is visible by clicking
-//! a button rather than inferred from a static page. Not linked from
-//! anywhere in the app. Do not add real pages here until this route has
-//! been verified working in production.
+//! Phase 0 (`TestApp`, mounted at the throwaway `/dev/leptos-check`, not
+//! linked from anywhere) proved the mechanism itself: SSR via
+//! `leptos_axum::render_app_to_stream` + client hydration both work,
+//! verified locally and in production (see git log for that verification).
+//!
+//! Phase 1 (`sync_log`) is the first real page: real DB data + real OIDC
+//! auth, read-only. It proves the harder part the plan flagged — the
+//! SSR→CSR *data* flow (design decision 3): the server serializes the
+//! fetched rows once into the SSR'd HTML, and the client-side bootstrap
+//! script reads that same blob back and re-mounts an identical component
+//! tree with it, rather than re-fetching. If the client rendered with
+//! different data than the server did, hydration would mismatch the DOM
+//! tachys expects to find and panic — same failure class as the abandoned
+//! attempt, just triggered by a data mismatch instead of a structural one.
+
+pub mod sync_log;
 
 use leptos::prelude::*;
 
@@ -45,7 +55,7 @@ pub fn Shell() -> impl IntoView {
                 <meta name="viewport" content="width=device-width, initial-scale=1"/>
                 <title>"Leptos SSR+CSR mechanism check"</title>
                 <script type="module">
-                    "import init from '/pkg/app.js'; init('/pkg/app_bg.wasm');"
+                    "import init, { hydrate_test_app } from '/pkg/app.js'; init('/pkg/app_bg.wasm').then(hydrate_test_app);"
                 </script>
             </head>
             <body>
@@ -78,9 +88,14 @@ pub fn TestApp() -> impl IntoView {
     }
 }
 
+// Named export, not `#[wasm_bindgen(start)]` — this crate now hosts more
+// than one page's worth of components in a single wasm bundle (see
+// sync_log), each needing to hydrate a different root component, so each
+// page's own bootstrap script calls its own named function after `init()`
+// instead of relying on a single fixed auto-run hydrate target.
 #[cfg(feature = "hydrate")]
-#[wasm_bindgen::prelude::wasm_bindgen(start)]
-pub fn hydrate() {
+#[wasm_bindgen::prelude::wasm_bindgen]
+pub fn hydrate_test_app() {
     console_error_panic_hook::set_once();
     leptos::mount::hydrate_body(TestApp);
 }
