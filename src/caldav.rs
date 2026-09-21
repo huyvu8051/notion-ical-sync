@@ -2403,9 +2403,12 @@ pub fn create_app(
     use leptos_axum::{generate_route_list_with_exclusions, LeptosRoutes};
     use tower::ServiceBuilder;
 
-    let leptos_routes =
-        generate_route_list_with_exclusions(app::App, Some(vec!["/".to_string()]));
+    let (leptos_login_required_routes, leptos_public_routes): (Vec<_>, Vec<_>) =
+        generate_route_list_with_exclusions(app::App, Some(vec!["/".to_string()]))
+            .into_iter()
+            .partition(|route| route.path() == "/connect/notion");
     let leptos_options = state.leptos_options.clone();
+    let leptos_options_for_login_required = leptos_options.clone();
 
     let oidc_login_service = ServiceBuilder::new()
         .layer(HandleErrorLayer::new(|e: MiddlewareError| async move {
@@ -2503,10 +2506,9 @@ pub fn create_app(
 
     let me_route = Router::new()
         .route("/me", get(crate::pages::me::me))
-        .route(
-            "/connect/notion",
-            get(crate::pages::connect_notion::connect_notion_page),
-        )
+        .leptos_routes(&state, leptos_login_required_routes, move || {
+            app::shell(leptos_options_for_login_required.clone())
+        })
         .route(
             "/connect/notion/start",
             get(crate::pages::connect_notion::connect_notion_start),
@@ -2600,7 +2602,7 @@ pub fn create_app(
                 ))
                 .service(tower_http::services::ServeDir::new("static")),
         )
-        .leptos_routes(&state, leptos_routes, move || app::shell(leptos_options.clone()))
+        .leptos_routes(&state, leptos_public_routes, move || app::shell(leptos_options.clone()))
         .route("/robots.txt", get(crate::pages::legal::robots_txt))
         .route("/sitemap.xml", get(crate::pages::legal::sitemap_xml))
         .route("/favicon.ico", get(crate::pages::legal::favicon))

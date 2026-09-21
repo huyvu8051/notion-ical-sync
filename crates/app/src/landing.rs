@@ -421,48 +421,9 @@ pub fn en_data() -> LandingPageData {
     }
 }
 
-fn detect_landing_lang() -> &'static str {
-    #[cfg(feature = "ssr")]
-    {
-        if let Some(parts) = use_context::<axum::http::request::Parts>() {
-            if let Some(cookie) = parts.headers.get("cookie").and_then(|v| v.to_str().ok()) {
-                for pair in cookie.split(';') {
-                    if let Some((k, v)) = pair.trim().split_once('=') {
-                        if k.trim() == "lang" {
-                            if v == "en" {
-                                return "en";
-                            }
-                            if v == "vi" {
-                                return "vi";
-                            }
-                        }
-                    }
-                }
-            }
-            let accept_language = parts
-                .headers
-                .get("accept-language")
-                .and_then(|v| v.to_str().ok())
-                .unwrap_or("");
-            let most_preferred = accept_language
-                .split(',')
-                .next()
-                .unwrap_or("")
-                .trim()
-                .to_lowercase();
-            return if most_preferred.starts_with("en") {
-                "en"
-            } else {
-                "vi"
-            };
-        }
-    }
-    "vi"
-}
-
 #[component]
 pub fn LandingRoutePage() -> impl IntoView {
-    let data = if detect_landing_lang() == "en" {
+    let data = if crate::page_shell::detect_lang() == "en" {
         en_data()
     } else {
         vi_data()

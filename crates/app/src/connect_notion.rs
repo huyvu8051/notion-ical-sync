@@ -18,30 +18,74 @@ pub struct ConnectNotionPageData {
 
 use crate::page_shell::{GOOGLE_FONTS_HREF, ONBOARDING_HEAD_STYLE};
 
+struct ConnectNotionLabels {
+    title: &'static str,
+    heading: &'static str,
+    body: &'static str,
+    connect_cta: &'static str,
+    bullet_read_write: &'static str,
+    bullet_disconnect: &'static str,
+    bullet_no_sharing: &'static str,
+    privacy_link: &'static str,
+    terms_link: &'static str,
+}
+
+const CONNECT_NOTION_LABELS_VI: ConnectNotionLabels = ConnectNotionLabels {
+    title: "Kết nối Notion",
+    heading: "Kết nối không gian làm việc Notion của bạn",
+    body: "Chúng tôi cần quyền truy cập vào không gian làm việc Notion của bạn để tìm và đồng bộ hóa các cơ sở dữ liệu bạn chọn. Bạn sẽ chọn chính xác trang nào cần chia sẻ ở bước tiếp theo trên Notion.",
+    connect_cta: "Kết nối với Notion",
+    bullet_read_write: "Chỉ đọc và ghi vào các trang bạn cho phép",
+    bullet_disconnect: "Có thể ngắt kết nối bất cứ lúc nào",
+    bullet_no_sharing: "Không bao giờ chia sẻ dữ liệu của bạn với bên thứ ba",
+    privacy_link: "Chính sách bảo mật",
+    terms_link: "Điều khoản dịch vụ",
+};
+
+const CONNECT_NOTION_LABELS_EN: ConnectNotionLabels = ConnectNotionLabels {
+    title: "Connect Notion",
+    heading: "Connect your Notion workspace",
+    body: "We need access to your Notion workspace to find and sync the databases you choose. You'll pick exactly which pages to share in the next step, on Notion.",
+    connect_cta: "Connect to Notion",
+    bullet_read_write: "Only reads and writes the pages you allow",
+    bullet_disconnect: "Disconnect anytime",
+    bullet_no_sharing: "Never shares your data with third parties",
+    privacy_link: "Privacy Policy",
+    terms_link: "Terms of Service",
+};
+
 #[component]
-pub fn ConnectNotionShell(data: ConnectNotionPageData) -> impl IntoView {
-    let html_lang = data.html_lang.clone();
-
-    let json = serde_json::to_string(&data).unwrap_or_default();
-    let json_safe = json.replace('<', "\\u003c");
-    let inline_data_script = format!("window.__CONNECT_NOTION_DATA__ = {json_safe};");
-
-    let head_html = format!(
-        r#"<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>{title} — NotionCal</title><link rel="stylesheet" href="/assets/style-auth-a.css"><link href="{fonts}" rel="stylesheet"><style>{style}</style><script>{data_script}</script><script type="module">import init, {{ hydrate_connect_notion }} from '/pkg/app.js'; init('/pkg/app_bg.wasm').then(() => hydrate_connect_notion(JSON.stringify(window.__CONNECT_NOTION_DATA__)));</script>"#,
-        title = data.title,
-        fonts = GOOGLE_FONTS_HREF,
-        style = ONBOARDING_HEAD_STYLE,
-        data_script = inline_data_script,
-    );
-
+pub fn ConnectNotionRoutePage() -> impl IntoView {
+    let lang = crate::page_shell::detect_lang();
+    let l = if lang == "en" {
+        &CONNECT_NOTION_LABELS_EN
+    } else {
+        &CONNECT_NOTION_LABELS_VI
+    };
+    #[cfg(feature = "ssr")]
+    let email = crate::page_shell::current_user_email();
+    #[cfg(not(feature = "ssr"))]
+    let email = String::new();
+    let data = ConnectNotionPageData {
+        html_lang: lang.to_string(),
+        title: l.title.to_string(),
+        top_nav_html: crate::page_shell::top_nav_html(&email, lang, "/connect/notion"),
+        heading: l.heading.to_string(),
+        body: l.body.to_string(),
+        connect_cta: l.connect_cta.to_string(),
+        bullet_read_write: l.bullet_read_write.to_string(),
+        bullet_disconnect: l.bullet_disconnect.to_string(),
+        bullet_no_sharing: l.bullet_no_sharing.to_string(),
+        privacy_link: l.privacy_link.to_string(),
+        terms_link: l.terms_link.to_string(),
+    };
     view! {
-        <!DOCTYPE html>
-        <html lang=html_lang>
-            <head inner_html=head_html></head>
-            <body class="min-h-screen flex flex-col">
-                <ConnectNotionPage data=data/>
-            </body>
-        </html>
+        <leptos_meta::Html attr:lang=data.html_lang.clone()/>
+        <leptos_meta::Title text=format!("{} — NotionCal", data.title)/>
+        <leptos_meta::Link rel="stylesheet" href="/assets/style-auth-a.css"/>
+        <leptos_meta::Link href=GOOGLE_FONTS_HREF rel="stylesheet"/>
+        <leptos_meta::Style>{ONBOARDING_HEAD_STYLE}</leptos_meta::Style>
+        <ConnectNotionPage data=data/>
     }
 }
 
@@ -105,15 +149,6 @@ pub fn ConnectNotionPage(data: ConnectNotionPageData) -> impl IntoView {
     }
 }
 
-#[cfg(feature = "hydrate")]
-#[wasm_bindgen::prelude::wasm_bindgen]
-pub fn hydrate_connect_notion(json: String) {
-    console_error_panic_hook::set_once();
-    let data: ConnectNotionPageData =
-        serde_json::from_str(&json).expect("invalid connect-notion page payload from server");
-    leptos::mount::hydrate_body(move || view! { <ConnectNotionPage data=data.clone()/> });
-}
-
 #[cfg(all(test, feature = "ssr"))]
 mod tests {
     use super::*;
@@ -140,12 +175,5 @@ mod tests {
         let html = view! { <ConnectNotionPage data=sample_data()/> }.to_html();
         assert!(html.contains("Kết nối với Notion"));
         assert!(html.contains("/connect/notion/start"));
-    }
-
-    #[test]
-    fn shell_is_script_breakout_safe() {
-        any_spawner::Executor::init_futures_executor().ok();
-        let html = view! { <ConnectNotionShell data=sample_data()/> }.to_html();
-        assert!(!html.contains("</script><script>alert"));
     }
 }

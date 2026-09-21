@@ -50,6 +50,7 @@ version = "0.1.0"
 dependencies = [
  "any_spawner",
  "axum",
+ "axum-oidc",
  "console_error_panic_hook",
  "gloo-net",
  "gloo-timers",

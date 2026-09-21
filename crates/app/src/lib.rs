@@ -60,6 +60,7 @@ pub fn App() -> impl IntoView {
                 <Route path=StaticSegment("") view=landing::LandingRoutePage/>
                 <Route path=StaticSegment("privacy") view=legal::PrivacyRoutePage/>
                 <Route path=StaticSegment("terms") view=legal::TermsRoutePage/>
+                <Route path=(StaticSegment("connect"), StaticSegment("notion")) view=connect_notion::ConnectNotionRoutePage/>
             </Routes>
         </Router>
     }
