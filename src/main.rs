@@ -98,6 +98,22 @@ async fn main() -> anyhow::Result<()> {
          onboarding flow will show a not-configured page until they're set",
     );
 
+    let notion_api_base_url = env::var("NOTION_API_BASE_URL")
+        .unwrap_or_else(|_| "https://api.notion.com".to_string());
+    if notion_api_base_url != "https://api.notion.com" {
+        tracing::warn!(
+            "NOTION_API_BASE_URL overridden to {} — pointing at a mock Notion, not the real API",
+            notion_api_base_url
+        );
+    }
+
+    let mapbox_token = env::var("MAPBOX_ACCESS_TOKEN").ok();
+    warn_if_unconfigured(
+        &mapbox_token,
+        "MAPBOX_ACCESS_TOKEN not set; the event location field falls back to a plain text \
+         input with no autocomplete",
+    );
+
     let password_enc_key = env::var("CALDAV_PASSWORD_ENC_KEY")
         .ok()
         .and_then(|b64| {
@@ -137,6 +153,8 @@ async fn main() -> anyhow::Result<()> {
         caldav_allow_writes,
         webhook_secret,
         notion_oauth,
+        notion_api_base_url,
+        mapbox_token,
         password_enc_key,
         stripe,
         email,

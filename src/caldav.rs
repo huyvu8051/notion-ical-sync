@@ -200,6 +200,8 @@ pub struct AppState {
     pub caldav_allow_writes: CaldavAllowWrites,
     pub webhook_secret: Option<String>,
     pub notion_oauth: Option<crate::pages::connect_notion::NotionOAuthConfig>,
+    pub notion_api_base_url: String,
+    pub mapbox_token: Option<String>,
     pub password_enc_key: Option<[u8; 32]>,
     pub stripe: Option<crate::billing::StripeConfig>,
     pub email: Option<crate::email::EmailConfig>,
@@ -237,6 +239,8 @@ impl AppState {
         caldav_allow_writes: CaldavAllowWrites,
         webhook_secret: Option<String>,
         notion_oauth: Option<crate::pages::connect_notion::NotionOAuthConfig>,
+        notion_api_base_url: String,
+        mapbox_token: Option<String>,
         password_enc_key: Option<[u8; 32]>,
         stripe: Option<crate::billing::StripeConfig>,
         email: Option<crate::email::EmailConfig>,
@@ -252,6 +256,8 @@ impl AppState {
             caldav_allow_writes,
             webhook_secret,
             notion_oauth,
+            notion_api_base_url,
+            mapbox_token,
             password_enc_key,
             stripe,
             email,
@@ -465,7 +471,7 @@ impl AppState {
         date_property: &str,
         notion_token: &str,
     ) -> Result<Vec<PageInfo>, String> {
-        let url = format!("https://api.notion.com/v1/data_sources/{}/query", ds_id);
+        let url = format!("{}/v1/data_sources/{}/query", self.notion_api_base_url, ds_id);
 
         let body = serde_json::json!({
             "filter": {
@@ -659,7 +665,7 @@ impl AppState {
         data_source_id: &str,
         notion_token: &str,
     ) -> HashMap<String, (String, String)> {
-        let url = format!("https://api.notion.com/v1/data_sources/{}", data_source_id);
+        let url = format!("{}/v1/data_sources/{}", self.notion_api_base_url, data_source_id);
         let resp = match self
             .client
             .get(&url)
@@ -802,10 +808,11 @@ impl AppState {
             "properties": properties,
         });
 
-        info!(notion_method = "POST", notion_url = "https://api.notion.com/v1/pages", title = %title, "-> Notion API request (create event)");
+        let create_url = format!("{}/v1/pages", self.notion_api_base_url);
+        info!(notion_method = "POST", notion_url = %create_url, title = %title, "-> Notion API request (create event)");
         let resp = self
             .client
-            .post("https://api.notion.com/v1/pages")
+            .post(&create_url)
             .header("Authorization", format!("Bearer {}", notion_token))
             .header("Notion-Version", "2025-09-03")
             .header("Content-Type", "application/json")
@@ -893,7 +900,7 @@ impl AppState {
         notion_token: &str,
         body: &serde_json::Value,
     ) -> Result<(), String> {
-        let url = format!("https://api.notion.com/v1/pages/{}", page_id);
+        let url = format!("{}/v1/pages/{}", self.notion_api_base_url, page_id);
         info!(notion_method = "PATCH", notion_url = %url, body = %body, "-> Notion API request");
         let resp = self
             .client
@@ -920,7 +927,7 @@ impl AppState {
     }
 
     pub async fn get_calendar_name(&self, db_id: &str, notion_token: &str) -> String {
-        let url = format!("https://api.notion.com/v1/databases/{}", db_id);
+        let url = format!("{}/v1/databases/{}", self.notion_api_base_url, db_id);
         info!(notion_method = "GET", notion_url = %url, "-> Notion API request (calendar name)");
         match self
             .client

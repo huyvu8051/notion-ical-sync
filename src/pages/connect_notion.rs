@@ -111,7 +111,8 @@ pub async fn connect_notion_start(
         return error_page(lang, OauthError::TryAgain);
     }
 
-    let mut url = url::Url::parse("https://api.notion.com/v1/oauth/authorize").expect("static url");
+    let mut url = url::Url::parse(&format!("{}/v1/oauth/authorize", state.notion_api_base_url))
+        .expect("valid notion_api_base_url");
     url.query_pairs_mut()
         .append_pair("client_id", &cfg.client_id)
         .append_pair("response_type", "code")
@@ -155,7 +156,7 @@ pub async fn notion_oauth_callback(
 
     let resp = match state
         .client
-        .post("https://api.notion.com/v1/oauth/token")
+        .post(format!("{}/v1/oauth/token", state.notion_api_base_url))
         .basic_auth(&cfg.client_id, Some(&cfg.client_secret))
         .header("Notion-Version", NOTION_VERSION)
         .json(&serde_json::json!({

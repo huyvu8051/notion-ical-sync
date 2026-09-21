@@ -20,10 +20,11 @@ struct DatabaseCandidate {
 
 async fn list_syncable_databases(
     client: &reqwest::Client,
+    api_base_url: &str,
     token: &str,
 ) -> Result<Vec<DatabaseCandidate>, String> {
     let resp = client
-        .post("https://api.notion.com/v1/search")
+        .post(format!("{api_base_url}/v1/search"))
         .bearer_auth(token)
         .header("Notion-Version", NOTION_VERSION)
         .json(&serde_json::json!({ "filter": { "value": "data_source", "property": "object" } }))
@@ -135,7 +136,7 @@ pub async fn pick_databases_page(
         return error_page(lang, OauthError::ConnectionNotFound);
     };
 
-    let candidates = match list_syncable_databases(&state.client, &access_token).await {
+    let candidates = match list_syncable_databases(&state.client, &state.notion_api_base_url, &access_token).await {
         Ok(c) => c,
         Err(e) => {
             error!("failed to list notion databases: {}", e);
@@ -214,7 +215,7 @@ pub async fn create_calendars(
         return Redirect::to("/me").into_response();
     }
 
-    let candidates = match list_syncable_databases(&state.client, &access_token).await {
+    let candidates = match list_syncable_databases(&state.client, &state.notion_api_base_url, &access_token).await {
         Ok(c) => c,
         Err(e) => {
             error!("failed to list notion databases: {}", e);
