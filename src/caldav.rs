@@ -963,23 +963,24 @@ pub fn ics_dt(value: &str) -> String {
     if value.is_empty() {
         return String::new();
     }
-    let value = value.replace(['-', ':'], "");
-    if value.contains('T') {
-        let mut parts = value.split('T');
-        let date = parts.next().unwrap_or("");
-        let mut time = parts.next().unwrap_or("");
-        if time.contains('+') {
-            time = time.split('+').next().unwrap_or(time);
+    if !value.contains('T') {
+        return format!(";VALUE=DATE:{}", value.replace('-', ""));
+    }
+    match chrono::DateTime::parse_from_rfc3339(value) {
+        Ok(dt) => dt
+            .with_timezone(&chrono::Utc)
+            .format("%Y%m%dT%H%M%SZ")
+            .to_string(),
+        Err(_) => {
+            let stripped = value.replace(['-', ':'], "");
+            let mut parts = stripped.splitn(2, 'T');
+            let date = parts.next().unwrap_or("");
+            let mut time = parts.next().unwrap_or("");
+            if let Some(dot) = time.find('.') {
+                time = &time[..dot];
+            }
+            format!("{date}T{time}Z")
         }
-        if time.contains('Z') {
-            time = time.split('Z').next().unwrap_or(time);
-        }
-        if let Some(dot) = time.find('.') {
-            time = &time[..dot];
-        }
-        format!("{}T{}Z", date, time)
-    } else {
-        format!(";VALUE=DATE:{}", value)
     }
 }
 
@@ -2810,5 +2811,41 @@ END:VEVENT\r\n";
         let props = optional_event_properties(&schema, &fields);
         assert_eq!(props.len(), 1);
         assert!(props.contains_key("Location"));
+    }
+}
+
+#[cfg(test)]
+mod ics_dt_tests {
+    use super::*;
+
+    #[test]
+    fn converts_negative_offset_to_true_utc() {
+        assert_eq!(
+            ics_dt("2026-09-17T18:00:00.000-06:00"),
+            "20260918T000000Z"
+        );
+    }
+
+    #[test]
+    fn converts_positive_offset_to_true_utc() {
+        assert_eq!(
+            ics_dt("2026-09-17T18:00:00.000+07:00"),
+            "20260917T110000Z"
+        );
+    }
+
+    #[test]
+    fn passes_through_already_utc_values_unchanged() {
+        assert_eq!(ics_dt("2026-09-17T18:00:00.000Z"), "20260917T180000Z");
+    }
+
+    #[test]
+    fn formats_date_only_values_as_all_day() {
+        assert_eq!(ics_dt("2026-09-17"), ";VALUE=DATE:20260917");
+    }
+
+    #[test]
+    fn empty_value_yields_empty_string() {
+        assert_eq!(ics_dt(""), "");
     }
 }
