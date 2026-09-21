@@ -7,14 +7,6 @@ body { background-color: #fbf9f9; color: #1b1c1c; -webkit-font-smoothing: antial
 .card-shadow { box-shadow: 0px 4px 12px rgba(0, 0, 0, 0.05); }
 "#;
 
-pub(crate) fn live_reload_script() -> &'static str {
-    if cfg!(debug_assertions) {
-        r#"<script>(function(){function c(){var s=new WebSocket('ws://'+location.hostname+':3002/live_reload');s.onmessage=function(){location.reload();};s.onclose=function(){setTimeout(c,1000);};}c();})();</script>"#
-    } else {
-        ""
-    }
-}
-
 fn cookie_lang(cookie_header: &str) -> Option<&'static str> {
     for pair in cookie_header.split(';') {
         if let Some((k, v)) = pair.trim().split_once('=') {
@@ -66,12 +58,13 @@ pub(crate) fn detect_lang() -> &'static str {
         // render (which can only read document.cookie, not the original
         // request headers) resolves the same language instead of flashing
         // to a hardcoded default.
-        if let Some(res_options) = leptos::prelude::use_context::<leptos_axum::ResponseOptions>()
-        {
+        if let Some(res_options) = leptos::prelude::use_context::<leptos_axum::ResponseOptions>() {
             res_options.append_header(
                 axum::http::header::SET_COOKIE,
-                axum::http::HeaderValue::from_str(&format!("lang={lang}; Path=/; Max-Age=31536000"))
-                    .expect("lang cookie value is always a valid header value"),
+                axum::http::HeaderValue::from_str(&format!(
+                    "lang={lang}; Path=/; Max-Age=31536000"
+                ))
+                .expect("lang cookie value is always a valid header value"),
             );
         }
         return lang;
@@ -95,6 +88,14 @@ pub(crate) fn detect_lang() -> &'static str {
 #[cfg(feature = "ssr")]
 #[derive(Clone)]
 pub struct NotionApiBaseUrl(pub String);
+
+#[cfg(feature = "ssr")]
+#[derive(Clone)]
+pub struct AppBaseUrl(pub String);
+
+#[cfg(feature = "ssr")]
+#[derive(Clone)]
+pub struct StripeConfigured(pub bool);
 
 #[cfg(feature = "ssr")]
 pub(crate) fn query_param_i64(name: &str) -> Option<i64> {
@@ -147,7 +148,7 @@ fn lang_toggle_html(lang: &str, current_path: &str) -> String {
     )
 }
 
-fn html_escape(s: &str) -> String {
+pub(crate) fn html_escape(s: &str) -> String {
     s.replace('&', "&amp;")
         .replace('<', "&lt;")
         .replace('>', "&gt;")
@@ -155,7 +156,11 @@ fn html_escape(s: &str) -> String {
 }
 
 pub(crate) fn top_nav_html(email: &str, lang: &str, current_path: &str) -> String {
-    let logout_title = if lang == "en" { "Log out" } else { "Đăng xuất" };
+    let logout_title = if lang == "en" {
+        "Log out"
+    } else {
+        "Đăng xuất"
+    };
     format!(
         r#"<header class="bg-surface border-b border-outline-variant sticky top-0 z-50">
 <div class="flex justify-between items-center h-16 px-lg w-full max-w-[1280px] mx-auto">
