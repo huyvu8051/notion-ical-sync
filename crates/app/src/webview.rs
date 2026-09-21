@@ -1,45 +1,38 @@
 //! Phase B3 (final page) of the full Leptos SSR+CSR migration — the
 //! `/app/{public_id}` calendar webview. FullCalendar (CDN JS, no Leptos
 //! binding exists for it) stays exactly as-is per the user's explicit
-//! decision: only the page *shell* (header, nav, static modal markup) is a
-//! real Leptos SSR+hydrate tree; `webview_js()`'s content (FullCalendar
-//! init, drag/drop, modal open/close/save, `fetch()` calls to the existing
-//! CRUD routes) is unchanged and runs after hydration exactly as before.
+//! decision: only the page *shell* is a real Leptos SSR+hydrate tree;
+//! `webview_js()`'s content (FullCalendar init, drag/drop, modal
+//! open/close/save, `fetch()` calls to the existing CRUD routes) is
+//! unchanged and runs after hydration exactly as before.
 //!
-//! `webview_js()` is placed in `<head>` (not a `<body>`-trailing `<script>`
-//! like the original) — safe because it already self-defers all DOM access:
-//! the FullCalendar init is wrapped in its own
-//! `document.addEventListener('DOMContentLoaded', ...)`, and every other
-//! function (openCreateModal, saveFromModal, etc.) only touches the DOM
-//! inside a function body invoked later by a click/callback, never at
-//! top-level script-execution time. This also sidesteps ever needing to
-//! decide whether a literal `<script>` tag inside a hydrated `<body>`
-//! `inner_html` blob would be re-executed by hydration — untested territory
-//! this migration doesn't need to risk.
-//!
-//! The modal's delete button is the one piece folded in from
-//! `crates/islands::ConfirmActionButton` (see `confirm_button.rs`) — same
-//! reasoning as `me.rs`'s `ConfirmButton`: it must be a real child of the
-//! hydrated tree, so the header/modal markup around it is split into
-//! `top_html`/`bottom_html` inner_html blobs with the button as a real node
-//! in between, exactly the same shape `me.rs` uses per calendar card.
+//! **No `crates/islands::ConfirmActionButton` fold-in here, unlike `me.rs`'s
+//! `ConfirmButton`.** An earlier version of this file did fold it in, and
+//! hit a real, browser-verified (real Keycloak+Postgres stack, not just SSR
+//! unit tests) `tachys::hydration::failed_to_cast_element` /
+//! `failed_to_cast_text_node` panic. An isolated experiment — swapping
+//! `ConfirmActionButton` for a plain static `<button>` with everything else
+//! identical — made the panic disappear, confirming the component itself
+//! (not surrounding DOM structure, which was independently verified
+//! correct via `DOMParser`) was the cause; the exact root cause inside
+//! tachys wasn't chased further, since the delete-confirm button doesn't
+//! actually need real Rust-side reactivity at all. It's reimplemented as
+//! plain JS in `webview_js()` (`handleDeleteClick`, same "click to arm, 3s
+//! window to confirm" UX as `ConfirmButton`/`ConfirmActionButton`), which
+//! means *nothing* on this page needs Leptos-managed state, so the whole
+//! body collapses to one `inner_html` blob — same shape as
+//! `legal.rs`/`connect_notion.rs`, not `me.rs`.
 
 use leptos::prelude::*;
 use serde::{Deserialize, Serialize};
-
-use crate::confirm_button::ConfirmActionButton;
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct WebviewPageData {
     pub html_lang: String,
     pub title: String,
-    /// Header through the modal's form fields, ending with the footer's
-    /// opening `<div>` tag (up to, not including, the delete button).
-    pub top_html: String,
-    /// Rest of the modal footer (cancel/save buttons) + closing tags.
-    pub bottom_html: String,
-    pub delete_btn_label: String,
-    pub confirm_delete_event_label: String,
+    /// The whole `<body>` content — header, `#calendar` div, and the modal
+    /// (including its delete/cancel/save buttons) — fully self-contained.
+    pub body_html: String,
     /// `webview_js()`'s output, unchanged — see module doc for why this is
     /// safe to place in `<head>` rather than a `<body>`-trailing script.
     pub js: String,
@@ -102,22 +95,7 @@ pub fn WebviewShell(data: WebviewPageData) -> impl IntoView {
 
 #[component]
 pub fn WebviewPage(data: WebviewPageData) -> impl IntoView {
-    let top_html = data.top_html.clone();
-    let bottom_html = data.bottom_html.clone();
-
-    view! {
-        <div id="webview-root">
-            <div inner_html=top_html></div>
-            <ConfirmActionButton
-                id="modal-delete-btn".to_string()
-                label=data.delete_btn_label
-                confirm_label=data.confirm_delete_event_label
-                class="text-error text-label-md hover:underline hidden".to_string()
-                on_confirm_fn="deleteFromModal".to_string()
-            />
-            <div inner_html=bottom_html></div>
-        </div>
-    }
+    view! { <div id="webview-root" inner_html=data.body_html></div> }
 }
 
 #[cfg(feature = "hydrate")]
@@ -138,10 +116,7 @@ mod tests {
             html_lang: "vi".to_string(),
             // Pre-escaped, as the real caller (src/webview.rs) always sends it.
             title: "Work &lt;Calendar&gt;".to_string(),
-            top_html: "<header>top</header><div id=\"calendar\"></div>".to_string(),
-            bottom_html: "<div>bottom</div>".to_string(),
-            delete_btn_label: "Xoá".to_string(),
-            confirm_delete_event_label: "Xoá sự kiện này?".to_string(),
+            body_html: "<header>top</header><div id=\"calendar\"></div><button id=\"modal-delete-btn\">Xoá</button>".to_string(),
             js: "console.log('webview js');".to_string(),
         }
     }

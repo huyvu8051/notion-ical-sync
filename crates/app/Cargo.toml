@@ -44,9 +44,3 @@ console_error_panic_hook = "0.1"
 # the hydrate build decodes.
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-# Only used inside #[cfg(feature = "hydrate")] code in confirm_button.rs
-# (ConfirmActionButton's call_global_fn, ported from crates/islands) — kept
-# unconditional rather than feature-gated since crates/islands already
-# proves this compiles fine under the ssr (host, non-wasm32) build too.
-js-sys = "0.3"
-web-sys = { version = "0.3", features = ["Window"] }

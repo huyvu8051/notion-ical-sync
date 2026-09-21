@@ -13,6 +13,19 @@
 //! via `.to_html()` into a surrounding string (the old islands approach)
 //! never gets hydrated that way; hydration only finds/attaches to nodes that
 //! are part of the same component tree passed to `hydrate_body`.
+//!
+//! `<main>` is a real `view!` element wrapping the banners/billing
+//! `inner_html` block, the real calendar-card list, and the footer
+//! `inner_html` block — NOT an unclosed tag left open across two separate
+//! `inner_html` strings the way an earlier version of this file (and
+//! `webview.rs`, before it hit a real hydration panic) tried. Confirmed by
+//! reading tachys's source: `inner_html` content is pushed directly into
+//! the same SSR HTML output buffer as everything else, not parsed in an
+//! isolated fragment context — an unclosed tag left dangling at the end of
+//! one `inner_html` string silently reshapes the rest of the document
+//! (the next literal `</div>` anywhere later closes *it* instead of
+//! whatever it was actually meant to close), which hydration then trips
+//! over. See `webview.rs`'s module doc for the full writeup.
 
 use leptos::prelude::*;
 use serde::{Deserialize, Serialize};
@@ -47,11 +60,16 @@ pub struct CalendarCardData {
 pub struct MePageData {
     pub html_lang: String,
     pub page_title: String,
-    /// Header + `<main>` (left open) + banners + billing card + heading
-    /// section — everything above the calendar list, static per request.
-    pub top_html: String,
-    /// Footer links + closing `</main>`.
-    pub bottom_html: String,
+    /// `<header>` — fully self-contained (balanced tags).
+    pub header_html: String,
+    /// Banners + billing card + heading section — everything inside
+    /// `<main>` above the calendar list. Fully self-contained; `<main>`
+    /// itself is a real `view!` element (see module doc for why it can't be
+    /// an unclosed tag spanning into this string).
+    pub main_top_html: String,
+    /// Footer links, inside `<main>` below the calendar list. Also fully
+    /// self-contained.
+    pub main_bottom_html: String,
     pub calendars: Vec<CalendarCardData>,
     /// Shown instead of the calendar list when `calendars` is empty.
     pub empty_state_html: String,
@@ -110,8 +128,9 @@ pub fn MeShell(data: MePageData) -> impl IntoView {
 
 #[component]
 pub fn MePage(data: MePageData) -> impl IntoView {
-    let top_html = data.top_html.clone();
-    let bottom_html = data.bottom_html.clone();
+    let header_html = data.header_html.clone();
+    let main_top_html = data.main_top_html.clone();
+    let main_bottom_html = data.main_bottom_html.clone();
 
     let list = if data.calendars.is_empty() {
         view! { <div inner_html=data.empty_state_html.clone()></div> }.into_any()
@@ -125,9 +144,12 @@ pub fn MePage(data: MePageData) -> impl IntoView {
 
     view! {
         <div id="me-root">
-            <div inner_html=top_html></div>
-            <div class="space-y-md">{list}</div>
-            <div inner_html=bottom_html></div>
+            <div inner_html=header_html></div>
+            <main class="max-w-[1280px] mx-auto px-margin-mobile md:px-margin-desktop py-lg space-y-lg">
+                <div inner_html=main_top_html></div>
+                <div class="space-y-md">{list}</div>
+                <div inner_html=main_bottom_html></div>
+            </main>
         </div>
     }
 }
@@ -213,8 +235,9 @@ mod tests {
         MePageData {
             html_lang: "vi".to_string(),
             page_title: "Trang của bạn — NotionCal".to_string(),
-            top_html: "<header>top</header>".to_string(),
-            bottom_html: "<footer>bottom</footer>".to_string(),
+            header_html: "<header>top</header>".to_string(),
+            main_top_html: "<div>banners+billing+heading</div>".to_string(),
+            main_bottom_html: "<footer>bottom</footer>".to_string(),
             calendars,
             empty_state_html: "<p>Chưa có calendar nào</p>".to_string(),
         }

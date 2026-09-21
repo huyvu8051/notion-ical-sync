@@ -226,7 +226,13 @@ pub async fn handle_webview_page(
 
     let events_url = format!("/app/{}/api/events", public_id);
 
-    let top_html = format!(
+    // The whole page, fully self-contained (all tags balanced) — mounted as
+    // a single inner_html blob (see module doc in crates/app/src/webview.rs
+    // for why nothing on this page needs to be a real view! node: the
+    // delete-confirm button was the one piece that did, and it's now plain
+    // JS — handleDeleteClick() below — after folding it in as a real Leptos
+    // component caused a real hydration panic).
+    let body_html = format!(
         r##"<header class="h-16 flex items-center justify-between px-lg border-b border-outline-variant bg-surface">
 <div class="flex items-center gap-md">
 <a class="flex items-center gap-xs text-on-surface-variant hover:text-primary transition-colors text-label-md" href="/me">
@@ -323,7 +329,15 @@ pub async fn handle_webview_page(
 <span class="material-symbols-outlined text-[14px]">open_in_new</span>
 </a>
 </div>
-<div class="px-lg py-md bg-surface-container-low flex items-center justify-between">"##,
+<div class="px-lg py-md bg-surface-container-low flex items-center justify-between">
+<button type="button" id="modal-delete-btn" class="text-error text-label-md hover:underline hidden" onclick="handleDeleteClick()">{delete_btn}</button>
+<div class="flex items-center gap-md ml-auto">
+<button class="px-md h-10 border border-outline-variant rounded-lg bg-white hover:bg-surface-container-low text-label-md transition-colors" onclick="closeModal()">{cancel_btn}</button>
+<button class="bg-primary text-on-primary px-lg h-10 rounded-lg text-label-md hover:opacity-90 transition-opacity" onclick="saveFromModal()">{save_btn}</button>
+</div>
+</div>
+</div>
+</div>"##,
         back_to_all = l.back_to_all,
         title = html_escape(&calendar_name),
         lang_toggle = lang_toggle,
@@ -355,16 +369,7 @@ pub async fn handle_webview_page(
         reminder_1hour = l.reminder_1hour,
         travel_time_label = l.travel_time_label,
         open_in_notion = l.open_in_notion,
-    );
-
-    let bottom_html = format!(
-        r#"<div class="flex items-center gap-md ml-auto">
-<button class="px-md h-10 border border-outline-variant rounded-lg bg-white hover:bg-surface-container-low text-label-md transition-colors" onclick="closeModal()">{cancel_btn}</button>
-<button class="bg-primary text-on-primary px-lg h-10 rounded-lg text-label-md hover:opacity-90 transition-opacity" onclick="saveFromModal()">{save_btn}</button>
-</div>
-</div>
-</div>
-</div>"#,
+        delete_btn = l.delete_btn,
         cancel_btn = l.cancel_btn,
         save_btn = l.save_btn,
     );
@@ -378,10 +383,7 @@ pub async fn handle_webview_page(
         // a user-controlled Notion database name, unlike every other
         // migrated page's title so far.
         title: html_escape(&calendar_name),
-        top_html,
-        bottom_html,
-        delete_btn_label: l.delete_btn.to_string(),
-        confirm_delete_event_label: l.confirm_delete_event.to_string(),
+        body_html,
         js: webview_js(&events_url, l),
     };
     let handler = leptos_axum::render_app_to_stream(move || {
@@ -543,10 +545,6 @@ function saveFromModal() {{
   }}
 }}
 
-// The arm/confirm-again UI (in place of a blocking native confirm(), which
-// halts all further JS/CDP automation until a human dismisses it) lives in
-// the ConfirmActionButton island wrapping #modal-delete-btn — it calls this
-// function directly once the user has confirmed.
 function deleteFromModal() {{
   if (!editingEventId) return;
   fetch('{events_url}/' + encodeURIComponent(editingEventId), {{ method: 'DELETE' }})
@@ -555,6 +553,32 @@ function deleteFromModal() {{
       closeModal();
       calendar.refetchEvents();
     }});
+}}
+
+// Arm/confirm-again UI in place of a blocking native confirm() (halts all
+// further JS/CDP automation until a human dismisses it) for #modal-delete-btn
+// — click once to arm (3s window), click again to actually delete. Plain JS
+// rather than a Leptos component: folding this in as a real component
+// (crates/islands::ConfirmActionButton's replacement) caused a real
+// hydration panic isolated to the component itself, and this button doesn't
+// need Rust-side reactivity at all.
+var deleteBtnConfirming = false;
+var deleteBtnResetTimer = null;
+function handleDeleteClick() {{
+  var btn = document.getElementById('modal-delete-btn');
+  if (deleteBtnConfirming) {{
+    deleteBtnConfirming = false;
+    clearTimeout(deleteBtnResetTimer);
+    btn.textContent = '{delete_btn}';
+    deleteFromModal();
+  }} else {{
+    deleteBtnConfirming = true;
+    btn.textContent = '{confirm_delete_event}';
+    deleteBtnResetTimer = setTimeout(function() {{
+      deleteBtnConfirming = false;
+      btn.textContent = '{delete_btn}';
+    }}, 3000);
+  }}
 }}
 
 document.addEventListener('DOMContentLoaded', function() {{
@@ -612,6 +636,8 @@ document.addEventListener('DOMContentLoaded', function() {{
         alert_quota_exceeded = js_escape(l.alert_quota_exceeded),
         repeat_display_prefix = js_escape(l.repeat_display_prefix),
         attendees_display_prefix = js_escape(l.attendees_display_prefix),
+        delete_btn = js_escape(l.delete_btn),
+        confirm_delete_event = js_escape(l.confirm_delete_event),
     )
 }
 

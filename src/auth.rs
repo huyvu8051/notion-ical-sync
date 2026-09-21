@@ -459,7 +459,13 @@ pub async fn me(
 
     let lang_toggle = crate::i18n::lang_toggle(lang, "/me");
 
-    let top_html = format!(
+    // Fully self-contained (all tags balanced) — see module doc in
+    // crates/app/src/me.rs for why: inner_html content is pushed straight
+    // into the SSR HTML stream, not parsed in an isolated fragment context,
+    // so an unclosed tag here would silently reshape the rest of the
+    // document instead of being contained. `<main>` is a real view!
+    // element in crates/app, not part of either string below.
+    let header_html = format!(
         r#"<header class="bg-surface border-b border-outline-variant sticky top-0 z-50">
 <div class="flex justify-between items-center h-16 px-lg w-full max-w-[1280px] mx-auto">
 <span class="text-h1 font-semibold tracking-tighter text-primary">NotionCal</span>
@@ -471,9 +477,14 @@ pub async fn me(
 </a>
 </div>
 </div>
-</header>
-<main class="max-w-[1280px] mx-auto px-margin-mobile md:px-margin-desktop py-lg space-y-lg">
-{banner}
+</header>"#,
+        lang_toggle = lang_toggle,
+        email = html_escape(&email),
+        logout_title = l.logout_title,
+    );
+
+    let main_top_html = format!(
+        r#"{banner}
 {error_banner}
 {billing_card}
 <div class="flex flex-col md:flex-row md:items-end justify-between gap-md border-b border-outline-variant pb-md">
@@ -486,23 +497,20 @@ pub async fn me(
 <span>{connect_more}</span>
 </a>
 </div>"#,
-        lang_toggle = lang_toggle,
-        email = html_escape(&email),
-        logout_title = l.logout_title,
         heading = l.heading,
         subheading = l.subheading,
         connect_more = l.connect_more,
     );
 
-    let bottom_html = r#"<p class="text-on-surface-variant text-[13px] pt-lg"><a class="underline hover:text-primary" href="/privacy">Privacy Policy</a> · <a class="underline hover:text-primary" href="/terms">Terms of Service</a></p>
-</main>"#
+    let main_bottom_html = r#"<p class="text-on-surface-variant text-[13px] pt-lg"><a class="underline hover:text-primary" href="/privacy">Privacy Policy</a> · <a class="underline hover:text-primary" href="/terms">Terms of Service</a></p>"#
         .to_string();
 
     let data = app::me::MePageData {
         html_lang: l.html_lang.to_string(),
         page_title: l.page_title.to_string(),
-        top_html,
-        bottom_html,
+        header_html,
+        main_top_html,
+        main_bottom_html,
         calendars: cards,
         empty_state_html,
     };
