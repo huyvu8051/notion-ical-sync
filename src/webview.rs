@@ -1,11 +1,10 @@
 use axum::{
     extract::{Path, State},
     http::StatusCode,
-    response::{Html, IntoResponse},
+    response::IntoResponse,
     Json,
 };
 use axum_oidc::{EmptyAdditionalClaims, OidcClaims};
-use leptos::prelude::*;
 use serde::Deserialize;
 use tracing::error;
 
@@ -198,7 +197,8 @@ pub async fn handle_webview_page(
     claims: OidcClaims<EmptyAdditionalClaims>,
     Path(public_id): Path<String>,
     lang: crate::i18n::Lang,
-) -> impl IntoResponse {
+    request: axum::extract::Request,
+) -> axum::response::Response {
     let cal = match require_owned_calendar(&state, &claims, &public_id, lang).await {
         Ok(cal) => cal,
         // Unlike the JSON API handlers below (which correctly return a bare
@@ -225,43 +225,9 @@ pub async fn handle_webview_page(
     let lang_toggle = crate::i18n::lang_toggle(lang, &format!("/app/{}", public_id));
 
     let events_url = format!("/app/{}/api/events", public_id);
-    Html(format!(
-        r##"<!doctype html>
-<html lang="{html_lang}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>{title} — NotionCal</title>
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.15/index.global.min.css">
-<script src="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.15/index.global.min.js"></script>
-<link rel="stylesheet" href="/assets/style-webview.css">
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Geist:wght@400;500&family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&icon_names=add,arrow_back,arrow_forward,calendar_add_on,calendar_month,calendar_today,check_circle,close,content_copy,database,error,event_available,link,login,logout,open_in_new,security,sync,sync_alt,verified,warning&display=swap" rel="stylesheet">
-<style>
-body {{ background-color: #fbf9f9; color: #1b1c1c; -webkit-font-smoothing: antialiased; }}
-.material-symbols-outlined {{ font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24; vertical-align: middle; font-size: 20px; }}
-.modal-shadow {{ box-shadow: 0px 4px 12px rgba(0, 0, 0, 0.05); }}
-#calendar {{ max-width: 1100px; margin: 0 auto; padding: 24px; }}
-.fc {{ --fc-border-color: #e5e5e5; --fc-button-bg-color: #fff; --fc-button-border-color: #e5e5e5; --fc-button-text-color: #1b1c1c;
-  --fc-button-active-bg-color: #000; --fc-button-active-border-color: #000; --fc-today-bg-color: #f5f3f3; font-family: 'Inter', sans-serif; }}
-.fc .fc-button {{ box-shadow: none !important; text-transform: none; font-weight: 500; }}
-/* FullCalendar's default toolbar (prev/next/today | title | month/week/list)
-   has a natural min-width around 545px from its button labels alone — it
-   doesn't reflow on its own, so below that it either overflows or crams
-   together. Let it wrap onto its own rows instead, and shrink the header's
-   own spacing/text so both fit on real phone widths (~375-430px). */
-@media (max-width: 640px) {{
-  #calendar {{ padding: 12px; }}
-  .fc-header-toolbar {{ flex-wrap: wrap; row-gap: 8px; justify-content: center !important; }}
-  .fc-toolbar-chunk {{ display: flex; flex-wrap: wrap; justify-content: center; gap: 4px; }}
-  .fc-toolbar-title {{ font-size: 1.1em !important; }}
-  .fc .fc-button {{ padding: 4px 8px !important; font-size: 0.8em !important; }}
-  header.h-16 {{ padding-left: 12px; padding-right: 12px; }}
-  header .text-h1 {{ font-size: 18px; max-width: 40vw; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }}
-}}
-@media (max-width: 420px) {{
-  header .back-label {{ display: none; }}
-}}
-</style>
-</head>
-<body class="bg-background text-on-surface">
-<header class="h-16 flex items-center justify-between px-lg border-b border-outline-variant bg-surface">
+
+    let top_html = format!(
+        r##"<header class="h-16 flex items-center justify-between px-lg border-b border-outline-variant bg-surface">
 <div class="flex items-center gap-md">
 <a class="flex items-center gap-xs text-on-surface-variant hover:text-primary transition-colors text-label-md" href="/me">
 <span class="material-symbols-outlined">arrow_back</span>
@@ -357,22 +323,10 @@ body {{ background-color: #fbf9f9; color: #1b1c1c; -webkit-font-smoothing: antia
 <span class="material-symbols-outlined text-[14px]">open_in_new</span>
 </a>
 </div>
-<div class="px-lg py-md bg-surface-container-low flex items-center justify-between">
-{delete_button}
-<div class="flex items-center gap-md ml-auto">
-<button class="px-md h-10 border border-outline-variant rounded-lg bg-white hover:bg-surface-container-low text-label-md transition-colors" onclick="closeModal()">{cancel_btn}</button>
-<button class="bg-primary text-on-primary px-lg h-10 rounded-lg text-label-md hover:opacity-90 transition-opacity" onclick="saveFromModal()">{save_btn}</button>
-</div>
-</div>
-</div>
-</div>
-
-<script>{js}</script>
-</body></html>"##,
-        html_lang = l.html_lang,
+<div class="px-lg py-md bg-surface-container-low flex items-center justify-between">"##,
+        back_to_all = l.back_to_all,
         title = html_escape(&calendar_name),
         lang_toggle = lang_toggle,
-        back_to_all = l.back_to_all,
         add_event_btn = l.add_event_btn,
         modal_title_add = l.modal_title_add,
         event_name_label = l.event_name_label,
@@ -401,21 +355,40 @@ body {{ background-color: #fbf9f9; color: #1b1c1c; -webkit-font-smoothing: antia
         reminder_1hour = l.reminder_1hour,
         travel_time_label = l.travel_time_label,
         open_in_notion = l.open_in_notion,
-        delete_button = view! {
-            <islands::ConfirmActionButton
-                id="modal-delete-btn".to_string()
-                label=l.delete_btn.to_string()
-                confirm_label=l.confirm_delete_event.to_string()
-                class="text-error text-label-md hover:underline hidden".to_string()
-                on_confirm_fn="deleteFromModal".to_string()
-            />
-        }
-        .to_html(),
+    );
+
+    let bottom_html = format!(
+        r#"<div class="flex items-center gap-md ml-auto">
+<button class="px-md h-10 border border-outline-variant rounded-lg bg-white hover:bg-surface-container-low text-label-md transition-colors" onclick="closeModal()">{cancel_btn}</button>
+<button class="bg-primary text-on-primary px-lg h-10 rounded-lg text-label-md hover:opacity-90 transition-opacity" onclick="saveFromModal()">{save_btn}</button>
+</div>
+</div>
+</div>
+</div>"#,
         cancel_btn = l.cancel_btn,
         save_btn = l.save_btn,
-        js = webview_js(&events_url, l),
-    ))
-    .into_response()
+    );
+
+    let data = app::webview::WebviewPageData {
+        html_lang: l.html_lang.to_string(),
+        // Escaped here, not left for crates/app's Shell to escape — `title`
+        // is embedded into `head_html`'s `<title>` tag as raw text (head
+        // isn't part of the hydrated Leptos tree, so it can't auto-escape
+        // like a real view! text node would), and calendar_name comes from
+        // a user-controlled Notion database name, unlike every other
+        // migrated page's title so far.
+        title: html_escape(&calendar_name),
+        top_html,
+        bottom_html,
+        delete_btn_label: l.delete_btn.to_string(),
+        confirm_delete_event_label: l.confirm_delete_event.to_string(),
+        js: webview_js(&events_url, l),
+    };
+    let handler = leptos_axum::render_app_to_stream(move || {
+        let data = data.clone();
+        leptos::view! { <app::webview::WebviewShell data=data/> }
+    });
+    handler(request).await
 }
 
 /// Escapes a Rust string for safe interpolation inside a single-quoted JS
