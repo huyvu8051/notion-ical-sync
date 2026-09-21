@@ -43,10 +43,18 @@ fn NotYetMigratedFallback() -> impl IntoView {
     #[cfg(feature = "hydrate")]
     {
         let location = leptos_router::hooks::use_location();
-        let path = format!("{}{}", location.pathname.get_untracked(), location.search.get_untracked());
-        if let Some(window) = web_sys::window() {
-            let _ = window.location().replace(&path);
-        }
+        Effect::new(move |_| {
+            let pathname = location.pathname.get();
+            let search = location.search.get();
+            let path = if search.is_empty() {
+                pathname
+            } else {
+                format!("{pathname}?{search}")
+            };
+            if let Some(window) = web_sys::window() {
+                let _ = window.location().replace(&path);
+            }
+        });
     }
 }
 
