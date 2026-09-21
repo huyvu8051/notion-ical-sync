@@ -93,6 +93,8 @@ body { background-color: #fbf9f9; color: #1b1c1c; -webkit-font-smoothing: antial
 .fc { --fc-border-color: #c4c7c7; --fc-button-bg-color: #fff; --fc-button-border-color: #c4c7c7; --fc-button-text-color: #1b1c1c;
   --fc-button-active-bg-color: #000; --fc-button-active-border-color: #000; --fc-today-bg-color: #f5f3f3; font-family: 'Inter', sans-serif; }
 .fc .fc-button { box-shadow: none !important; text-transform: none; font-weight: 500; }
+.fc .fc-button-primary:not(:disabled).fc-button-active,
+.fc .fc-button-primary:not(:disabled):active { color: #fff; }
 @media (max-width: 640px) {
   #calendar { padding: 12px; }
   .fc-header-toolbar { flex-wrap: wrap; row-gap: 8px; justify-content: center !important; }
