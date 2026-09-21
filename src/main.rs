@@ -114,19 +114,6 @@ async fn main() -> anyhow::Result<()> {
          input with no autocomplete",
     );
 
-    let password_enc_key = env::var("CALDAV_PASSWORD_ENC_KEY")
-        .ok()
-        .and_then(|b64| {
-            use base64::Engine;
-            base64::engine::general_purpose::STANDARD.decode(b64).ok()
-        })
-        .and_then(|bytes| <[u8; 32]>::try_from(bytes).ok());
-    warn_if_unconfigured(
-        &password_enc_key,
-        "CALDAV_PASSWORD_ENC_KEY not set (or not valid base64 for 32 bytes); \"Hiện mật khẩu\" \
-         will be unavailable until it's configured — \"Tạo lại mật khẩu\" still works",
-    );
-
     let stripe = billing::StripeConfig::from_env();
     warn_if_unconfigured(
         &stripe,
@@ -155,7 +142,6 @@ async fn main() -> anyhow::Result<()> {
         notion_oauth,
         notion_api_base_url,
         mapbox_token,
-        password_enc_key,
         stripe,
         email,
         admin_secret,

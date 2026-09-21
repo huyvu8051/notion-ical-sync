@@ -153,7 +153,6 @@ async fn test_state_multi(calendars: &[(&str, &str)], allow_writes: CaldavAllowW
         None,
         None,
         None,
-        None,
     )
 }
 
@@ -812,7 +811,6 @@ async fn test_calendars_propfind_scoped_to_authenticated_calendar_not_whole_acco
         None,
         None,
         "https://api.notion.com".to_string(),
-        None,
         None,
         None,
         None,

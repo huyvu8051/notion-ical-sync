@@ -53,8 +53,6 @@ pub(crate) enum OauthError {
     CalendarNotFound,
     AccessDenied,
     FailedToDeleteCalendar,
-    RevealPasswordNotConfigured,
-    PasswordPredatesReveal,
     FailedToRegeneratePassword,
     BillingNotConfigured,
     FailedToCreateCheckoutSession,
@@ -98,18 +96,6 @@ impl OauthError {
             (Self::AccessDenied, Lang::En) => "You don't have access to this calendar.".to_string(),
             (Self::FailedToDeleteCalendar, Lang::Vi) => "Không thể xoá calendar này.".to_string(),
             (Self::FailedToDeleteCalendar, Lang::En) => "Failed to delete this calendar.".to_string(),
-            (Self::RevealPasswordNotConfigured, Lang::Vi) => {
-                "Tính năng hiện mật khẩu chưa được cấu hình trên server này — dùng \"Tạo lại mật khẩu\" thay thế.".to_string()
-            }
-            (Self::RevealPasswordNotConfigured, Lang::En) => {
-                "The reveal-password feature isn't configured on this server — use \"Regenerate password\" instead.".to_string()
-            }
-            (Self::PasswordPredatesReveal, Lang::Vi) => {
-                "Mật khẩu này được tạo trước khi tính năng \"Hiện lại\" ra mắt nên không thể khôi phục — hãy dùng \"Tạo lại mật khẩu\".".to_string()
-            }
-            (Self::PasswordPredatesReveal, Lang::En) => {
-                "This password was created before the \"reveal\" feature shipped, so it can't be recovered — use \"Regenerate password\" instead.".to_string()
-            }
             (Self::FailedToRegeneratePassword, Lang::Vi) => "Không thể tạo lại mật khẩu.".to_string(),
             (Self::FailedToRegeneratePassword, Lang::En) => "Failed to regenerate the password.".to_string(),
             (Self::BillingNotConfigured, Lang::Vi) => "Tính năng thanh toán chưa được cấu hình trên server này.".to_string(),

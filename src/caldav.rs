@@ -202,7 +202,6 @@ pub struct AppState {
     pub notion_oauth: Option<crate::pages::connect_notion::NotionOAuthConfig>,
     pub notion_api_base_url: String,
     pub mapbox_token: Option<String>,
-    pub password_enc_key: Option<[u8; 32]>,
     pub stripe: Option<crate::billing::StripeConfig>,
     pub email: Option<crate::email::EmailConfig>,
     pub admin_secret: Option<String>,
@@ -241,7 +240,6 @@ impl AppState {
         notion_oauth: Option<crate::pages::connect_notion::NotionOAuthConfig>,
         notion_api_base_url: String,
         mapbox_token: Option<String>,
-        password_enc_key: Option<[u8; 32]>,
         stripe: Option<crate::billing::StripeConfig>,
         email: Option<crate::email::EmailConfig>,
         admin_secret: Option<String>,
@@ -258,7 +256,6 @@ impl AppState {
             notion_oauth,
             notion_api_base_url,
             mapbox_token,
-            password_enc_key,
             stripe,
             email,
             admin_secret,
@@ -2515,10 +2512,6 @@ pub fn create_app(
         .route(
             "/me/calendars/{public_id}/delete",
             post(crate::pages::me::delete_calendar),
-        )
-        .route(
-            "/me/calendars/{public_id}/reveal-password",
-            post(crate::pages::me::reveal_password),
         )
         .route(
             "/me/calendars/{public_id}/regenerate-password",

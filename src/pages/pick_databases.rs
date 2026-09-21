@@ -4,7 +4,7 @@ use axum_oidc::{EmptyAdditionalClaims, OidcClaims};
 use serde::Deserialize;
 use tracing::error;
 
-use crate::crypto::{encrypt_password, generate_token, hash_password};
+use crate::crypto::{generate_token, hash_password};
 use crate::error_page::{error_page, OauthError};
 use crate::pages::connect_notion::NOTION_VERSION;
 use crate::session::find_or_create_user;
@@ -245,15 +245,9 @@ pub async fn create_calendars(
                 continue;
             }
         };
-        let password_encrypted = state
-            .password_enc_key
-            .as_ref()
-            .and_then(|key| encrypt_password(key, &caldav_password))
-            .unwrap_or_default();
-
         let result = sqlx::query(
-            "INSERT INTO calendars (user_id, notion_connection_id, database_id, public_id, data_source_id, date_property, display_name, caldav_username, caldav_password_hash, caldav_password_encrypted)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+            "INSERT INTO calendars (user_id, notion_connection_id, database_id, public_id, data_source_id, date_property, display_name, caldav_username, caldav_password_hash)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
              ON CONFLICT (user_id, database_id) DO NOTHING",
         )
         .bind(user_id)
@@ -265,7 +259,6 @@ pub async fn create_calendars(
         .bind(&candidate.title)
         .bind(&caldav_username)
         .bind(&password_hash)
-        .bind(&password_encrypted)
         .execute(&state.db)
         .await;
 

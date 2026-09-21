@@ -13,8 +13,6 @@ pub struct CalendarCardData {
     pub username_row_html: String,
     pub password_row_html: String,
     pub paste_hint: String,
-    pub reveal_password_label: String,
-    pub reveal_password_action: String,
     pub regenerate_password_label: String,
     pub regenerate_confirm_label: String,
     pub regenerate_action: String,
@@ -131,9 +129,6 @@ fn CalendarCard(data: CalendarCardData) -> impl IntoView {
             {(!data.password_row_html.is_empty()).then(|| view! { <div inner_html=data.password_row_html.clone()></div> })}
             <p class="text-on-surface-variant text-[13px] mt-sm">{data.paste_hint}</p>
             <div class="flex items-center gap-md mt-md pt-md border-t border-outline-variant">
-                <form method="post" action=data.reveal_password_action>
-                    <button type="submit" class="text-label-md text-secondary hover:underline">{data.reveal_password_label}</button>
-                </form>
                 <ConfirmButton
                     action=data.regenerate_action
                     label=data.regenerate_password_label
@@ -177,8 +172,6 @@ mod tests {
             username_row_html: "<div>username row</div>".to_string(),
             password_row_html: String::new(),
             paste_hint: "paste hint".to_string(),
-            reveal_password_label: "Hiện mật khẩu".to_string(),
-            reveal_password_action: "/me/calendars/abc123/reveal-password".to_string(),
             regenerate_password_label: "Tạo lại mật khẩu".to_string(),
             regenerate_confirm_label: "Tạo mật khẩu mới?".to_string(),
             regenerate_action: "/me/calendars/abc123/regenerate-password".to_string(),

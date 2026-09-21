@@ -5,7 +5,7 @@ use axum::response::{IntoResponse, Redirect};
 use axum_oidc::{EmptyAdditionalClaims, OidcClaims};
 use tracing::error;
 
-use crate::crypto::{decrypt_password, encrypt_password, generate_token, hash_password};
+use crate::crypto::{generate_token, hash_password};
 use crate::error_page::{error_page, OauthError};
 use crate::session::{find_or_create_user, html_escape, owned_calendar_or_error, AppConfig};
 use crate::AppState;
@@ -21,7 +21,6 @@ struct MeLabels {
     active_badge: &'static str,
     open_calendar: &'static str,
     paste_hint: &'static str,
-    reveal_password: &'static str,
     regenerate_password: &'static str,
     regenerate_confirm: &'static str,
     view_log: &'static str,
@@ -50,7 +49,6 @@ const ME_LABELS_VI: MeLabels = MeLabels {
     active_badge: "Đang hoạt động",
     open_calendar: "Mở lịch",
     paste_hint: "Dán link này vào Apple Calendar, Google Calendar hoặc bất kỳ ứng dụng CalDAV nào",
-    reveal_password: "Hiện mật khẩu",
     regenerate_password: "Tạo lại mật khẩu",
     regenerate_confirm: "Tạo mật khẩu mới? Mật khẩu cũ sẽ ngừng hoạt động ngay.",
     view_log: "Xem log đồng bộ",
@@ -81,7 +79,6 @@ const ME_LABELS_EN: MeLabels = MeLabels {
     active_badge: "Active",
     open_calendar: "Open calendar",
     paste_hint: "Paste this link into Apple Calendar, Google Calendar, or any CalDAV app",
-    reveal_password: "Show password",
     regenerate_password: "Regenerate password",
     regenerate_confirm: "Generate a new password? The old one will stop working immediately.",
     view_log: "View sync log",
@@ -250,8 +247,6 @@ pub async fn me(
                 username_row_html: copy_row(l.username_label, caldav_username),
                 password_row_html,
                 paste_hint: l.paste_hint.to_string(),
-                reveal_password_label: l.reveal_password.to_string(),
-                reveal_password_action: format!("/me/calendars/{public_id}/reveal-password"),
                 regenerate_password_label: l.regenerate_password.to_string(),
                 regenerate_confirm_label: l.regenerate_confirm.to_string(),
                 regenerate_action: format!("/me/calendars/{public_id}/regenerate-password"),
@@ -345,48 +340,6 @@ pub async fn delete_calendar(
     Redirect::to("/me").into_response()
 }
 
-pub async fn reveal_password(
-    State(state): State<AppState>,
-    claims: OidcClaims<EmptyAdditionalClaims>,
-    session: tower_sessions::Session,
-    lang: crate::i18n::Lang,
-    Path(public_id): Path<String>,
-) -> impl IntoResponse {
-    let cal = match owned_calendar_or_error(&state, &claims, &public_id, lang).await {
-        Ok(cal) => cal,
-        Err(resp) => return resp,
-    };
-
-    let Some(key) = state.password_enc_key.as_ref() else {
-        return error_page(lang, OauthError::RevealPasswordNotConfigured);
-    };
-
-    let encrypted: String =
-        sqlx::query_scalar("SELECT caldav_password_encrypted FROM calendars WHERE id = $1")
-            .bind(cal.id)
-            .fetch_one(&state.db)
-            .await
-            .unwrap_or_default();
-
-    let Some(password) = (!encrypted.is_empty())
-        .then(|| decrypt_password(key, &encrypted))
-        .flatten()
-    else {
-        return error_page(lang, OauthError::PasswordPredatesReveal);
-    };
-
-    let stash = vec![(
-        cal.display_name.clone(),
-        cal.caldav_username.clone(),
-        password,
-    )];
-    if let Err(e) = session.insert("new_calendar_credentials", &stash).await {
-        error!("failed to stash revealed password in session: {}", e);
-    }
-
-    Redirect::to("/me").into_response()
-}
-
 pub async fn regenerate_password(
     State(state): State<AppState>,
     claims: OidcClaims<EmptyAdditionalClaims>,
@@ -403,15 +356,9 @@ pub async fn regenerate_password(
     let Ok(password_hash) = hash_password(&new_password) else {
         return error_page(lang, OauthError::Generic);
     };
-    let password_encrypted = state
-        .password_enc_key
-        .as_ref()
-        .and_then(|key| encrypt_password(key, &new_password))
-        .unwrap_or_default();
 
-    if let Err(e) = sqlx::query("UPDATE calendars SET caldav_password_hash = $1, caldav_password_encrypted = $2 WHERE id = $3")
+    if let Err(e) = sqlx::query("UPDATE calendars SET caldav_password_hash = $1 WHERE id = $2")
         .bind(&password_hash)
-        .bind(&password_encrypted)
         .bind(cal.id)
         .execute(&state.db)
         .await
