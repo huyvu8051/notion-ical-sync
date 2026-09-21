@@ -98,6 +98,10 @@ pub struct AppBaseUrl(pub String);
 pub struct StripeConfigured(pub bool);
 
 #[cfg(feature = "ssr")]
+#[derive(Clone)]
+pub struct MapboxToken(pub Option<String>);
+
+#[cfg(feature = "ssr")]
 pub(crate) fn query_param_i64(name: &str) -> Option<i64> {
     let parts = leptos::prelude::use_context::<axum::http::request::Parts>()?;
     let query = parts.uri.query()?;

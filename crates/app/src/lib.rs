@@ -63,6 +63,7 @@ pub fn App() -> impl IntoView {
                 <Route path=(StaticSegment("connect"), StaticSegment("notion")) view=connect_notion::ConnectNotionRoutePage/>
                 <Route path=(StaticSegment("connect"), StaticSegment("notion"), StaticSegment("databases")) view=pick_databases::PickDatabasesRoutePage/>
                 <Route path=StaticSegment("me") view=me::MeRoutePage/>
+                <Route path=(StaticSegment("app"), leptos_router::ParamSegment("public_id")) view=webview::WebviewRoutePage/>
             </Routes>
         </Router>
     }
@@ -72,6 +73,7 @@ pub fn App() -> impl IntoView {
 #[wasm_bindgen::prelude::wasm_bindgen]
 pub fn hydrate() {
     console_error_panic_hook::set_once();
+    webview::install_js_bridge();
     leptos::mount::hydrate_body(App);
 }
 

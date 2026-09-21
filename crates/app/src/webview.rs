@@ -111,38 +111,302 @@ body { background-color: #fbf9f9; color: #1b1c1c; -webkit-font-smoothing: antial
 }
 "#;
 
+// `leptos_meta::Script src="..."` inserts a real <script> element into a live
+// document on client-side SPA navigation (no full reload), where dynamically
+// created scripts load and execute independently of both document order and
+// of when Effects in the newly-mounted component run — so the Effect below
+// that calls `window.webview_init_calendar` can fire before static/webview.js
+// has finished loading. This bootstrap has no `src`, so it's inserted with
+// literal text content and executes synchronously the moment it's appended —
+// no network round trip, so no race. It installs queueing stubs for the three
+// functions Rust calls into, then kicks off loading the real static/webview.js
+// (which overwrites them with the real implementations and replays whatever
+// config was queued, if any — see the bottom of that file).
+const WEBVIEW_JS_BOOTSTRAP: &str = r#"
+(function() {
+  if (window.__webviewBridgeInit) { return; }
+  window.__webviewBridgeInit = true;
+  window.__webviewPendingConfig = null;
+  window.webview_init_calendar = function(cfg) { window.__webviewPendingConfig = cfg; };
+  window.webview_destroy_calendar = function() { window.__webviewPendingConfig = null; };
+  window.webview_refetch_calendar_events = function() {};
+  var s = document.createElement('script');
+  s.src = '/static/webview.js';
+  document.head.appendChild(s);
+})();
+"#;
+
 use crate::page_shell::GOOGLE_FONTS_HREF;
 
-#[component]
-pub fn WebviewShell(data: WebviewPageData) -> impl IntoView {
-    let html_lang = data.html_lang.clone();
+#[cfg(feature = "ssr")]
+fn webview_labels_vi() -> WebviewLabels {
+    WebviewLabels {
+        modal_title_add: "Thêm sự kiện".to_string(),
+        modal_title_edit: "Chỉnh sửa sự kiện".to_string(),
+        event_name_label: "Tên sự kiện".to_string(),
+        event_name_placeholder: "Nhập tên sự kiện...".to_string(),
+        start_label: "Bắt đầu".to_string(),
+        end_label: "Kết thúc".to_string(),
+        allday_label: "Cả ngày".to_string(),
+        location_label: "Địa điểm".to_string(),
+        location_placeholder: "Nhập địa điểm...".to_string(),
+        location_no_results: "Không tìm thấy kết quả".to_string(),
+        notes_label: "Ghi chú".to_string(),
+        notes_placeholder: "Nhập ghi chú...".to_string(),
+        priority_label: "Mức độ ưu tiên".to_string(),
+        priority_none: "Không đặt".to_string(),
+        priority_high: "Cao".to_string(),
+        priority_medium: "Trung bình".to_string(),
+        priority_low: "Thấp".to_string(),
+        busy_label: "Trạng thái".to_string(),
+        busy_unset: "Không đặt".to_string(),
+        busy_busy: "Bận".to_string(),
+        busy_free: "Rảnh".to_string(),
+        reminder_label: "Nhắc nhở".to_string(),
+        reminder_none: "Không nhắc".to_string(),
+        reminder_5min: "5 phút trước".to_string(),
+        reminder_15min: "15 phút trước".to_string(),
+        reminder_30min: "30 phút trước".to_string(),
+        reminder_1hour: "1 giờ trước".to_string(),
+        reminder_1day: "1 ngày trước".to_string(),
+        reminder_2days: "2 ngày trước".to_string(),
+        reminder_1week: "1 tuần trước".to_string(),
+        reminder_custom: "Tuỳ chỉnh...".to_string(),
+        reminder_custom_minutes: "Phút".to_string(),
+        reminder_custom_hours: "Giờ".to_string(),
+        reminder_custom_days: "Ngày".to_string(),
+        travel_time_label: "Thời gian di chuyển".to_string(),
+        travel_none: "Không đặt".to_string(),
+        travel_0min: "0 phút".to_string(),
+        travel_15min: "15 phút".to_string(),
+        travel_30min: "30 phút".to_string(),
+        travel_45min: "45 phút".to_string(),
+        travel_1hour: "1 giờ".to_string(),
+        travel_90min: "1.5 giờ".to_string(),
+        travel_custom: "Tuỳ chỉnh...".to_string(),
+        open_in_notion: "Mở trong Notion".to_string(),
+        delete_btn: "Xoá".to_string(),
+        cancel_btn: "Huỷ".to_string(),
+        save_btn: "Lưu".to_string(),
+        saving_label: "Đang lưu...".to_string(),
+        confirm_delete_event: "Xoá sự kiện này?".to_string(),
+        repeat_display_prefix: "Lặp lại: ".to_string(),
+        attendees_display_prefix: "Người được mời: ".to_string(),
+        alert_enter_title: "Nhập tên sự kiện".to_string(),
+        alert_pick_start: "Chọn ngày bắt đầu".to_string(),
+        alert_update_failed: "Cập nhật thất bại".to_string(),
+        alert_create_failed: "Tạo event thất bại".to_string(),
+        alert_delete_failed: "Xoá thất bại".to_string(),
+        alert_quota_exceeded: "Đã đạt giới hạn 10 sự kiện miễn phí hôm nay. Nâng cấp $1/năm để bỏ giới hạn."
+            .to_string(),
+    }
+}
 
-    let json = serde_json::to_string(&data).unwrap_or_default();
-    let json_safe = json.replace('<', "\\u003c");
-    let inline_data_script = format!("window.__WEBVIEW_DATA__ = {json_safe};");
+#[cfg(feature = "ssr")]
+fn webview_labels_en() -> WebviewLabels {
+    WebviewLabels {
+        modal_title_add: "Add event".to_string(),
+        modal_title_edit: "Edit event".to_string(),
+        event_name_label: "Event name".to_string(),
+        event_name_placeholder: "Enter event name...".to_string(),
+        start_label: "Start".to_string(),
+        end_label: "End".to_string(),
+        allday_label: "All day".to_string(),
+        location_label: "Location".to_string(),
+        location_placeholder: "Enter location...".to_string(),
+        location_no_results: "No results found".to_string(),
+        notes_label: "Notes".to_string(),
+        notes_placeholder: "Enter notes...".to_string(),
+        priority_label: "Priority".to_string(),
+        priority_none: "Not set".to_string(),
+        priority_high: "High".to_string(),
+        priority_medium: "Medium".to_string(),
+        priority_low: "Low".to_string(),
+        busy_label: "Status".to_string(),
+        busy_unset: "Not set".to_string(),
+        busy_busy: "Busy".to_string(),
+        busy_free: "Free".to_string(),
+        reminder_label: "Reminder".to_string(),
+        reminder_none: "No reminder".to_string(),
+        reminder_5min: "5 minutes before".to_string(),
+        reminder_15min: "15 minutes before".to_string(),
+        reminder_30min: "30 minutes before".to_string(),
+        reminder_1hour: "1 hour before".to_string(),
+        reminder_1day: "1 day before".to_string(),
+        reminder_2days: "2 days before".to_string(),
+        reminder_1week: "1 week before".to_string(),
+        reminder_custom: "Custom...".to_string(),
+        reminder_custom_minutes: "Minutes".to_string(),
+        reminder_custom_hours: "Hours".to_string(),
+        reminder_custom_days: "Days".to_string(),
+        travel_time_label: "Travel time".to_string(),
+        travel_none: "Not set".to_string(),
+        travel_0min: "0 minutes".to_string(),
+        travel_15min: "15 minutes".to_string(),
+        travel_30min: "30 minutes".to_string(),
+        travel_45min: "45 minutes".to_string(),
+        travel_1hour: "1 hour".to_string(),
+        travel_90min: "1.5 hours".to_string(),
+        travel_custom: "Custom...".to_string(),
+        open_in_notion: "Open in Notion".to_string(),
+        delete_btn: "Delete".to_string(),
+        cancel_btn: "Cancel".to_string(),
+        save_btn: "Save".to_string(),
+        saving_label: "Saving...".to_string(),
+        confirm_delete_event: "Delete this event?".to_string(),
+        repeat_display_prefix: "Repeats: ".to_string(),
+        attendees_display_prefix: "Invited: ".to_string(),
+        alert_enter_title: "Enter an event name".to_string(),
+        alert_pick_start: "Pick a start date".to_string(),
+        alert_update_failed: "Update failed".to_string(),
+        alert_create_failed: "Failed to create event".to_string(),
+        alert_delete_failed: "Delete failed".to_string(),
+        alert_quota_exceeded: "You've hit today's free limit of 10 events. Upgrade for $1/year to remove it."
+            .to_string(),
+    }
+}
 
-    let fc_locale_script = if data.js_config.locale == "vi" {
-        r#"<script src="https://cdn.jsdelivr.net/npm/@fullcalendar/core@6.1.15/locales/vi.global.min.js"></script>"#
+#[cfg(feature = "ssr")]
+pub fn labels_for(lang: &str) -> WebviewLabels {
+    if lang == "en" {
+        webview_labels_en()
     } else {
-        ""
-    };
+        webview_labels_vi()
+    }
+}
 
-    let head_html = format!(
-        r#"<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>{title} — NotionCal</title><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.15/index.global.min.css"><script src="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.15/index.global.min.js"></script>{fc_locale_script}<link rel="stylesheet" href="/assets/style-auth-a.css"><link href="{fonts}" rel="stylesheet"><style>{style}</style><script>{data_script}</script><script src="/static/webview.js" defer></script><script type="module">import init, {{ hydrate_webview, webview_open_create_modal, webview_open_edit_modal }} from '/pkg/app.js'; init('/pkg/app_bg.wasm').then(() => {{ hydrate_webview(JSON.stringify(window.__WEBVIEW_DATA__)); window.webview_open_create_modal = webview_open_create_modal; window.webview_open_edit_modal = webview_open_edit_modal; }});</script>"#,
-        title = data.title,
-        fonts = GOOGLE_FONTS_HREF,
-        style = WEBVIEW_HEAD_STYLE,
-        data_script = inline_data_script,
+#[cfg(feature = "ssr")]
+fn back_to_all_label(lang: &str) -> &'static str {
+    if lang == "en" {
+        "All calendars"
+    } else {
+        "Tất cả lịch"
+    }
+}
+
+#[cfg(feature = "ssr")]
+fn add_event_btn_label(lang: &str) -> &'static str {
+    if lang == "en" {
+        "Add event"
+    } else {
+        "Thêm sự kiện"
+    }
+}
+
+#[cfg(feature = "ssr")]
+async fn owned_calendar_row(
+    pool: &sqlx::PgPool,
+    claims: &axum_oidc::OidcClaims<axum_oidc::EmptyAdditionalClaims>,
+    public_id: &str,
+) -> Result<(String, String), ServerFnError> {
+    let sub = claims.subject().as_str();
+    let row: Option<(i64, String)> = sqlx::query_as(
+        "SELECT id, display_name FROM calendars WHERE public_id = $1 AND user_id = \
+         (SELECT id FROM users WHERE keycloak_sub = $2)",
+    )
+    .bind(public_id)
+    .bind(sub)
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| ServerFnError::new(format!("failed to look up calendar: {e}")))?;
+    match row {
+        Some((_, display_name)) => Ok((public_id.to_string(), display_name)),
+        None => Err(ServerFnError::new("calendar not found")),
+    }
+}
+
+#[server]
+async fn load_webview_data(public_id: String) -> Result<WebviewPageData, ServerFnError> {
+    let claims: axum_oidc::OidcClaims<axum_oidc::EmptyAdditionalClaims> =
+        leptos_axum::extract().await?;
+    let pool = use_context::<sqlx::PgPool>()
+        .ok_or_else(|| ServerFnError::new("missing db pool context"))?;
+
+    let (public_id, display_name) = owned_calendar_row(&pool, &claims, &public_id).await?;
+
+    let calendar_name = if display_name.is_empty() {
+        "Notion Calendar".to_string()
+    } else {
+        display_name
+    };
+    let lang = crate::page_shell::detect_lang();
+    let email = claims.email().map(|e| e.as_str()).unwrap_or("");
+    let top_nav = crate::page_shell::top_nav_html(email, lang, &format!("/app/{public_id}"));
+
+    let events_url = format!("/app/{public_id}/api/events");
+    let escaped_title = crate::page_shell::html_escape(&calendar_name);
+
+    let header_html = format!(
+        r##"{top_nav}
+<header class="h-16 flex items-center justify-between px-lg border-b border-outline-variant bg-surface">
+<div class="flex items-center gap-md">
+<a class="flex items-center gap-xs text-on-surface-variant hover:text-primary transition-colors text-label-md" href="/me">
+<span class="material-symbols-outlined">arrow_back</span>
+<span class="back-label">{back_to_all}</span>
+</a>
+<div class="h-6 w-[1px] bg-outline-variant mx-sm"></div>
+<h1 class="text-h1 tracking-tight">{escaped_title}</h1>
+</div>
+<div class="flex items-center gap-md">
+<button class="bg-primary text-on-primary px-md h-10 flex items-center gap-xs text-label-md rounded-lg hover:opacity-90 transition-opacity" onclick="window.webview_open_create_modal('', '', false)">
+<span class="material-symbols-outlined">add</span>
+{add_event_btn}
+</button>
+</div>
+</header>"##,
+        back_to_all = back_to_all_label(lang),
+        add_event_btn = add_event_btn_label(lang),
     );
 
+    Ok(WebviewPageData {
+        html_lang: lang.to_string(),
+        title: escaped_title,
+        header_html,
+        events_url: events_url.clone(),
+        mapbox_token: use_context::<crate::page_shell::MapboxToken>().and_then(|v| v.0),
+        labels: labels_for(lang),
+        js_config: WebviewJsConfig {
+            events_url,
+            alert_update_date_failed: if lang == "en" {
+                "Failed to update date".to_string()
+            } else {
+                "Cập nhật ngày thất bại".to_string()
+            },
+            locale: lang.to_string(),
+        },
+    })
+}
+
+#[component]
+pub fn WebviewRoutePage() -> impl IntoView {
+    let params = leptos_router::hooks::use_params_map();
+    let public_id = move || params.with(|p| p.get("public_id").unwrap_or_default());
+    let data = Resource::new(public_id, load_webview_data);
     view! {
-        <!DOCTYPE html>
-        <html lang=html_lang>
-            <head inner_html=head_html></head>
-            <body class="bg-background text-on-surface">
-                <WebviewPage data=data/>
-            </body>
-        </html>
+        <leptos_meta::Style>{WEBVIEW_HEAD_STYLE}</leptos_meta::Style>
+        <leptos_meta::Link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.15/index.global.min.css"/>
+        <leptos_meta::Link rel="stylesheet" href="/assets/style-auth-a.css"/>
+        <leptos_meta::Link href=GOOGLE_FONTS_HREF rel="stylesheet"/>
+        // Bootstrap is inline (not `src=`) so it runs synchronously the instant
+        // it's inserted, regardless of whether this route was reached via a
+        // full page load or client-side SPA nav — see WEBVIEW_JS_BOOTSTRAP's
+        // doc comment for why a `src=` script here would race.
+        <leptos_meta::Script>{WEBVIEW_JS_BOOTSTRAP}</leptos_meta::Script>
+        <Suspense fallback=|| ()>
+            {move || data.get().map(|result| match result {
+                Ok(data) => view! {
+                    <leptos_meta::Html attr:lang=data.html_lang.clone()/>
+                    <leptos_meta::Title text=format!("{} — NotionCal", data.title.clone())/>
+                    <WebviewPage data=data/>
+                }.into_any(),
+                Err(_) => view! {
+                    <div class="flex flex-col items-center justify-center py-3xl gap-md text-center">
+                        <p class="text-on-surface-variant">"Không tìm thấy lịch này."</p>
+                        <a class="text-secondary underline" href="/me">"Quay lại"</a>
+                    </div>
+                }.into_any(),
+            })}
+        </Suspense>
     }
 }
 
@@ -191,7 +455,32 @@ thread_local! {
 }
 
 #[cfg(feature = "hydrate")]
-#[wasm_bindgen::prelude::wasm_bindgen]
+pub(crate) fn install_js_bridge() {
+    use wasm_bindgen::prelude::*;
+    use wasm_bindgen::JsCast;
+
+    let Some(window) = web_sys::window() else {
+        return;
+    };
+
+    let create: Closure<dyn Fn(String, String, bool)> = Closure::new(webview_open_create_modal);
+    let _ = js_sys::Reflect::set(
+        &window,
+        &JsValue::from_str("webview_open_create_modal"),
+        create.as_ref().unchecked_ref(),
+    );
+    create.forget();
+
+    let edit: Closure<dyn Fn(String)> = Closure::new(webview_open_edit_modal);
+    let _ = js_sys::Reflect::set(
+        &window,
+        &JsValue::from_str("webview_open_edit_modal"),
+        edit.as_ref().unchecked_ref(),
+    );
+    edit.forget();
+}
+
+#[cfg(feature = "hydrate")]
 pub fn webview_open_create_modal(start: String, end: String, all_day: bool) {
     MODAL_REQUEST_SETTER.with(|cell| {
         if let Some(setter) = cell.borrow().as_ref() {
@@ -201,7 +490,6 @@ pub fn webview_open_create_modal(start: String, end: String, all_day: bool) {
 }
 
 #[cfg(feature = "hydrate")]
-#[wasm_bindgen::prelude::wasm_bindgen]
 pub fn webview_open_edit_modal(event_json: String) {
     let Ok(data) = serde_json::from_str::<EditEventData>(&event_json) else {
         return;
@@ -218,6 +506,10 @@ pub fn webview_open_edit_modal(event_json: String) {
 extern "C" {
     #[wasm_bindgen(js_namespace = window, js_name = webview_refetch_calendar_events)]
     fn refetch_calendar_events();
+    #[wasm_bindgen(js_namespace = window, js_name = webview_init_calendar)]
+    fn webview_init_calendar(config_json: String);
+    #[wasm_bindgen(js_namespace = window, js_name = webview_destroy_calendar)]
+    fn webview_destroy_calendar();
 }
 
 fn to_date_only(s: &str) -> String {
@@ -353,6 +645,17 @@ struct EventPayload {
 pub fn WebviewPage(data: WebviewPageData) -> impl IntoView {
     let header_html = data.header_html.clone();
     let mapbox_token = data.mapbox_token.clone();
+
+    #[cfg(feature = "hydrate")]
+    {
+        let js_config_json = serde_json::to_string(&data.js_config).unwrap_or_default();
+        Effect::new(move |_| {
+            webview_init_calendar(js_config_json.clone());
+        });
+        on_cleanup(|| {
+            webview_destroy_calendar();
+        });
+    }
 
     let visible = RwSignal::new(false);
     let editing_id = RwSignal::new(None::<String>);
@@ -984,18 +1287,41 @@ fn local_to_utc_iso(local_value: &str) -> String {
     }
 }
 
-#[cfg(feature = "hydrate")]
-#[wasm_bindgen::prelude::wasm_bindgen]
-pub fn hydrate_webview(json: String) {
-    console_error_panic_hook::set_once();
-    let data: WebviewPageData =
-        serde_json::from_str(&json).expect("invalid webview page payload from server");
-    leptos::mount::hydrate_body(move || view! { <WebviewPage data=data.clone()/> });
-}
-
 #[cfg(all(test, feature = "ssr"))]
 mod tests {
     use super::*;
+
+    #[test]
+    fn static_webview_js_is_valid_javascript() {
+        use std::io::Write;
+        use std::process::{Command, Stdio};
+
+        if Command::new("node").arg("--version").output().is_err() {
+            eprintln!("skipping: node not installed");
+            return;
+        }
+
+        let js = include_str!("../../../static/webview.js");
+        let mut child = Command::new("node")
+            .arg("--check")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("failed to spawn node");
+        child
+            .stdin
+            .take()
+            .unwrap()
+            .write_all(js.as_bytes())
+            .unwrap();
+        let output = child.wait_with_output().unwrap();
+        assert!(
+            output.status.success(),
+            "static/webview.js has invalid JavaScript syntax: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
 
     fn sample_labels() -> WebviewLabels {
         WebviewLabels {
@@ -1082,18 +1408,6 @@ mod tests {
             .with(|| view! { <WebviewPage data=sample_data()/> }.to_html());
         assert!(html.contains("id=\"calendar\""));
         assert!(html.contains("Thêm sự kiện"));
-    }
-
-    #[test]
-    fn shell_embeds_data_and_is_script_breakout_safe() {
-        any_spawner::Executor::init_futures_executor().ok();
-        let html = leptos::prelude::Owner::new()
-            .with(|| view! { <WebviewShell data=sample_data()/> }.to_html());
-        assert!(html.contains("/app/test-id/api/events"));
-        assert!(html.contains("/static/webview.js"));
-        assert!(html.contains("fullcalendar@6.1.15"));
-        assert!(html.contains("&lt;Calendar&gt;"));
-        assert!(!html.contains("</script><script>alert"));
     }
 
     #[test]

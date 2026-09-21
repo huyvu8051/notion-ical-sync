@@ -8,7 +8,7 @@ use axum_oidc::{EmptyAdditionalClaims, OidcClaims};
 use serde::Deserialize;
 use tracing::error;
 
-use crate::pages::webview::labels_for;
+use app::webview::labels_for;
 use crate::session::require_owned_calendar;
 use crate::AppState;
 
@@ -93,7 +93,7 @@ pub async fn handle_create_event(
                 "daily quota exceeded",
             )
             .await;
-        let l = labels_for(lang);
+        let l = labels_for(lang.code());
         return (StatusCode::TOO_MANY_REQUESTS, l.alert_quota_exceeded).into_response();
     }
     let extra = crate::caldav::ExtraEventFields {
@@ -192,7 +192,7 @@ pub async fn handle_update_event(
                 "daily quota exceeded",
             )
             .await;
-        let l = labels_for(lang);
+        let l = labels_for(lang.code());
         return (StatusCode::TOO_MANY_REQUESTS, l.alert_quota_exceeded).into_response();
     }
     let extra = crate::caldav::ExtraEventFields {

@@ -2428,6 +2428,7 @@ pub fn create_app(
             "/connect/notion".to_string(),
             "/connect/notion/databases".to_string(),
             "/me".to_string(),
+            "/app/{public_id}".to_string(),
         ]),
     );
     let leptos_options = state.leptos_options.clone();
@@ -2438,6 +2439,7 @@ pub fn create_app(
         app::page_shell::NotionApiBaseUrl(state.notion_api_base_url.clone());
     let app_base_url_for_context = app::page_shell::AppBaseUrl(app_config.base_url.clone());
     let stripe_configured_for_context = app::page_shell::StripeConfigured(state.stripe.is_some());
+    let mapbox_token_for_context = app::page_shell::MapboxToken(state.mapbox_token.clone());
 
     let oidc_login_service = ServiceBuilder::new()
         .layer(HandleErrorLayer::new(|e: MiddlewareError| async move {
@@ -2540,6 +2542,7 @@ pub fn create_app(
         let notion_api_base_url = notion_api_base_url_for_context.clone();
         let app_base_url = app_base_url_for_context.clone();
         let stripe_configured = stripe_configured_for_context.clone();
+        let mapbox_token = mapbox_token_for_context.clone();
         move || {
             let leptos_options = leptos_options.clone();
             let db_pool = db_pool.clone();
@@ -2547,6 +2550,7 @@ pub fn create_app(
             let notion_api_base_url = notion_api_base_url.clone();
             let app_base_url = app_base_url.clone();
             let stripe_configured = stripe_configured.clone();
+            let mapbox_token = mapbox_token.clone();
             move |request: axum::extract::Request| {
                 let leptos_options = leptos_options.clone();
                 let db_pool = db_pool.clone();
@@ -2554,6 +2558,7 @@ pub fn create_app(
                 let notion_api_base_url = notion_api_base_url.clone();
                 let app_base_url = app_base_url.clone();
                 let stripe_configured = stripe_configured.clone();
+                let mapbox_token = mapbox_token.clone();
                 async move {
                     let handler = leptos_axum::render_app_to_stream_with_context(
                         move || {
@@ -2562,6 +2567,7 @@ pub fn create_app(
                             leptos::prelude::provide_context(notion_api_base_url.clone());
                             leptos::prelude::provide_context(app_base_url.clone());
                             leptos::prelude::provide_context(stripe_configured.clone());
+                            leptos::prelude::provide_context(mapbox_token.clone());
                         },
                         move || app::shell(leptos_options.clone()),
                     );
@@ -2602,10 +2608,7 @@ pub fn create_app(
             "/app",
             get(|| async { axum::response::Redirect::to("/me") }),
         )
-        .route(
-            "/app/{public_id}",
-            get(crate::pages::webview::handle_webview_page),
-        )
+        .route("/app/{public_id}", get(leptos_login_required_page()))
         .route(
             "/app/{public_id}/api/events",
             get(crate::api::webview_events::handle_list_events)
@@ -2675,6 +2678,7 @@ pub fn create_app(
                 leptos::prelude::provide_context(notion_api_base_url_for_context.clone());
                 leptos::prelude::provide_context(app_base_url_for_context.clone());
                 leptos::prelude::provide_context(stripe_configured_for_context.clone());
+                leptos::prelude::provide_context(mapbox_token_for_context.clone());
             },
             move || app::shell(leptos_options.clone()),
         )
