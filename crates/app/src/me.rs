@@ -1,0 +1,250 @@
+//! Phase B2 of the full Leptos SSR+CSR migration — the `/me` dashboard.
+//! Highest data complexity so far (claims + billing + calendars + one-shot
+//! session-stashed banners) and the first page to fold in
+//! `crates/islands::ConfirmButton` (see `confirm_button.rs`) as native
+//! hydrated components instead of the separate island-mounting mechanism.
+//!
+//! Structure: everything with zero interactivity (header, banners, billing
+//! card, heading section, footer links, per-calendar copy-rows) is prepared
+//! server-side as HTML strings and mounted via `inner_html` — same reasoning
+//! as `connect_notion.rs`/`pick_databases.rs`. Only the calendar-card list is
+//! real `view!` nodes, because each card's regenerate/delete buttons must be
+//! actual children of the tree `hydrate_body` walks — a component embedded
+//! via `.to_html()` into a surrounding string (the old islands approach)
+//! never gets hydrated that way; hydration only finds/attaches to nodes that
+//! are part of the same component tree passed to `hydrate_body`.
+
+use leptos::prelude::*;
+use serde::{Deserialize, Serialize};
+
+use crate::confirm_button::ConfirmButton;
+
+#[derive(Clone, Serialize, Deserialize)]
+pub struct CalendarCardData {
+    pub public_id: String,
+    pub label: String,
+    pub active_badge: String,
+    pub open_calendar_label: String,
+    pub url_row_html: String,
+    pub username_row_html: String,
+    /// Empty when no plaintext password is available this render (only
+    /// present right after create/reveal/regenerate — see `oauth.rs`).
+    pub password_row_html: String,
+    pub paste_hint: String,
+    pub reveal_password_label: String,
+    pub reveal_password_action: String,
+    pub regenerate_password_label: String,
+    pub regenerate_confirm_label: String,
+    pub regenerate_action: String,
+    pub view_log_label: String,
+    pub view_log_href: String,
+    pub delete_label: String,
+    pub delete_confirm_label: String,
+    pub delete_action: String,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+pub struct MePageData {
+    pub html_lang: String,
+    pub page_title: String,
+    /// Header + `<main>` (left open) + banners + billing card + heading
+    /// section — everything above the calendar list, static per request.
+    pub top_html: String,
+    /// Footer links + closing `</main>`.
+    pub bottom_html: String,
+    pub calendars: Vec<CalendarCardData>,
+    /// Shown instead of the calendar list when `calendars` is empty.
+    pub empty_state_html: String,
+}
+
+const DASHBOARD_HEAD_STYLE: &str = r#"
+.material-symbols-outlined { font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24; vertical-align: middle; font-size: 20px; }
+.success-banner-gradient { background: linear-gradient(90deg, rgba(220, 252, 231, 0.5) 0%, rgba(220, 252, 231, 0.2) 100%); }
+.error-banner-gradient { background: linear-gradient(90deg, rgba(254, 226, 226, 0.5) 0%, rgba(254, 226, 226, 0.2) 100%); }
+"#;
+const GOOGLE_FONTS_HREF_A: &str = "https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Geist:wght@400;500&display=swap";
+const GOOGLE_FONTS_HREF_B: &str = "https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&icon_names=add,arrow_back,arrow_forward,calendar_add_on,calendar_month,calendar_today,check_circle,close,content_copy,database,error,event_available,link,login,logout,open_in_new,security,sync,sync_alt,verified,warning&display=swap";
+const COPY_TO_CLIPBOARD_JS: &str = r#"
+function copyToClipboard(text, btn) {
+  navigator.clipboard.writeText(text).then(() => {
+    const icon = btn.querySelector('.material-symbols-outlined');
+    const original = icon.innerText;
+    icon.innerText = 'check';
+    icon.classList.add('text-[#166534]');
+    setTimeout(() => { icon.innerText = original; icon.classList.remove('text-[#166534]'); }, 2000);
+  });
+}
+"#;
+
+/// The whole HTML document. `<head>` (SEO-irrelevant here, just styles/fonts
+/// + the copy-to-clipboard global + data script/hydrate bootstrap) is one
+/// `inner_html` blob for the same reason as the other Phase A/B pages.
+#[component]
+pub fn MeShell(data: MePageData) -> impl IntoView {
+    let html_lang = data.html_lang.clone();
+
+    let json = serde_json::to_string(&data).unwrap_or_default();
+    let json_safe = json.replace('<', "\\u003c");
+    let inline_data_script = format!("window.__ME_DATA__ = {json_safe};");
+
+    let head_html = format!(
+        r#"<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>{title}</title><link rel="stylesheet" href="/assets/style-auth-a.css"><link href="{fonts_a}" rel="stylesheet"><link href="{fonts_b}" rel="stylesheet"><style>{style}</style><script>{copy_js}</script><script>{data_script}</script><script type="module">import init, {{ hydrate_me }} from '/pkg/app.js'; init('/pkg/app_bg.wasm').then(() => hydrate_me(JSON.stringify(window.__ME_DATA__)));</script>"#,
+        title = data.page_title,
+        fonts_a = GOOGLE_FONTS_HREF_A,
+        fonts_b = GOOGLE_FONTS_HREF_B,
+        style = DASHBOARD_HEAD_STYLE,
+        copy_js = COPY_TO_CLIPBOARD_JS,
+        data_script = inline_data_script,
+    );
+
+    view! {
+        <!DOCTYPE html>
+        <html lang=html_lang>
+            <head inner_html=head_html></head>
+            <body class="bg-background text-on-surface font-body-md min-h-screen">
+                <MePage data=data/>
+            </body>
+        </html>
+    }
+}
+
+#[component]
+pub fn MePage(data: MePageData) -> impl IntoView {
+    let top_html = data.top_html.clone();
+    let bottom_html = data.bottom_html.clone();
+
+    let list = if data.calendars.is_empty() {
+        view! { <div inner_html=data.empty_state_html.clone()></div> }.into_any()
+    } else {
+        data.calendars
+            .into_iter()
+            .map(|c| view! { <CalendarCard data=c/> })
+            .collect_view()
+            .into_any()
+    };
+
+    view! {
+        <div id="me-root">
+            <div inner_html=top_html></div>
+            <div class="space-y-md">{list}</div>
+            <div inner_html=bottom_html></div>
+        </div>
+    }
+}
+
+#[component]
+fn CalendarCard(data: CalendarCardData) -> impl IntoView {
+    let open_href = format!("/app/{}", data.public_id);
+
+    view! {
+        <div class="bg-surface border border-outline-variant rounded-lg p-lg hover:border-outline transition-colors duration-200">
+            <div class="flex flex-col md:flex-row justify-between items-start md:items-center gap-md mb-lg">
+                <div class="flex items-center gap-sm">
+                    <span class="text-h2">"🗓️"</span>
+                    <h2 class="font-semibold text-h2">{data.label}</h2>
+                    <span class="bg-[#DCFCE7] text-[#166534] px-xs py-[2px] rounded font-label-md text-[10px] uppercase tracking-wider">{data.active_badge}</span>
+                </div>
+                <a class="px-md h-8 border border-outline-variant hover:bg-surface-container-low font-label-md text-label-md transition-all flex items-center" href=open_href>{data.open_calendar_label}</a>
+            </div>
+            <div inner_html=data.url_row_html></div>
+            <div inner_html=data.username_row_html></div>
+            {(!data.password_row_html.is_empty()).then(|| view! { <div inner_html=data.password_row_html.clone()></div> })}
+            <p class="text-on-surface-variant text-[13px] mt-sm">{data.paste_hint}</p>
+            <div class="flex items-center gap-md mt-md pt-md border-t border-outline-variant">
+                <form method="post" action=data.reveal_password_action>
+                    <button type="submit" class="text-label-md text-secondary hover:underline">{data.reveal_password_label}</button>
+                </form>
+                <ConfirmButton
+                    action=data.regenerate_action
+                    label=data.regenerate_password_label
+                    confirm_label=data.regenerate_confirm_label
+                    class="text-label-md text-secondary hover:underline".to_string()
+                />
+                <a href=data.view_log_href class="text-label-md text-secondary hover:underline">{data.view_log_label}</a>
+                <div class="ml-auto">
+                    <ConfirmButton
+                        action=data.delete_action
+                        label=data.delete_label
+                        confirm_label=data.delete_confirm_label
+                        class="text-label-md text-error hover:underline".to_string()
+                    />
+                </div>
+            </div>
+        </div>
+    }
+}
+
+#[cfg(feature = "hydrate")]
+#[wasm_bindgen::prelude::wasm_bindgen]
+pub fn hydrate_me(json: String) {
+    console_error_panic_hook::set_once();
+    let data: MePageData = serde_json::from_str(&json).expect("invalid /me page payload from server");
+    leptos::mount::hydrate_body(move || view! { <MePage data=data.clone()/> });
+}
+
+#[cfg(all(test, feature = "ssr"))]
+mod tests {
+    use super::*;
+
+    fn sample_card() -> CalendarCardData {
+        CalendarCardData {
+            public_id: "abc123".to_string(),
+            label: "Work <Cal>".to_string(),
+            active_badge: "Đang hoạt động".to_string(),
+            open_calendar_label: "Mở lịch".to_string(),
+            url_row_html: "<div>url row</div>".to_string(),
+            username_row_html: "<div>username row</div>".to_string(),
+            password_row_html: String::new(),
+            paste_hint: "paste hint".to_string(),
+            reveal_password_label: "Hiện mật khẩu".to_string(),
+            reveal_password_action: "/me/calendars/abc123/reveal-password".to_string(),
+            regenerate_password_label: "Tạo lại mật khẩu".to_string(),
+            regenerate_confirm_label: "Tạo mật khẩu mới?".to_string(),
+            regenerate_action: "/me/calendars/abc123/regenerate-password".to_string(),
+            view_log_label: "Xem log đồng bộ".to_string(),
+            view_log_href: "/me/calendars/abc123/log".to_string(),
+            delete_label: "Xoá".to_string(),
+            delete_confirm_label: "Xoá calendar này?".to_string(),
+            delete_action: "/me/calendars/abc123/delete".to_string(),
+        }
+    }
+
+    fn sample_data(calendars: Vec<CalendarCardData>) -> MePageData {
+        MePageData {
+            html_lang: "vi".to_string(),
+            page_title: "Trang của bạn — NotionCal".to_string(),
+            top_html: "<header>top</header>".to_string(),
+            bottom_html: "<footer>bottom</footer>".to_string(),
+            calendars,
+            empty_state_html: "<p>Chưa có calendar nào</p>".to_string(),
+        }
+    }
+
+    #[test]
+    fn renders_calendar_cards_without_panicking() {
+        any_spawner::Executor::init_futures_executor().ok();
+        let html = leptos::prelude::Owner::new()
+            .with(|| view! { <MePage data=sample_data(vec![sample_card()])/> }.to_html());
+        assert!(html.contains("abc123"));
+        assert!(html.contains("/me/calendars/abc123/regenerate-password"));
+        assert!(html.contains("/me/calendars/abc123/delete"));
+        // Leptos auto-escapes text content.
+        assert!(html.contains("&lt;Cal&gt;") || html.contains("Work"));
+    }
+
+    #[test]
+    fn renders_empty_state_without_panicking() {
+        any_spawner::Executor::init_futures_executor().ok();
+        let html = leptos::prelude::Owner::new()
+            .with(|| view! { <MePage data=sample_data(vec![])/> }.to_html());
+        assert!(html.contains("Chưa có calendar nào"));
+    }
+
+    #[test]
+    fn shell_is_script_breakout_safe() {
+        any_spawner::Executor::init_futures_executor().ok();
+        let html = leptos::prelude::Owner::new()
+            .with(|| view! { <MeShell data=sample_data(vec![sample_card()])/> }.to_html());
+        assert!(!html.contains("</script><script>alert"));
+    }
+}

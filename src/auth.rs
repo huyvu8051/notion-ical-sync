@@ -6,17 +6,12 @@
 
 use axum::extract::{FromRequestParts, State};
 use axum::http::request::Parts;
-use axum::response::{Html, IntoResponse, Redirect};
+use axum::response::{IntoResponse, Redirect};
 use axum_oidc::openidconnect::core::CoreGenderClaim;
 use axum_oidc::openidconnect::{ClientId, ClientSecret, IssuerUrl, Scope};
 use axum_oidc::{
     EmptyAdditionalClaims, OidcClaims, OidcClient, OidcRpInitiatedLogout, OidcSession,
 };
-// `.to_html()` on the island's return value comes from leptos::prelude's
-// `RenderHtml` trait — needed here since `me()` renders `islands::ConfirmButton`
-// (a Leptos island, see crates/islands) server-side into this page's HTML.
-use leptos::prelude::*;
-
 use crate::AppState;
 
 #[derive(Clone)]
@@ -186,21 +181,6 @@ pub(crate) const AUTH_STYLE: &str = r#"
 </style>
 "#;
 
-/// `/me` (dashboard) is styled to match the Stitch "Calendar của bạn" mockup
-/// (Stitch project 7966553897766226544, screen 14ecf17308d644d68daa28eb5f3c50a0)
-/// pixel-for-pixel — Tailwind CDN + the exact design-token config from that
-/// screen, rather than the plain hand-rolled CSS the rest of the app uses.
-pub(crate) const DASHBOARD_HEAD: &str = r##"
-<link rel="stylesheet" href="/assets/style-auth-a.css">
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Geist:wght@400;500&display=swap" rel="stylesheet">
-<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&icon_names=add,arrow_back,arrow_forward,calendar_add_on,calendar_month,calendar_today,check_circle,close,content_copy,database,error,event_available,link,login,logout,open_in_new,security,sync,sync_alt,verified,warning&display=swap" rel="stylesheet">
-<style>
-.material-symbols-outlined { font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24; vertical-align: middle; font-size: 20px; }
-.success-banner-gradient { background: linear-gradient(90deg, rgba(220, 252, 231, 0.5) 0%, rgba(220, 252, 231, 0.2) 100%); }
-.error-banner-gradient { background: linear-gradient(90deg, rgba(254, 226, 226, 0.5) 0%, rgba(254, 226, 226, 0.2) 100%); }
-</style>
-"##;
-
 /// Post-login landing: lists the user's own calendars, with a CTA to connect
 /// more Notion databases (see oauth.rs). Doubles as the "onboarding
 /// complete" screen right after `create_calendars` redirects here.
@@ -306,7 +286,8 @@ pub async fn me(
     session: tower_sessions::Session,
     cfg: axum::Extension<AppConfig>,
     lang: crate::i18n::Lang,
-) -> impl IntoResponse {
+    request: axum::extract::Request,
+) -> axum::response::Response {
     let l = match lang {
         crate::i18n::Lang::En => &ME_LABELS_EN,
         crate::i18n::Lang::Vi => &ME_LABELS_VI,
@@ -436,89 +417,50 @@ pub async fn me(
         )
     }
 
-    let items: String = calendars
+    let cards: Vec<app::me::CalendarCardData> = calendars
         .iter()
         .map(|(public_id, name, caldav_username)| {
             let label = if name.is_empty() { public_id.as_str() } else { name.as_str() };
             let caldav_url = format!("{}/cal/{}", cfg.base_url, public_id);
-            let password_row = match new_passwords.get(caldav_username) {
+            let password_row_html = match new_passwords.get(caldav_username) {
                 Some(pw) => copy_row(l.caldav_password_label, pw),
                 None => String::new(),
             };
-            let public_id = html_escape(public_id);
-            format!(
-                r#"<div class="bg-surface border border-outline-variant rounded-lg p-lg hover:border-outline transition-colors duration-200">
-<div class="flex flex-col md:flex-row justify-between items-start md:items-center gap-md mb-lg">
-<div class="flex items-center gap-sm">
-<span class="text-h2">🗓️</span>
-<h2 class="font-semibold text-h2">{label}</h2>
-<span class="bg-[#DCFCE7] text-[#166534] px-xs py-[2px] rounded font-label-md text-[10px] uppercase tracking-wider">{active_badge}</span>
-</div>
-<a class="px-md h-8 border border-outline-variant hover:bg-surface-container-low font-label-md text-label-md transition-all flex items-center" href="/app/{public_id}">{open_calendar}</a>
-</div>
-{url_row}
-{username_row}
-{password_row}
-<p class="text-on-surface-variant text-[13px] mt-sm">{paste_hint}</p>
-<div class="flex items-center gap-md mt-md pt-md border-t border-outline-variant">
-<form method="post" action="/me/calendars/{public_id}/reveal-password">
-<button type="submit" class="text-label-md text-secondary hover:underline">{reveal_password}</button>
-</form>
-{regenerate_button}
-<a href="/me/calendars/{public_id}/log" class="text-label-md text-secondary hover:underline">{view_log}</a>
-<div class="ml-auto">{delete_button}</div>
-</div>
-</div>"#,
-                label = html_escape(label),
-                url_row = copy_row(l.caldav_url_label, &caldav_url),
-                username_row = copy_row(l.username_label, caldav_username),
-                active_badge = l.active_badge,
-                open_calendar = l.open_calendar,
-                paste_hint = l.paste_hint,
-                reveal_password = l.reveal_password,
-                regenerate_button = view! {
-                    <islands::ConfirmButton
-                        action=format!("/me/calendars/{public_id}/regenerate-password")
-                        label=l.regenerate_password.to_string()
-                        confirm_label=l.regenerate_confirm.to_string()
-                        class="text-label-md text-secondary hover:underline".to_string()
-                    />
-                }
-                .to_html(),
-                view_log = l.view_log,
-                delete_button = view! {
-                    <islands::ConfirmButton
-                        action=format!("/me/calendars/{public_id}/delete")
-                        label=l.delete.to_string()
-                        confirm_label=l.delete_confirm.to_string()
-                        class="text-label-md text-error hover:underline".to_string()
-                    />
-                }
-                .to_html(),
-            )
+            app::me::CalendarCardData {
+                public_id: public_id.clone(),
+                label: label.to_string(),
+                active_badge: l.active_badge.to_string(),
+                open_calendar_label: l.open_calendar.to_string(),
+                url_row_html: copy_row(l.caldav_url_label, &caldav_url),
+                username_row_html: copy_row(l.username_label, caldav_username),
+                password_row_html,
+                paste_hint: l.paste_hint.to_string(),
+                reveal_password_label: l.reveal_password.to_string(),
+                reveal_password_action: format!("/me/calendars/{public_id}/reveal-password"),
+                regenerate_password_label: l.regenerate_password.to_string(),
+                regenerate_confirm_label: l.regenerate_confirm.to_string(),
+                regenerate_action: format!("/me/calendars/{public_id}/regenerate-password"),
+                view_log_label: l.view_log.to_string(),
+                view_log_href: format!("/me/calendars/{public_id}/log"),
+                delete_label: l.delete.to_string(),
+                delete_confirm_label: l.delete_confirm.to_string(),
+                delete_action: format!("/me/calendars/{public_id}/delete"),
+            }
         })
         .collect();
 
-    let content = if calendars.is_empty() {
-        format!(
-            r#"<div class="flex flex-col items-center justify-center py-xl text-center border border-dashed border-outline-variant rounded-lg">
+    let empty_state_html = format!(
+        r#"<div class="flex flex-col items-center justify-center py-xl text-center border border-dashed border-outline-variant rounded-lg">
 <span class="material-symbols-outlined !text-[48px] text-outline mb-md">calendar_add_on</span>
 <p class="text-body-lg text-on-surface-variant max-w-sm">{}</p>
 </div>"#,
-            l.empty_state
-        )
-    } else {
-        format!(r#"<div class="space-y-md">{items}</div>"#)
-    };
+        l.empty_state
+    );
 
     let lang_toggle = crate::i18n::lang_toggle(lang, "/me");
 
-    Html(format!(
-        r#"<!doctype html>
-<html lang="{html_lang}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>{page_title}</title>{DASHBOARD_HEAD}</head>
-<body class="bg-background text-on-surface font-body-md min-h-screen">
-<header class="bg-surface border-b border-outline-variant sticky top-0 z-50">
+    let top_html = format!(
+        r#"<header class="bg-surface border-b border-outline-variant sticky top-0 z-50">
 <div class="flex justify-between items-center h-16 px-lg w-full max-w-[1280px] mx-auto">
 <span class="text-h1 font-semibold tracking-tighter text-primary">NotionCal</span>
 <div class="flex items-center space-x-md">
@@ -543,45 +485,32 @@ pub async fn me(
 <span class="material-symbols-outlined">add</span>
 <span>{connect_more}</span>
 </a>
-</div>
-{content}
-<p class="text-on-surface-variant text-[13px] pt-lg"><a class="underline hover:text-primary" href="/privacy">Privacy Policy</a> · <a class="underline hover:text-primary" href="/terms">Terms of Service</a></p>
-</main>
-<script>
-function copyToClipboard(text, btn) {{
-  navigator.clipboard.writeText(text).then(() => {{
-    const icon = btn.querySelector('.material-symbols-outlined');
-    const original = icon.innerText;
-    icon.innerText = 'check';
-    icon.classList.add('text-[#166534]');
-    setTimeout(() => {{ icon.innerText = original; icon.classList.remove('text-[#166534]'); }}, 2000);
-  }});
-}}
-</script>
-<script type="module">
-import * as islands from '/pkg/islands.js';
-// leptos::mount::hydrate_islands() doesn't auto-discover/mount islands in
-// this hand-wired (non-cargo-leptos) setup — calling the wasm module's
-// per-island export directly, keyed by the data-component attribute the
-// #[island] macro already emits, does. See crates/islands.
-islands.default().then(() => {{
-  document.querySelectorAll('leptos-island[data-component]').forEach((el) => {{
-    const mount = islands[el.dataset.component];
-    if (mount) mount(el);
-  }});
-}});
-</script>
-</body></html>"#,
-        html_lang = l.html_lang,
-        page_title = l.page_title,
+</div>"#,
         lang_toggle = lang_toggle,
+        email = html_escape(&email),
         logout_title = l.logout_title,
         heading = l.heading,
         subheading = l.subheading,
         connect_more = l.connect_more,
-        email = html_escape(&email),
-    ))
-    .into_response()
+    );
+
+    let bottom_html = r#"<p class="text-on-surface-variant text-[13px] pt-lg"><a class="underline hover:text-primary" href="/privacy">Privacy Policy</a> · <a class="underline hover:text-primary" href="/terms">Terms of Service</a></p>
+</main>"#
+        .to_string();
+
+    let data = app::me::MePageData {
+        html_lang: l.html_lang.to_string(),
+        page_title: l.page_title.to_string(),
+        top_html,
+        bottom_html,
+        calendars: cards,
+        empty_state_html,
+    };
+    let handler = leptos_axum::render_app_to_stream(move || {
+        let data = data.clone();
+        leptos::view! { <app::me::MeShell data=data/> }
+    });
+    handler(request).await
 }
 
 pub async fn logout(

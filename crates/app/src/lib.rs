@@ -30,9 +30,11 @@
 //! tachys expects to find and panic — same failure class as the abandoned
 //! attempt, just triggered by a data mismatch instead of a structural one.
 
+pub mod confirm_button;
 pub mod connect_notion;
 pub mod landing;
 pub mod legal;
+pub mod me;
 pub mod pick_databases;
 pub mod sync_log;
 

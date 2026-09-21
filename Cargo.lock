@@ -85,11 +85,13 @@ version = "0.1.0"
 dependencies = [
  "any_spawner",
  "console_error_panic_hook",
+ "js-sys",
  "leptos",
  "leptos_axum",
  "serde",
  "serde_json",
  "wasm-bindgen",
+ "web-sys",
 ]
 
 [[package]]
