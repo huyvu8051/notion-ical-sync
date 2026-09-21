@@ -42,8 +42,7 @@ NotionCal
 </div>
 <div class="flex items-center gap-4">
 <a class="text-label-md text-on-surface-variant hover:text-primary transition-colors px-2 py-2" href="/lang/en?next=/">EN</a>
-<a class="text-label-md text-on-surface-variant hover:text-primary transition-colors px-4 py-2" href="/me">Đăng nhập</a>
-<a class="bg-primary text-on-primary text-label-md px-4 py-2 rounded transition-transform active:scale-95 duration-100" href="/me">Đăng ký</a>
+<a class="bg-primary text-on-primary text-label-md px-4 py-2 rounded transition-transform active:scale-95 duration-100" href="/me">Đăng nhập / Đăng ký</a>
 </div>
 </div>
 </header>
@@ -227,8 +226,7 @@ NotionCal
 </div>
 <div class="flex items-center gap-4">
 <a class="text-label-md text-on-surface-variant hover:text-primary transition-colors px-2 py-2" href="/lang/vi?next=/">VI</a>
-<a class="text-label-md text-on-surface-variant hover:text-primary transition-colors px-4 py-2" href="/me">Log in</a>
-<a class="bg-primary text-on-primary text-label-md px-4 py-2 rounded transition-transform active:scale-95 duration-100" href="/me">Sign up</a>
+<a class="bg-primary text-on-primary text-label-md px-4 py-2 rounded transition-transform active:scale-95 duration-100" href="/me">Log in / Sign up</a>
 </div>
 </div>
 </header>
