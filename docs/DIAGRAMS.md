@@ -154,13 +154,17 @@ flowchart TD
 
 ## Component diagram
 
-Every page except the small interactive widgets (the confirm buttons — see
-`crates/islands`) is still plain server-rendered HTML from these axum
-handler modules; nothing runs through a client-side framework for routing.
+Every page is server-rendered through `crates/app`'s Leptos components via
+`leptos_axum::render_app_to_stream`, then hydrated client-side by the same
+`app.js`/`app_bg.wasm` bundle — the axum handler modules below build each
+page's data and call into `crates/app`, rather than hand-rolling HTML
+strings. (Superseded the earlier `crates/islands` — a handful of small
+interactive widgets on an otherwise plain-HTML site — once the last page
+migrated off it; see git history for the phased migration.)
 
 ```mermaid
 flowchart TB
-    Browser["Browser<br/>(server-rendered HTML +<br/>Leptos islands over WASM)"]
+    Browser["Browser<br/>(server-rendered HTML +<br/>Leptos hydration over WASM)"]
 
     subgraph Service["notion-ical-sync (axum)"]
         Router["caldav.rs<br/>router + CalDAV protocol"]
@@ -169,7 +173,7 @@ flowchart TB
         Webview["webview.rs<br/>FullCalendar UI + event API"]
         Billing["billing.rs<br/>checkout, webhooks, admin reset"]
         Legal["legal.rs<br/>privacy / terms"]
-        Islands["islands crate<br/>compiled to WASM, served at /pkg"]
+        App["app crate<br/>Leptos pages, compiled to WASM, served at /pkg"]
     end
 
     Postgres[("Postgres<br/>users, calendars, events, sessions")]
@@ -184,8 +188,12 @@ flowchart TB
     Router --> Webview
     Router --> Billing
     Router --> Legal
-    Router -. static files .-> Islands
-    Islands -. wasm bundle .-> Browser
+    Auth --> App
+    OAuth --> App
+    Webview --> App
+    Legal --> App
+    Router -. static files .-> App
+    App -. wasm bundle .-> Browser
 
     Auth --> Postgres
     OAuth --> Postgres
@@ -202,9 +210,9 @@ flowchart TB
 
 ## Deployment diagram
 
-Push to `main` builds a Docker image (server binary + a separate
-wasm-bindgen build of the islands crate) and ships it straight to
-production — see `.github/workflows/ci.yml` and the `Dockerfile`.
+Push to `main` builds a Docker image (server binary + a wasm-bindgen build
+of the `app` crate) and ships it straight to production — see
+`.github/workflows/ci.yml` and the `Dockerfile`.
 
 ```mermaid
 flowchart TB

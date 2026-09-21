@@ -14,24 +14,19 @@ RUN cargo chef cook --release --recipe-path recipe.json
 COPY . .
 RUN cargo build --release --bin notion-ical-sync
 
-# Builds the islands crate to WASM (see crates/islands) for Leptos Islands —
-# small interactive widgets like the regenerate-password confirm button. This
-# is a separate cargo invocation with --features hydrate, never combined with
-# the server's own `ssr`-featured build above (hydrate pulls in browser-only
-# web-sys/DOM APIs that don't exist on this stage's host target).
+# Builds crates/app to WASM for client-side hydration — every page's Shell
+# is server-rendered via leptos_axum::render_app_to_stream (see crates/app/
+# src/lib.rs), then this bundle hydrates it in the browser. Separate cargo
+# invocation with --features hydrate, never combined with the server's own
+# `ssr`-featured build above (hydrate pulls in browser-only web-sys/DOM APIs
+# that don't exist on this stage's host target). Used to also build a
+# separate crates/islands bundle (islands.js/islands_bg.wasm) for a handful
+# of small interactive widgets — deleted once the last page migrated off it
+# and every widget folded into this same app.js/app_bg.wasm bundle instead.
 FROM chef AS wasm-builder
 RUN rustup target add wasm32-unknown-unknown
 RUN cargo install wasm-bindgen-cli --version 0.2.126 --locked
 COPY . .
-RUN cargo build -p islands --release --target wasm32-unknown-unknown --no-default-features --features hydrate
-RUN wasm-bindgen target/wasm32-unknown-unknown/release/islands.wasm --out-dir pkg --target web --no-typescript
-
-# Phase-0 retry of the abandoned full Leptos SSR+CSR migration (see
-# ~/.claude/plans/mighty-scribbling-floyd.md and crates/app) — proves
-# leptos_axum::render_app_to_stream's real SSR pipeline hydrates correctly,
-# via a throwaway page at /dev/leptos-check, before any real page migrates.
-# Separate output names (app.js/app_bg.wasm) so this never collides with the
-# islands.js/islands_bg.wasm pair above.
 RUN cargo build -p app --release --target wasm32-unknown-unknown --no-default-features --features hydrate
 RUN wasm-bindgen target/wasm32-unknown-unknown/release/app.wasm --out-dir pkg --target web --no-typescript
 

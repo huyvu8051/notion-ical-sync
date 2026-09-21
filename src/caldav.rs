@@ -2799,20 +2799,23 @@ pub fn create_app(
         // header instead (see billing.rs::reset_billing). Dev/test-only tool,
         // 404s entirely unless ADMIN_SECRET is configured.
         .route("/admin/reset-billing", post(crate::billing::reset_billing))
-        // Static WASM/JS for Leptos islands (small interactive widgets —
-        // confirm buttons etc.) — everything else on every page is still
-        // plain server-rendered HTML from this same axum app, never routed
-        // through Leptos/leptos_axum. Built by `wasm-bindgen` into `pkg/`
-        // (see Dockerfile), not `cargo build`, so it isn't produced by a
-        // plain `cargo run` unless that step has been run at least once.
+        // Static WASM/JS (app.js/app_bg.wasm) that hydrates every
+        // server-rendered page (see crates/app) — every page goes through
+        // leptos_axum::render_app_to_stream now, this is what attaches
+        // client-side interactivity (confirm buttons, signal-driven UI) to
+        // that same tree afterward. Built by `wasm-bindgen` into `pkg/` (see
+        // Dockerfile), not `cargo build`, so it isn't produced by a plain
+        // `cargo run` unless that step has been run at least once.
         //
         // no-cache (not no-store): forces revalidation on every request
-        // instead of trusting a blind TTL. islands.js and islands_bg.wasm
-        // are a matched pair rebuilt together on every deploy — a browser or
-        // CDN caching one past its TTL while refetching the other (observed
-        // in prod: Cloudflare cached islands.js for 4h across a deploy that
-        // changed islands_bg.wasm) produces a WebAssembly LinkError, since
-        // the JS glue's imports no longer match the wasm binary's exports.
+        // instead of trusting a blind TTL. app.js and app_bg.wasm are a
+        // matched pair rebuilt together on every deploy — a browser or CDN
+        // caching one past its TTL while refetching the other (observed in
+        // prod with the same app.js/app_bg.wasm split back when this pair
+        // was islands.js/islands_bg.wasm: Cloudflare cached the JS for 4h
+        // across a deploy that changed the wasm) produces a WebAssembly
+        // LinkError, since the JS glue's imports no longer match the wasm
+        // binary's exports.
         .nest_service(
             "/pkg",
             tower::ServiceBuilder::new()
