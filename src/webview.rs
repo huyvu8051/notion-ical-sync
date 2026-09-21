@@ -206,12 +206,14 @@ pub async fn handle_webview_page(
     } else {
         cal.display_name.clone()
     };
-    let lang_toggle = crate::i18n::lang_toggle(lang, &format!("/app/{}", public_id));
+    let email = claims.email().map(|e| e.as_str()).unwrap_or("");
+    let top_nav = crate::i18n::top_nav_html(email, lang, &format!("/app/{}", public_id));
 
     let events_url = format!("/app/{}/api/events", public_id);
 
     let body_html = format!(
-        r##"<header class="h-16 flex items-center justify-between px-lg border-b border-outline-variant bg-surface">
+        r##"{top_nav}
+<header class="h-16 flex items-center justify-between px-lg border-b border-outline-variant bg-surface">
 <div class="flex items-center gap-md">
 <a class="flex items-center gap-xs text-on-surface-variant hover:text-primary transition-colors text-label-md" href="/me">
 <span class="material-symbols-outlined">arrow_back</span>
@@ -221,7 +223,6 @@ pub async fn handle_webview_page(
 <h1 class="text-h1 tracking-tight">{title}</h1>
 </div>
 <div class="flex items-center gap-md">
-{lang_toggle}
 <button class="bg-primary text-on-primary px-md h-10 flex items-center gap-xs text-label-md rounded-lg hover:opacity-90 transition-opacity" onclick="openCreateModal()">
 <span class="material-symbols-outlined">add</span>
 {add_event_btn}
@@ -316,9 +317,9 @@ pub async fn handle_webview_page(
 </div>
 </div>
 </div>"##,
+        top_nav = top_nav,
         back_to_all = l.back_to_all,
         title = html_escape(&calendar_name),
-        lang_toggle = lang_toggle,
         add_event_btn = l.add_event_btn,
         modal_title_add = l.modal_title_add,
         event_name_label = l.event_name_label,

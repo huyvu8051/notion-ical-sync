@@ -33,7 +33,7 @@ pub fn ConnectNotionShell(data: ConnectNotionPageData) -> impl IntoView {
     let inline_data_script = format!("window.__CONNECT_NOTION_DATA__ = {json_safe};");
 
     let head_html = format!(
-        r#"<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>{title} — NotionCal</title><link rel="stylesheet" href="/assets/style-oauth.css"><link href="{fonts}" rel="stylesheet"><style>{style}</style><script>{data_script}</script><script type="module">import init, {{ hydrate_connect_notion }} from '/pkg/app.js'; init('/pkg/app_bg.wasm').then(() => hydrate_connect_notion(JSON.stringify(window.__CONNECT_NOTION_DATA__)));</script>"#,
+        r#"<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>{title} — NotionCal</title><link rel="stylesheet" href="/assets/style-auth-a.css"><link href="{fonts}" rel="stylesheet"><style>{style}</style><script>{data_script}</script><script type="module">import init, {{ hydrate_connect_notion }} from '/pkg/app.js'; init('/pkg/app_bg.wasm').then(() => hydrate_connect_notion(JSON.stringify(window.__CONNECT_NOTION_DATA__)));</script>"#,
         title = data.title,
         fonts = GOOGLE_FONTS_HREF,
         style = ONBOARDING_HEAD_STYLE,
@@ -55,7 +55,7 @@ pub fn ConnectNotionShell(data: ConnectNotionPageData) -> impl IntoView {
 pub fn ConnectNotionPage(data: ConnectNotionPageData) -> impl IntoView {
     let body_html = format!(
         r##"{top_nav}
-<main class="flex-grow flex items-center justify-center pt-[56px] px-margin-mobile md:px-margin-desktop">
+<main class="flex-grow flex items-center justify-center px-margin-mobile md:px-margin-desktop">
 <div class="w-full max-w-[480px] bg-surface-container-lowest border border-outline-variant p-xl rounded-lg card-shadow">
 <div class="flex justify-center items-center gap-md mb-lg">
 <div class="w-12 h-12 flex items-center justify-center bg-surface-container border border-outline-variant rounded-xl">

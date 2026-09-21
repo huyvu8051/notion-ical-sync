@@ -103,6 +103,29 @@ pub async fn set_lang(
     ([(header::SET_COOKIE, cookie)], Redirect::to(&next))
 }
 
+pub fn top_nav_html(email: &str, lang: Lang, current_path: &str) -> String {
+    let logout_title = match lang {
+        Lang::Vi => "Đăng xuất",
+        Lang::En => "Log out",
+    };
+    format!(
+        r#"<header class="bg-surface border-b border-outline-variant sticky top-0 z-50">
+<div class="flex justify-between items-center h-16 px-lg w-full max-w-[1280px] mx-auto">
+<a href="/" class="text-h1 font-semibold tracking-tighter text-primary hover:opacity-70 transition-opacity">NotionCal</a>
+<div class="flex items-center space-x-md">
+{lang_toggle}
+<span class="text-on-surface-variant font-label-md text-label-md">{email}</span>
+<a class="flex items-center justify-center w-8 h-8 hover:bg-surface-container-low transition-colors duration-200 rounded" href="/logout" title="{logout_title}">
+<span class="material-symbols-outlined">logout</span>
+</a>
+</div>
+</div>
+</header>"#,
+        lang_toggle = lang_toggle(lang, current_path),
+        email = crate::auth::html_escape(email),
+    )
+}
+
 pub fn lang_toggle(current: Lang, current_path: &str) -> String {
     let other = current.other();
     let escaped_path = current_path.replace('&', "%26");

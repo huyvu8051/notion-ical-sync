@@ -14,7 +14,7 @@ body { background-color: #fbf9f9; color: #1b1c1c; -webkit-font-smoothing: antial
 .material-symbols-outlined { font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24; vertical-align: middle; font-size: 20px; }
 .modal-shadow { box-shadow: 0px 4px 12px rgba(0, 0, 0, 0.05); }
 #calendar { max-width: 1100px; margin: 0 auto; padding: 24px; }
-.fc { --fc-border-color: #e5e5e5; --fc-button-bg-color: #fff; --fc-button-border-color: #e5e5e5; --fc-button-text-color: #1b1c1c;
+.fc { --fc-border-color: #c4c7c7; --fc-button-bg-color: #fff; --fc-button-border-color: #c4c7c7; --fc-button-text-color: #1b1c1c;
   --fc-button-active-bg-color: #000; --fc-button-active-border-color: #000; --fc-today-bg-color: #f5f3f3; font-family: 'Inter', sans-serif; }
 .fc .fc-button { box-shadow: none !important; text-transform: none; font-weight: 500; }
 @media (max-width: 640px) {
@@ -24,10 +24,10 @@ body { background-color: #fbf9f9; color: #1b1c1c; -webkit-font-smoothing: antial
   .fc-toolbar-title { font-size: 1.1em !important; }
   .fc .fc-button { padding: 4px 8px !important; font-size: 0.8em !important; }
   header.h-16 { padding-left: 12px; padding-right: 12px; }
-  header .text-h1 { font-size: 18px; max-width: 40vw; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  header.h-16 .text-h1 { font-size: 18px; max-width: 40vw; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 }
 @media (max-width: 420px) {
-  header .back-label { display: none; }
+  header.h-16 .back-label { display: none; }
 }
 "#;
 const GOOGLE_FONTS_HREF: &str = "https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Geist:wght@400;500&family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&icon_names=add,arrow_back,arrow_forward,calendar_add_on,calendar_month,calendar_today,check_circle,close,content_copy,database,error,event_available,link,login,logout,open_in_new,security,sync,sync_alt,verified,warning&display=swap";
@@ -41,7 +41,7 @@ pub fn WebviewShell(data: WebviewPageData) -> impl IntoView {
     let inline_data_script = format!("window.__WEBVIEW_DATA__ = {json_safe};");
 
     let head_html = format!(
-        r#"<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>{title} — NotionCal</title><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.15/index.global.min.css"><script src="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.15/index.global.min.js"></script><link rel="stylesheet" href="/assets/style-webview.css"><link href="{fonts}" rel="stylesheet"><style>{style}</style><script>{js}</script><script>{data_script}</script><script type="module">import init, {{ hydrate_webview }} from '/pkg/app.js'; init('/pkg/app_bg.wasm').then(() => hydrate_webview(JSON.stringify(window.__WEBVIEW_DATA__)));</script>"#,
+        r#"<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>{title} — NotionCal</title><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.15/index.global.min.css"><script src="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.15/index.global.min.js"></script><link rel="stylesheet" href="/assets/style-auth-a.css"><link href="{fonts}" rel="stylesheet"><style>{style}</style><script>{js}</script><script>{data_script}</script><script type="module">import init, {{ hydrate_webview }} from '/pkg/app.js'; init('/pkg/app_bg.wasm').then(() => hydrate_webview(JSON.stringify(window.__WEBVIEW_DATA__)));</script>"#,
         title = data.title,
         fonts = GOOGLE_FONTS_HREF,
         style = WEBVIEW_HEAD_STYLE,

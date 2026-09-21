@@ -1,6 +1,8 @@
 target
 logs/
 .env
+backups/
+node_modules/
 
 # wasm-bindgen output for the islands crate (crates/islands) — built by the
 # Dockerfile's wasm-builder stage, not committed.

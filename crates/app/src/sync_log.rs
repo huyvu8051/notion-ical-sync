@@ -14,26 +14,10 @@ pub struct SyncLogRow {
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct SyncLogPageData {
+    pub top_nav_html: String,
     pub calendar_name: String,
     pub rows: Vec<SyncLogRow>,
 }
-
-const SYNC_LOG_STYLE: &str = r#"
-* { box-sizing: border-box; }
-body { font-family: -apple-system, sans-serif; max-width: 960px; margin: 2rem auto; padding: 0 1.25rem; line-height: 1.5; color: #1a1a1a; }
-.top-nav { display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.25rem; }
-.top-nav a.back { font-size: 0.85rem; color: #666; text-decoration: none; }
-h1 { margin: 0.25rem 0 1.25rem; font-size: 1.3rem; }
-table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
-th, td { text-align: left; padding: 0.5rem 0.6rem; border-bottom: 1px solid #eee; vertical-align: top; }
-th { color: #888; font-weight: 500; font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.02em; }
-.status-ok { color: #166534; font-weight: 600; }
-.status-error { color: #991b1b; font-weight: 600; }
-.source-badge { display: inline-block; padding: 0.1rem 0.5rem; border-radius: 6px; font-size: 0.75rem; background: #f1f1f1; }
-code { font-family: ui-monospace, monospace; background: #f1f1f1; padding: 0.1rem 0.35rem; border-radius: 4px; font-size: 0.78rem; word-break: break-all; }
-.detail-cell { max-width: 320px; white-space: pre-wrap; word-break: break-word; color: #991b1b; }
-.empty { color: #888; padding: 2rem 0; text-align: center; }
-"#;
 
 #[component]
 pub fn SyncLogShell(data: SyncLogPageData) -> impl IntoView {
@@ -43,20 +27,18 @@ pub fn SyncLogShell(data: SyncLogPageData) -> impl IntoView {
     let script_breakout_safe_json = json.replace('<', "\\u003c");
     let inline_data_script = format!("window.__SYNC_LOG_DATA__ = {script_breakout_safe_json};");
 
+    let head_html = format!(
+        r#"<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>{title}</title><link rel="stylesheet" href="/assets/style-auth-a.css"><link href="{fonts}" rel="stylesheet"><style>{style}</style><script>{data_script}</script><script type="module">import init, {{ hydrate_sync_log }} from '/pkg/app.js'; init('/pkg/app_bg.wasm').then(() => hydrate_sync_log(JSON.stringify(window.__SYNC_LOG_DATA__)));</script>"#,
+        fonts = crate::connect_notion::GOOGLE_FONTS_HREF,
+        style = crate::connect_notion::ONBOARDING_HEAD_STYLE,
+        data_script = inline_data_script,
+    );
+
     view! {
         <!DOCTYPE html>
         <html lang="vi">
-            <head>
-                <meta charset="utf-8"/>
-                <meta name="viewport" content="width=device-width, initial-scale=1"/>
-                <title>{title}</title>
-                <style>{SYNC_LOG_STYLE}</style>
-                <script inner_html=inline_data_script></script>
-                <script type="module">
-                    "import init, { hydrate_sync_log } from '/pkg/app.js'; init('/pkg/app_bg.wasm').then(() => hydrate_sync_log(JSON.stringify(window.__SYNC_LOG_DATA__)));"
-                </script>
-            </head>
-            <body>
+            <head inner_html=head_html></head>
+            <body class="bg-background text-on-surface font-body-md min-h-screen">
                 <SyncLogPage data=data/>
             </body>
         </html>
@@ -65,14 +47,20 @@ pub fn SyncLogShell(data: SyncLogPageData) -> impl IntoView {
 
 #[component]
 pub fn SyncLogPage(data: SyncLogPageData) -> impl IntoView {
-    let rows = data.rows;
-    let body_rows = if rows.is_empty() {
+    let top_nav_html = data.top_nav_html.clone();
+
+    let body_rows = if data.rows.is_empty() {
         view! {
-            <tr><td colspan="6" class="empty">"Chưa có hoạt động đồng bộ nào được ghi lại."</td></tr>
+            <tr>
+                <td colspan="6" class="text-center text-on-surface-variant text-body-md py-xl">
+                    "Chưa có hoạt động đồng bộ nào được ghi lại."
+                </td>
+            </tr>
         }
         .into_any()
     } else {
-        rows.into_iter()
+        data.rows
+            .into_iter()
             .map(|row| view! { <SyncLogRowView row=row/> })
             .collect_view()
             .into_any()
@@ -80,24 +68,30 @@ pub fn SyncLogPage(data: SyncLogPageData) -> impl IntoView {
 
     view! {
         <div id="sync-log-root">
-            <div class="top-nav">
-                <strong>"NotionCal"</strong>
-                <a class="back" href="/me">"← Tất cả lịch"</a>
-            </div>
-            <h1>{format!("Log đồng bộ — {}", data.calendar_name)}</h1>
-            <table>
-                <thead>
-                    <tr>
-                        <th>"Thời gian"</th>
-                        <th>"Nguồn"</th>
-                        <th>"Hành động"</th>
-                        <th>"UID sự kiện"</th>
-                        <th>"Notion page"</th>
-                        <th>"Kết quả"</th>
-                    </tr>
-                </thead>
-                <tbody>{body_rows}</tbody>
-            </table>
+            <div inner_html=top_nav_html></div>
+            <main class="max-w-[1280px] mx-auto px-margin-mobile md:px-margin-desktop py-lg space-y-lg">
+                <div class="flex items-center gap-md">
+                    <a class="flex items-center justify-center w-8 h-8 hover:bg-surface-container-low transition-colors duration-200 rounded" href="/me">
+                        <span class="material-symbols-outlined">arrow_back</span>
+                    </a>
+                    <h1 class="text-h1 font-semibold">{format!("Log đồng bộ — {}", data.calendar_name)}</h1>
+                </div>
+                <div class="bg-surface border border-outline-variant rounded-lg overflow-hidden overflow-x-auto">
+                    <table class="w-full text-body-md">
+                        <thead>
+                            <tr class="bg-surface-container-low text-on-surface-variant text-label-md uppercase tracking-wide">
+                                <th class="text-left font-medium px-md py-sm">"Thời gian"</th>
+                                <th class="text-left font-medium px-md py-sm">"Nguồn"</th>
+                                <th class="text-left font-medium px-md py-sm">"Hành động"</th>
+                                <th class="text-left font-medium px-md py-sm">"UID sự kiện"</th>
+                                <th class="text-left font-medium px-md py-sm">"Notion page"</th>
+                                <th class="text-left font-medium px-md py-sm">"Kết quả"</th>
+                            </tr>
+                        </thead>
+                        <tbody>{body_rows}</tbody>
+                    </table>
+                </div>
+            </main>
         </div>
     }
 }
@@ -105,9 +99,9 @@ pub fn SyncLogPage(data: SyncLogPageData) -> impl IntoView {
 #[component]
 fn SyncLogRowView(row: SyncLogRow) -> impl IntoView {
     let status_class = if row.status == "ok" {
-        "status-ok"
+        "text-[#166534] font-semibold"
     } else {
-        "status-error"
+        "text-error font-semibold"
     };
     let status_label = if row.status == "ok" { "OK" } else { "Lỗi" };
     let uid_display = if row.event_uid.is_empty() {
@@ -122,22 +116,27 @@ fn SyncLogRowView(row: SyncLogRow) -> impl IntoView {
         let short: String = row.notion_page_id.chars().take(8).collect();
         Some((href, short))
     };
-    let detail_view = (!row.detail.is_empty())
-        .then(|| view! { <div class="detail-cell">{row.detail.clone()}</div> });
+    let detail_view = (!row.detail.is_empty()).then(|| {
+        view! {
+            <div class="text-error text-label-md whitespace-pre-wrap break-words max-w-xs mt-1">{row.detail.clone()}</div>
+        }
+    });
 
     view! {
-        <tr>
-            <td>{row.occurred_at.clone()}</td>
-            <td><span class="source-badge">{row.source.clone()}</span></td>
-            <td>{row.action.clone()}</td>
-            <td><code>{uid_display}</code></td>
-            <td>
+        <tr class="border-t border-outline-variant align-top">
+            <td class="px-md py-sm">{row.occurred_at.clone()}</td>
+            <td class="px-md py-sm">
+                <span class="inline-block px-sm py-[2px] rounded bg-surface-container-low text-label-md">{row.source.clone()}</span>
+            </td>
+            <td class="px-md py-sm">{row.action.clone()}</td>
+            <td class="px-md py-sm font-code text-code">{uid_display}</td>
+            <td class="px-md py-sm">
                 {match page_link {
-                    Some((href, short)) => view! { <a href=href target="_blank">{short}</a> }.into_any(),
+                    Some((href, short)) => view! { <a class="text-secondary hover:underline" href=href target="_blank">{short}</a> }.into_any(),
                     None => view! { "—" }.into_any(),
                 }}
             </td>
-            <td>
+            <td class="px-md py-sm">
                 <span class=status_class>{status_label}</span>
                 {detail_view}
             </td>
@@ -170,14 +169,19 @@ mod tests {
         }
     }
 
+    fn sample_data(rows: Vec<SyncLogRow>) -> SyncLogPageData {
+        SyncLogPageData {
+            top_nav_html: "<header>nav</header>".to_string(),
+            calendar_name: "Work <Calendar>".to_string(),
+            rows,
+        }
+    }
+
     #[test]
     fn renders_with_rows() {
         any_spawner::Executor::init_futures_executor().ok();
-        let data = SyncLogPageData {
-            calendar_name: "Work <Calendar>".to_string(),
-            rows: vec![sample_row()],
-        };
-        let html = view! { <SyncLogPage data=data/> }.to_html();
+        let html = leptos::prelude::Owner::new()
+            .with(|| view! { <SyncLogPage data=sample_data(vec![sample_row()])/> }.to_html());
         assert!(html.contains("evt-123"));
         assert!(html.contains("notion.so/abcd12345678"));
         assert!(html.contains("&lt;Calendar&gt;") || html.contains("Work"));
@@ -186,11 +190,8 @@ mod tests {
     #[test]
     fn renders_empty_state_without_panicking() {
         any_spawner::Executor::init_futures_executor().ok();
-        let data = SyncLogPageData {
-            calendar_name: "Empty".to_string(),
-            rows: vec![],
-        };
-        let html = view! { <SyncLogPage data=data/> }.to_html();
+        let html = leptos::prelude::Owner::new()
+            .with(|| view! { <SyncLogPage data=sample_data(vec![])/> }.to_html());
         assert!(html.contains("Chưa có hoạt động đồng bộ nào được ghi lại"));
     }
 
@@ -199,11 +200,8 @@ mod tests {
         any_spawner::Executor::init_futures_executor().ok();
         let mut row = sample_row();
         row.detail = "</script><script>alert(1)</script>".to_string();
-        let data = SyncLogPageData {
-            calendar_name: "X".to_string(),
-            rows: vec![row],
-        };
-        let html = view! { <SyncLogShell data=data/> }.to_html();
+        let html = leptos::prelude::Owner::new()
+            .with(|| view! { <SyncLogShell data=sample_data(vec![row])/> }.to_html());
         assert!(!html.contains("</script><script>alert"));
     }
 }

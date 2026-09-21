@@ -178,25 +178,6 @@ pub(crate) fn error_page(lang: crate::i18n::Lang, err: OauthError) -> axum::resp
     .into_response()
 }
 
-fn onboarding_top_nav(email: &str, lang: crate::i18n::Lang) -> String {
-    let logout = match lang {
-        crate::i18n::Lang::Vi => "Đăng xuất",
-        crate::i18n::Lang::En => "Log out",
-    };
-    format!(
-        r#"<header class="bg-surface border-b border-outline-variant fixed top-0 left-0 right-0 z-50">
-<nav class="flex justify-between items-center w-full px-margin-desktop h-[56px] max-w-[1280px] mx-auto">
-<span class="text-h2 font-semibold text-primary">NotionCal</span>
-<div class="flex items-center gap-lg">
-<span class="text-on-surface-variant text-label-md">{}</span>
-<a class="text-primary hover:bg-surface-container-low transition-colors px-sm py-xs rounded-lg text-label-md" href="/logout">{logout}</a>
-</div>
-</nav>
-</header>"#,
-        html_escape(email)
-    )
-}
-
 struct ConnectNotionLabels {
     title: &'static str,
     heading: &'static str,
@@ -246,7 +227,7 @@ pub async fn connect_notion_page(
     let data = app::connect_notion::ConnectNotionPageData {
         html_lang: lang.code().to_string(),
         title: l.title.to_string(),
-        top_nav_html: onboarding_top_nav(email, lang),
+        top_nav_html: crate::i18n::top_nav_html(email, lang, "/connect/notion"),
         heading: l.heading.to_string(),
         body: l.body.to_string(),
         connect_cta: l.connect_cta.to_string(),
@@ -554,7 +535,7 @@ pub async fn pick_databases_page(
     };
 
     let data = app::pick_databases::PickDatabasesPageData {
-        top_nav_html: onboarding_top_nav(&email, lang),
+        top_nav_html: crate::i18n::top_nav_html(&email, lang, "/connect/notion/databases"),
         connection_id: params.connection_id,
         candidates: candidates
             .into_iter()
@@ -939,7 +920,13 @@ pub async fn sync_log_page(
         Vec::new()
     });
 
+    let email = claims.email().map(|e| e.as_str()).unwrap_or("");
     let data = app::sync_log::SyncLogPageData {
+        top_nav_html: crate::i18n::top_nav_html(
+            email,
+            lang,
+            &format!("/me/calendars/{public_id}/log"),
+        ),
         calendar_name: cal.display_name,
         rows: rows.into_iter().map(Into::into).collect(),
     };

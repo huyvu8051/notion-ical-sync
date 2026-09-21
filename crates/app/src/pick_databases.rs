@@ -25,7 +25,7 @@ pub fn PickDatabasesShell(data: PickDatabasesPageData) -> impl IntoView {
         format!("window.__PICK_DATABASES_DATA__ = {script_breakout_safe_json};");
 
     let head_html = format!(
-        r#"<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Chọn cơ sở dữ liệu — NotionCal</title><link rel="stylesheet" href="/assets/style-oauth.css"><link href="{fonts}" rel="stylesheet"><style>{style}</style><script>{data_script}</script><script type="module">import init, {{ hydrate_pick_databases }} from '/pkg/app.js'; init('/pkg/app_bg.wasm').then(() => hydrate_pick_databases(JSON.stringify(window.__PICK_DATABASES_DATA__)));</script>"#,
+        r#"<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Chọn cơ sở dữ liệu — NotionCal</title><link rel="stylesheet" href="/assets/style-auth-a.css"><link href="{fonts}" rel="stylesheet"><style>{style}</style><script>{data_script}</script><script type="module">import init, {{ hydrate_pick_databases }} from '/pkg/app.js'; init('/pkg/app_bg.wasm').then(() => hydrate_pick_databases(JSON.stringify(window.__PICK_DATABASES_DATA__)));</script>"#,
         fonts = crate::connect_notion::GOOGLE_FONTS_HREF,
         style = crate::connect_notion::ONBOARDING_HEAD_STYLE,
         data_script = inline_data_script,
@@ -50,7 +50,7 @@ pub fn PickDatabasesPage(data: PickDatabasesPageData) -> impl IntoView {
         return view! {
             <div id="pick-databases-root">
                 <div inner_html=top_nav_html></div>
-                <main class="flex-grow flex flex-col items-center justify-center pt-[56px] px-margin-mobile text-center">
+                <main class="flex-grow flex flex-col items-center justify-center px-margin-mobile text-center">
                     <h1 class="text-h1 text-primary mb-sm">"Chọn cơ sở dữ liệu để đồng bộ"</h1>
                     <p class="text-on-surface-variant text-body-lg">
                         "Không tìm thấy cơ sở dữ liệu nào bạn đã cấp quyền. "
@@ -131,7 +131,7 @@ pub fn PickDatabasesPage(data: PickDatabasesPageData) -> impl IntoView {
     view! {
         <div id="pick-databases-root">
             <div inner_html=top_nav_html></div>
-            <main class="flex-grow flex flex-col pt-[80px] pb-32">
+            <main class="flex-grow flex flex-col pt-lg pb-32">
                 <div class="max-w-[720px] mx-auto w-full px-margin-mobile md:px-0">
                     <section class="mb-xl">
                         <h1 class="text-h1 text-primary mb-sm">"Chọn cơ sở dữ liệu để đồng bộ"</h1>

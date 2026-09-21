@@ -178,7 +178,6 @@ struct MeLabels {
     delete_confirm: &'static str,
     empty_state: &'static str,
     page_title: &'static str,
-    logout_title: &'static str,
     heading: &'static str,
     subheading: &'static str,
     connect_more: &'static str,
@@ -209,7 +208,6 @@ const ME_LABELS_VI: MeLabels = MeLabels {
         "Xoá calendar này? Dữ liệu trên Notion không bị ảnh hưởng, nhưng lịch sẽ ngừng đồng bộ.",
     empty_state: "Chưa có calendar nào — kết nối Notion để bắt đầu.",
     page_title: "Trang của bạn — NotionCal",
-    logout_title: "Đăng xuất",
     heading: "Calendar của bạn",
     subheading:
         "Quản lý và đồng bộ hóa các cơ sở dữ liệu Notion với ứng dụng lịch yêu thích của bạn.",
@@ -241,7 +239,6 @@ const ME_LABELS_EN: MeLabels = MeLabels {
         "Delete this calendar? Your Notion data is untouched, but it will stop syncing.",
     empty_state: "No calendars yet — connect Notion to get started.",
     page_title: "Your calendars — NotionCal",
-    logout_title: "Log out",
     heading: "Your calendars",
     subheading: "Manage and sync your Notion databases with your favorite calendar app.",
     connect_more: "Connect another database",
@@ -424,25 +421,7 @@ pub async fn me(
         l.empty_state
     );
 
-    let lang_toggle = crate::i18n::lang_toggle(lang, "/me");
-
-    let header_html = format!(
-        r#"<header class="bg-surface border-b border-outline-variant sticky top-0 z-50">
-<div class="flex justify-between items-center h-16 px-lg w-full max-w-[1280px] mx-auto">
-<span class="text-h1 font-semibold tracking-tighter text-primary">NotionCal</span>
-<div class="flex items-center space-x-md">
-{lang_toggle}
-<span class="text-on-surface-variant font-label-md text-label-md">{email}</span>
-<a class="flex items-center justify-center w-8 h-8 hover:bg-surface-container-low transition-colors duration-200 rounded" href="/logout" title="{logout_title}">
-<span class="material-symbols-outlined">logout</span>
-</a>
-</div>
-</div>
-</header>"#,
-        lang_toggle = lang_toggle,
-        email = html_escape(&email),
-        logout_title = l.logout_title,
-    );
+    let header_html = crate::i18n::top_nav_html(&email, lang, "/me");
 
     let main_top_html = format!(
         r#"{banner}
