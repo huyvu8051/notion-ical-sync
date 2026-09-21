@@ -173,6 +173,9 @@ pub fn PickDatabasesRoutePage() -> impl IntoView {
 
 #[component]
 pub fn PickDatabasesPage(data: PickDatabasesPageData) -> impl IntoView {
+    #[cfg(feature = "hydrate")]
+    crate::page_shell::install_client_timezone_label();
+
     let top_nav_html = data.top_nav_html.clone();
 
     if data.candidates.is_empty() {

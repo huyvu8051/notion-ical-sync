@@ -419,6 +419,9 @@ function copyToClipboard(text, btn) {
 
 #[component]
 pub fn MePage(data: MePageData) -> impl IntoView {
+    #[cfg(feature = "hydrate")]
+    crate::page_shell::install_client_timezone_label();
+
     let header_html = data.header_html.clone();
     let main_top_html = data.main_top_html.clone();
     let main_bottom_html = data.main_bottom_html.clone();

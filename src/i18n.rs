@@ -114,6 +114,7 @@ pub fn top_nav_html(email: &str, lang: Lang, current_path: &str) -> String {
 <a href="/" class="text-h1 font-semibold tracking-tighter text-primary hover:opacity-70 transition-opacity">NotionCal</a>
 <div class="flex items-center space-x-md">
 {lang_toggle}
+<span id="client-tz" class="text-label-md text-on-surface-variant"></span>
 <span class="text-on-surface-variant font-label-md text-label-md">{email}</span>
 <a class="flex items-center justify-center w-8 h-8 hover:bg-surface-container-low transition-colors duration-200 rounded" href="/logout" title="{logout_title}">
 <span class="material-symbols-outlined">logout</span>

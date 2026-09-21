@@ -91,6 +91,9 @@ pub fn ConnectNotionRoutePage() -> impl IntoView {
 
 #[component]
 pub fn ConnectNotionPage(data: ConnectNotionPageData) -> impl IntoView {
+    #[cfg(feature = "hydrate")]
+    crate::page_shell::install_client_timezone_label();
+
     let body_html = format!(
         r##"{top_nav}
 <main class="flex-grow flex items-center justify-center px-margin-mobile md:px-margin-desktop">

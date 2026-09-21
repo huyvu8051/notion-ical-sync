@@ -628,6 +628,9 @@ struct EventPayload {
 
 #[component]
 pub fn WebviewPage(data: WebviewPageData) -> impl IntoView {
+    #[cfg(feature = "hydrate")]
+    crate::page_shell::install_client_timezone_label();
+
     let header_html = data.header_html.clone();
     let mapbox_token = data.mapbox_token.clone();
 

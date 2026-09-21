@@ -138,6 +138,54 @@ pub(crate) fn current_user_email() -> String {
         .unwrap_or_default()
 }
 
+const CLIENT_TZ_SPAN_HTML: &str =
+    r#"<span id="client-tz" class="text-label-md text-on-surface-variant"></span>"#;
+
+#[cfg(feature = "hydrate")]
+pub(crate) fn install_client_timezone_label() {
+    leptos::prelude::Effect::new(move |_| {
+        let Some(document) = web_sys::window().and_then(|w| w.document()) else {
+            return;
+        };
+        let Some(el) = document.get_element_by_id("client-tz") else {
+            return;
+        };
+        let label = js_sys::eval(
+            r#"(function() {
+                var tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+                var offsetMin = -new Date().getTimezoneOffset();
+                var sign = offsetMin >= 0 ? '+' : '-';
+                var abs = Math.abs(offsetMin);
+                var hours = Math.floor(abs / 60);
+                var minutes = abs % 60;
+                var utc = 'UTC' + sign + hours + (minutes ? ':' + String(minutes).padStart(2, '0') : '');
+                return tz + ' (' + utc + ')';
+            })()"#,
+        )
+        .ok()
+        .and_then(|v| v.as_string())
+        .unwrap_or_default();
+        el.set_text_content(Some(&label));
+    });
+}
+
+#[cfg(feature = "hydrate")]
+pub(crate) fn install_client_local_time_labels() {
+    leptos::prelude::Effect::new(move |_| {
+        let _ = js_sys::eval(
+            r#"(function() {
+                var pad = function(n) { return String(n).padStart(2, '0'); };
+                document.querySelectorAll('.occurred-at[data-utc]').forEach(function(el) {
+                    var d = new Date(el.getAttribute('data-utc'));
+                    if (isNaN(d.getTime())) { return; }
+                    el.textContent = d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate())
+                        + ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes()) + ':' + pad(d.getSeconds());
+                });
+            })()"#,
+        );
+    });
+}
+
 fn lang_toggle_html(lang: &str, current_path: &str) -> String {
     let (other_code, other_label) = if lang == "en" {
         ("vi", "VI")
@@ -169,6 +217,7 @@ pub(crate) fn top_nav_html(email: &str, lang: &str, current_path: &str) -> Strin
 <a href="/" class="text-h1 font-semibold tracking-tighter text-primary hover:opacity-70 transition-opacity">NotionCal</a>
 <div class="flex items-center space-x-md">
 {lang_toggle}
+{client_tz}
 <span class="text-on-surface-variant font-label-md text-label-md">{email}</span>
 <a class="flex items-center justify-center w-8 h-8 hover:bg-surface-container-low transition-colors duration-200 rounded" href="/logout" title="{logout_title}">
 <span class="material-symbols-outlined">logout</span>
@@ -177,6 +226,7 @@ pub(crate) fn top_nav_html(email: &str, lang: &str, current_path: &str) -> Strin
 </div>
 </header>"#,
         lang_toggle = lang_toggle_html(lang, current_path),
+        client_tz = CLIENT_TZ_SPAN_HTML,
         email = html_escape(email),
     )
 }
