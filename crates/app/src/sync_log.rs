@@ -14,14 +14,26 @@ pub struct SyncLogRow {
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct SyncLogPageData {
+    pub html_lang: String,
     pub top_nav_html: String,
     pub calendar_name: String,
+    pub heading_label: String,
+    pub col_time: String,
+    pub col_source: String,
+    pub col_action: String,
+    pub col_event_uid: String,
+    pub col_notion_page: String,
+    pub col_result: String,
+    pub empty_state: String,
+    pub status_ok: String,
+    pub status_error: String,
     pub rows: Vec<SyncLogRow>,
 }
 
 #[component]
 pub fn SyncLogShell(data: SyncLogPageData) -> impl IntoView {
-    let title = format!("Log đồng bộ — {}", data.calendar_name);
+    let html_lang = data.html_lang.clone();
+    let title = format!("{} — {}", data.heading_label, data.calendar_name);
 
     let json = serde_json::to_string(&data).unwrap_or_default();
     let script_breakout_safe_json = json.replace('<', "\\u003c");
@@ -36,7 +48,7 @@ pub fn SyncLogShell(data: SyncLogPageData) -> impl IntoView {
 
     view! {
         <!DOCTYPE html>
-        <html lang="vi">
+        <html lang=html_lang>
             <head inner_html=head_html></head>
             <body class="bg-background text-on-surface font-body-md min-h-screen">
                 <SyncLogPage data=data/>
@@ -48,12 +60,15 @@ pub fn SyncLogShell(data: SyncLogPageData) -> impl IntoView {
 #[component]
 pub fn SyncLogPage(data: SyncLogPageData) -> impl IntoView {
     let top_nav_html = data.top_nav_html.clone();
+    let status_ok = data.status_ok.clone();
+    let status_error = data.status_error.clone();
+    let heading = format!("{} — {}", data.heading_label, data.calendar_name);
 
     let body_rows = if data.rows.is_empty() {
         view! {
             <tr>
                 <td colspan="6" class="text-center text-on-surface-variant text-body-md py-xl">
-                    "Chưa có hoạt động đồng bộ nào được ghi lại."
+                    {data.empty_state.clone()}
                 </td>
             </tr>
         }
@@ -61,7 +76,11 @@ pub fn SyncLogPage(data: SyncLogPageData) -> impl IntoView {
     } else {
         data.rows
             .into_iter()
-            .map(|row| view! { <SyncLogRowView row=row/> })
+            .map(|row| {
+                view! {
+                    <SyncLogRowView row=row status_ok=status_ok.clone() status_error=status_error.clone()/>
+                }
+            })
             .collect_view()
             .into_any()
     };
@@ -74,18 +93,18 @@ pub fn SyncLogPage(data: SyncLogPageData) -> impl IntoView {
                     <a class="flex items-center justify-center w-8 h-8 hover:bg-surface-container-low transition-colors duration-200 rounded" href="/me">
                         <span class="material-symbols-outlined">arrow_back</span>
                     </a>
-                    <h1 class="text-h1 font-semibold">{format!("Log đồng bộ — {}", data.calendar_name)}</h1>
+                    <h1 class="text-h1 font-semibold">{heading}</h1>
                 </div>
                 <div class="bg-surface border border-outline-variant rounded-lg overflow-hidden overflow-x-auto">
                     <table class="w-full text-body-md">
                         <thead>
                             <tr class="bg-surface-container-low text-on-surface-variant text-label-md uppercase tracking-wide">
-                                <th class="text-left font-medium px-md py-sm">"Thời gian"</th>
-                                <th class="text-left font-medium px-md py-sm">"Nguồn"</th>
-                                <th class="text-left font-medium px-md py-sm">"Hành động"</th>
-                                <th class="text-left font-medium px-md py-sm">"UID sự kiện"</th>
-                                <th class="text-left font-medium px-md py-sm">"Notion page"</th>
-                                <th class="text-left font-medium px-md py-sm">"Kết quả"</th>
+                                <th class="text-left font-medium px-md py-sm">{data.col_time}</th>
+                                <th class="text-left font-medium px-md py-sm">{data.col_source}</th>
+                                <th class="text-left font-medium px-md py-sm">{data.col_action}</th>
+                                <th class="text-left font-medium px-md py-sm">{data.col_event_uid}</th>
+                                <th class="text-left font-medium px-md py-sm">{data.col_notion_page}</th>
+                                <th class="text-left font-medium px-md py-sm">{data.col_result}</th>
                             </tr>
                         </thead>
                         <tbody>{body_rows}</tbody>
@@ -97,13 +116,13 @@ pub fn SyncLogPage(data: SyncLogPageData) -> impl IntoView {
 }
 
 #[component]
-fn SyncLogRowView(row: SyncLogRow) -> impl IntoView {
+fn SyncLogRowView(row: SyncLogRow, status_ok: String, status_error: String) -> impl IntoView {
     let status_class = if row.status == "ok" {
         "text-[#166534] font-semibold"
     } else {
         "text-error font-semibold"
     };
-    let status_label = if row.status == "ok" { "OK" } else { "Lỗi" };
+    let status_label = if row.status == "ok" { status_ok } else { status_error };
     let uid_display = if row.event_uid.is_empty() {
         "—".to_string()
     } else {
@@ -171,8 +190,19 @@ mod tests {
 
     fn sample_data(rows: Vec<SyncLogRow>) -> SyncLogPageData {
         SyncLogPageData {
+            html_lang: "vi".to_string(),
             top_nav_html: "<header>nav</header>".to_string(),
             calendar_name: "Work <Calendar>".to_string(),
+            heading_label: "Log đồng bộ".to_string(),
+            col_time: "Thời gian".to_string(),
+            col_source: "Nguồn".to_string(),
+            col_action: "Hành động".to_string(),
+            col_event_uid: "UID sự kiện".to_string(),
+            col_notion_page: "Notion page".to_string(),
+            col_result: "Kết quả".to_string(),
+            empty_state: "Chưa có hoạt động đồng bộ nào được ghi lại.".to_string(),
+            status_ok: "OK".to_string(),
+            status_error: "Lỗi".to_string(),
             rows,
         }
     }
