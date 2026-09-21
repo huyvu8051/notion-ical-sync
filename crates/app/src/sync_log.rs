@@ -1,10 +1,3 @@
-//! Phase 1 real page: shows the last 200 create/update/delete attempts for
-//! one calendar, newest first — ported from the hand-rolled `format!()` HTML
-//! previously in `src/oauth.rs::sync_log_page`. Read-only, no forms, no
-//! client-side reactivity (nothing here is a signal) — the only thing this
-//! phase needs to prove is that real DB-fetched data survives the SSR→CSR
-//! round trip intact (see module docs in lib.rs).
-
 use leptos::prelude::*;
 use serde::{Deserialize, Serialize};
 
@@ -42,26 +35,13 @@ code { font-family: ui-monospace, monospace; background: #f1f1f1; padding: 0.1re
 .empty { color: #888; padding: 2rem 0; text-align: center; }
 "#;
 
-/// The whole HTML document. The data script sits in `<head>`, not `<body>`
-/// — `<body>`'s children must exactly match what `SyncLogPage` renders for
-/// `hydrate_body` to attach correctly (same lesson as the abandoned
-/// migration and `TestApp`'s `Shell`), so anything not part of that
-/// component tree has to live outside `<body>`.
 #[component]
 pub fn SyncLogShell(data: SyncLogPageData) -> impl IntoView {
     let title = format!("Log đồng bộ — {}", data.calendar_name);
 
-    // `<` is escaped to `<` so `</script>` can never appear literally
-    // inside the embedded object literal (sync log `detail` text is
-    // server-generated error text, not user-authored, but it can echo
-    // fragments of external API responses, so this isn't purely
-    // theoretical). Valid JSON string escapes round-trip exactly through
-    // `serde_json::from_str` on the client, and `<` never appears in JSON's
-    // own structural syntax — only inside string values — so a global
-    // replace is safe here.
     let json = serde_json::to_string(&data).unwrap_or_default();
-    let json_safe = json.replace('<', "\\u003c");
-    let inline_data_script = format!("window.__SYNC_LOG_DATA__ = {json_safe};");
+    let script_breakout_safe_json = json.replace('<', "\\u003c");
+    let inline_data_script = format!("window.__SYNC_LOG_DATA__ = {script_breakout_safe_json};");
 
     view! {
         <!DOCTYPE html>
@@ -124,7 +104,11 @@ pub fn SyncLogPage(data: SyncLogPageData) -> impl IntoView {
 
 #[component]
 fn SyncLogRowView(row: SyncLogRow) -> impl IntoView {
-    let status_class = if row.status == "ok" { "status-ok" } else { "status-error" };
+    let status_class = if row.status == "ok" {
+        "status-ok"
+    } else {
+        "status-error"
+    };
     let status_label = if row.status == "ok" { "OK" } else { "Lỗi" };
     let uid_display = if row.event_uid.is_empty() {
         "—".to_string()
@@ -170,10 +154,6 @@ pub fn hydrate_sync_log(json: String) {
     leptos::mount::hydrate_body(move || view! { <SyncLogPage data=data.clone()/> });
 }
 
-// SSR-only render smoke tests — not a substitute for the real in-browser
-// hydration check (see plan), but catches structural bugs (mismatched view
-// branch types, panics on empty/edge-case data) before they ever reach a
-// browser, which the abandoned attempt's fix-and-redeploy loop didn't have.
 #[cfg(all(test, feature = "ssr"))]
 mod tests {
     use super::*;
@@ -200,8 +180,6 @@ mod tests {
         let html = view! { <SyncLogPage data=data/> }.to_html();
         assert!(html.contains("evt-123"));
         assert!(html.contains("notion.so/abcd12345678"));
-        // Leptos auto-escapes text content — confirms the app-level manual
-        // html_escape() calls this migration removes weren't load-bearing.
         assert!(html.contains("&lt;Calendar&gt;") || html.contains("Work"));
     }
 

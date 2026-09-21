@@ -1,26 +1,18 @@
-//! Keycloak/OIDC wiring for the SaaS's own login (separate from the Notion
-//! OAuth in oauth.rs, which is *this app's* permission to read/write a
-//! user's Notion workspace — two different identities, don't conflate them).
-//! Pattern copied from biolink-vn/src/auth.rs, which has the same axum-oidc +
-//! tower-sessions shape.
-
+use crate::AppState;
 use axum::extract::{FromRequestParts, State};
 use axum::http::request::Parts;
-use axum::response::{IntoResponse, Redirect};
+use axum::response::IntoResponse;
 use axum_oidc::openidconnect::core::CoreGenderClaim;
 use axum_oidc::openidconnect::{ClientId, ClientSecret, IssuerUrl, Scope};
 use axum_oidc::{
     EmptyAdditionalClaims, OidcClaims, OidcClient, OidcRpInitiatedLogout, OidcSession,
 };
-use crate::AppState;
 
 #[derive(Clone)]
 pub struct AppConfig {
     pub base_url: String,
 }
 
-/// Bridges axum-oidc's session trait to the tower-sessions cookie session —
-/// boilerplate required by the crate, not app-specific logic.
 pub struct SessionWrapper(pub tower_sessions::Session);
 
 impl<S: Send + Sync> FromRequestParts<S> for SessionWrapper {
@@ -50,19 +42,11 @@ impl axum_oidc::Session<EmptyAdditionalClaims> for SessionWrapper {
     }
 }
 
-/// Keycloak and this app land on the same node, so a node-level event
-/// (host reboot, containerd restart) that recreates every pod's sandbox at
-/// once routinely leaves Keycloak still coming back up when this process
-/// starts — a real incident on 2026-08-07 crash-looped the whole app for
-/// about a minute because a single transient 503 from Keycloak's discovery
-/// endpoint was treated as fatal. Retry with backoff instead of panicking on
-/// the first failure; only give up once Keycloak has had a real chance
-/// (~2 minutes) to come back.
 const OIDC_DISCOVERY_MAX_ATTEMPTS: u32 = 8;
 const OIDC_DISCOVERY_INITIAL_BACKOFF: std::time::Duration = std::time::Duration::from_secs(2);
 const OIDC_DISCOVERY_MAX_BACKOFF: std::time::Duration = std::time::Duration::from_secs(30);
 
-pub async fn build_oidc_client(
+pub async fn build_oidc_client_with_startup_retry(
     issuer: String,
     client_id: String,
     client_secret: Option<String>,
@@ -85,8 +69,7 @@ pub async fn build_oidc_client(
             builder = builder.with_client_secret(ClientSecret::new(secret));
         }
 
-        let issuer_url =
-            IssuerUrl::new(issuer.clone()).expect("invalid KEYCLOAK_ISSUER_URL");
+        let issuer_url = IssuerUrl::new(issuer.clone()).expect("invalid KEYCLOAK_ISSUER_URL");
         match builder.discover(issuer_url).await {
             Ok(builder) => return builder.build(),
             Err(e) if attempt < OIDC_DISCOVERY_MAX_ATTEMPTS => {
@@ -107,11 +90,6 @@ pub async fn build_oidc_client(
     unreachable!("loop always returns or panics on the last attempt")
 }
 
-/// Find-or-create the `users` row for this Keycloak login, returning its id.
-/// Also the single choke point for the welcome email: `(xmax = 0)` tells us
-/// whether this INSERT actually inserted a new row vs. hit the ON CONFLICT
-/// branch, so every one of this function's callers gets welcome-email
-/// coverage for free instead of needing their own "is this a new user" check.
 pub async fn find_or_create_user(
     state: &AppState,
     keycloak_sub: &str,
@@ -181,13 +159,6 @@ pub(crate) const AUTH_STYLE: &str = r#"
 </style>
 "#;
 
-/// Post-login landing: lists the user's own calendars, with a CTA to connect
-/// more Notion databases (see oauth.rs). Doubles as the "onboarding
-/// complete" screen right after `create_calendars` redirects here.
-/// `/me`'s copy in both languages — a plain struct of `&'static str` fields
-/// rather than a translation-string crate, since this is the only page with
-/// this much dynamic-content-interleaved-with-copy; see i18n.rs for the
-/// detection/toggle machinery this plugs into.
 struct MeLabels {
     html_lang: &'static str,
     error_generic: &'static str,
@@ -359,12 +330,8 @@ pub async fn me(
     .await
     .unwrap_or_default();
 
-    // Plaintext CalDAV passwords only ever exist for one request — a
-    // calendar just created, or one whose password was just revealed or
-    // regenerated (see oauth.rs), stashes it here in the session for this
-    // one render.
-    let new_passwords = crate::oauth::take_new_calendar_credentials(&session).await;
-    let banner = if !new_passwords.is_empty() {
+    let one_shot_plaintext_passwords = crate::oauth::take_new_calendar_credentials(&session).await;
+    let banner = if !one_shot_plaintext_passwords.is_empty() {
         format!(
             r#"<div class="flex items-center gap-sm p-md success-banner-gradient border border-[#DCFCE7] rounded-lg" id="success-banner">
 <div class="flex items-center justify-center w-6 h-6 bg-[#DCFCE7] text-[#166534] rounded-full shrink-0">
@@ -378,10 +345,6 @@ pub async fn me(
         String::new()
     };
 
-    // A user can't add the exact same database to their own account twice
-    // (UNIQUE(user_id, database_id), see migrations/0003) — surface that
-    // here instead of failing silently. Different users *can* now each have
-    // their own subscription to the same Notion database.
     let connect_errors = crate::oauth::take_calendar_connect_errors(&session).await;
     let error_banner = if connect_errors.is_empty() {
         String::new()
@@ -420,9 +383,13 @@ pub async fn me(
     let cards: Vec<app::me::CalendarCardData> = calendars
         .iter()
         .map(|(public_id, name, caldav_username)| {
-            let label = if name.is_empty() { public_id.as_str() } else { name.as_str() };
+            let label = if name.is_empty() {
+                public_id.as_str()
+            } else {
+                name.as_str()
+            };
             let caldav_url = format!("{}/cal/{}", cfg.base_url, public_id);
-            let password_row_html = match new_passwords.get(caldav_username) {
+            let password_row_html = match one_shot_plaintext_passwords.get(caldav_username) {
                 Some(pw) => copy_row(l.caldav_password_label, pw),
                 None => String::new(),
             };
@@ -459,12 +426,6 @@ pub async fn me(
 
     let lang_toggle = crate::i18n::lang_toggle(lang, "/me");
 
-    // Fully self-contained (all tags balanced) — see module doc in
-    // crates/app/src/me.rs for why: inner_html content is pushed straight
-    // into the SSR HTML stream, not parsed in an isolated fragment context,
-    // so an unclosed tag here would silently reshape the rest of the
-    // document instead of being contained. `<main>` is a real view!
-    // element in crates/app, not part of either string below.
     let header_html = format!(
         r#"<header class="bg-surface border-b border-outline-variant sticky top-0 z-50">
 <div class="flex justify-between items-center h-16 px-lg w-full max-w-[1280px] mx-auto">
@@ -534,21 +495,6 @@ pub async fn logout(
     logout.with_post_logout_redirect(redirect_uri)
 }
 
-/// Convenience for routes that just need "is anyone logged in" without
-/// wanting the full claims — currently unused but kept small/available for
-/// Phase 3's onboarding checks.
-pub async fn redirect_root_to_me() -> Redirect {
-    Redirect::to("/me")
-}
-
-/// Public marketing landing page at `/` — ports the Stitch "Trang chủ" mockup
-/// (project 7966553897766226544, screen eceda80d9000472cbd5e362a94e1bde1)
-/// verbatim, with its placeholder nav/footer links (Tài liệu, Giá cả,
-/// Security, Status — pages that don't exist) trimmed down to links that
-/// actually go somewhere. `/` is otherwise the CalDAV protocol root (see
-/// caldav.rs's `auth_middleware`/`handle_host_calendar`) — this only renders
-/// for unauthenticated GET/HEAD requests on hosts with no personal calendar
-/// alias, so calendar.opendiy.vn / mytime.opendiy.vn are unaffected.
 pub async fn landing_page(
     lang: crate::i18n::Lang,
     request: axum::extract::Request,

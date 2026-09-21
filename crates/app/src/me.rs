@@ -1,32 +1,3 @@
-//! Phase B2 of the full Leptos SSR+CSR migration — the `/me` dashboard.
-//! Highest data complexity so far (claims + billing + calendars + one-shot
-//! session-stashed banners) and the first page to fold in
-//! `crates/islands::ConfirmButton` (see `confirm_button.rs`) as native
-//! hydrated components instead of the separate island-mounting mechanism.
-//!
-//! Structure: everything with zero interactivity (header, banners, billing
-//! card, heading section, footer links, per-calendar copy-rows) is prepared
-//! server-side as HTML strings and mounted via `inner_html` — same reasoning
-//! as `connect_notion.rs`/`pick_databases.rs`. Only the calendar-card list is
-//! real `view!` nodes, because each card's regenerate/delete buttons must be
-//! actual children of the tree `hydrate_body` walks — a component embedded
-//! via `.to_html()` into a surrounding string (the old islands approach)
-//! never gets hydrated that way; hydration only finds/attaches to nodes that
-//! are part of the same component tree passed to `hydrate_body`.
-//!
-//! `<main>` is a real `view!` element wrapping the banners/billing
-//! `inner_html` block, the real calendar-card list, and the footer
-//! `inner_html` block — NOT an unclosed tag left open across two separate
-//! `inner_html` strings the way an earlier version of this file (and
-//! `webview.rs`, before it hit a real hydration panic) tried. Confirmed by
-//! reading tachys's source: `inner_html` content is pushed directly into
-//! the same SSR HTML output buffer as everything else, not parsed in an
-//! isolated fragment context — an unclosed tag left dangling at the end of
-//! one `inner_html` string silently reshapes the rest of the document
-//! (the next literal `</div>` anywhere later closes *it* instead of
-//! whatever it was actually meant to close), which hydration then trips
-//! over. See `webview.rs`'s module doc for the full writeup.
-
 use leptos::prelude::*;
 use serde::{Deserialize, Serialize};
 
@@ -40,8 +11,6 @@ pub struct CalendarCardData {
     pub open_calendar_label: String,
     pub url_row_html: String,
     pub username_row_html: String,
-    /// Empty when no plaintext password is available this render (only
-    /// present right after create/reveal/regenerate — see `oauth.rs`).
     pub password_row_html: String,
     pub paste_hint: String,
     pub reveal_password_label: String,
@@ -60,18 +29,10 @@ pub struct CalendarCardData {
 pub struct MePageData {
     pub html_lang: String,
     pub page_title: String,
-    /// `<header>` — fully self-contained (balanced tags).
     pub header_html: String,
-    /// Banners + billing card + heading section — everything inside
-    /// `<main>` above the calendar list. Fully self-contained; `<main>`
-    /// itself is a real `view!` element (see module doc for why it can't be
-    /// an unclosed tag spanning into this string).
     pub main_top_html: String,
-    /// Footer links, inside `<main>` below the calendar list. Also fully
-    /// self-contained.
     pub main_bottom_html: String,
     pub calendars: Vec<CalendarCardData>,
-    /// Shown instead of the calendar list when `calendars` is empty.
     pub empty_state_html: String,
 }
 
@@ -94,16 +55,13 @@ function copyToClipboard(text, btn) {
 }
 "#;
 
-/// The whole HTML document. `<head>` (SEO-irrelevant here, just styles/fonts
-/// + the copy-to-clipboard global + data script/hydrate bootstrap) is one
-/// `inner_html` blob for the same reason as the other Phase A/B pages.
 #[component]
 pub fn MeShell(data: MePageData) -> impl IntoView {
     let html_lang = data.html_lang.clone();
 
     let json = serde_json::to_string(&data).unwrap_or_default();
-    let json_safe = json.replace('<', "\\u003c");
-    let inline_data_script = format!("window.__ME_DATA__ = {json_safe};");
+    let script_breakout_safe_json = json.replace('<', "\\u003c");
+    let inline_data_script = format!("window.__ME_DATA__ = {script_breakout_safe_json};");
 
     let head_html = format!(
         r#"<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>{title}</title><link rel="stylesheet" href="/assets/style-auth-a.css"><link href="{fonts_a}" rel="stylesheet"><link href="{fonts_b}" rel="stylesheet"><style>{style}</style><script>{copy_js}</script><script>{data_script}</script><script type="module">import init, {{ hydrate_me }} from '/pkg/app.js'; init('/pkg/app_bg.wasm').then(() => hydrate_me(JSON.stringify(window.__ME_DATA__)));</script>"#,
@@ -200,7 +158,8 @@ fn CalendarCard(data: CalendarCardData) -> impl IntoView {
 #[wasm_bindgen::prelude::wasm_bindgen]
 pub fn hydrate_me(json: String) {
     console_error_panic_hook::set_once();
-    let data: MePageData = serde_json::from_str(&json).expect("invalid /me page payload from server");
+    let data: MePageData =
+        serde_json::from_str(&json).expect("invalid /me page payload from server");
     leptos::mount::hydrate_body(move || view! { <MePage data=data.clone()/> });
 }
 
@@ -251,7 +210,6 @@ mod tests {
         assert!(html.contains("abc123"));
         assert!(html.contains("/me/calendars/abc123/regenerate-password"));
         assert!(html.contains("/me/calendars/abc123/delete"));
-        // Leptos auto-escapes text content.
         assert!(html.contains("&lt;Cal&gt;") || html.contains("Work"));
     }
 

@@ -1,28 +1,3 @@
-//! Phase B3 (final page) of the full Leptos SSR+CSR migration — the
-//! `/app/{public_id}` calendar webview. FullCalendar (CDN JS, no Leptos
-//! binding exists for it) stays exactly as-is per the user's explicit
-//! decision: only the page *shell* is a real Leptos SSR+hydrate tree;
-//! `webview_js()`'s content (FullCalendar init, drag/drop, modal
-//! open/close/save, `fetch()` calls to the existing CRUD routes) is
-//! unchanged and runs after hydration exactly as before.
-//!
-//! **No `crates/islands::ConfirmActionButton` fold-in here, unlike `me.rs`'s
-//! `ConfirmButton`.** An earlier version of this file did fold it in, and
-//! hit a real, browser-verified (real Keycloak+Postgres stack, not just SSR
-//! unit tests) `tachys::hydration::failed_to_cast_element` /
-//! `failed_to_cast_text_node` panic. An isolated experiment — swapping
-//! `ConfirmActionButton` for a plain static `<button>` with everything else
-//! identical — made the panic disappear, confirming the component itself
-//! (not surrounding DOM structure, which was independently verified
-//! correct via `DOMParser`) was the cause; the exact root cause inside
-//! tachys wasn't chased further, since the delete-confirm button doesn't
-//! actually need real Rust-side reactivity at all. It's reimplemented as
-//! plain JS in `webview_js()` (`handleDeleteClick`, same "click to arm, 3s
-//! window to confirm" UX as `ConfirmButton`/`ConfirmActionButton`), which
-//! means *nothing* on this page needs Leptos-managed state, so the whole
-//! body collapses to one `inner_html` blob — same shape as
-//! `legal.rs`/`connect_notion.rs`, not `me.rs`.
-
 use leptos::prelude::*;
 use serde::{Deserialize, Serialize};
 
@@ -30,11 +5,7 @@ use serde::{Deserialize, Serialize};
 pub struct WebviewPageData {
     pub html_lang: String,
     pub title: String,
-    /// The whole `<body>` content — header, `#calendar` div, and the modal
-    /// (including its delete/cancel/save buttons) — fully self-contained.
     pub body_html: String,
-    /// `webview_js()`'s output, unchanged — see module doc for why this is
-    /// safe to place in `<head>` rather than a `<body>`-trailing script.
     pub js: String,
 }
 
@@ -61,10 +32,6 @@ body { background-color: #fbf9f9; color: #1b1c1c; -webkit-font-smoothing: antial
 "#;
 const GOOGLE_FONTS_HREF: &str = "https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Geist:wght@400;500&family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&icon_names=add,arrow_back,arrow_forward,calendar_add_on,calendar_month,calendar_today,check_circle,close,content_copy,database,error,event_available,link,login,logout,open_in_new,security,sync,sync_alt,verified,warning&display=swap";
 
-/// The whole HTML document. `<head>` is one `inner_html` blob (never part of
-/// `hydrate_body`'s reconciliation — see the other Phase A/B pages) holding
-/// the FullCalendar CDN tags, styles, `webview_js()`, and the usual data
-/// script + hydrate bootstrap.
 #[component]
 pub fn WebviewShell(data: WebviewPageData) -> impl IntoView {
     let html_lang = data.html_lang.clone();
@@ -114,7 +81,6 @@ mod tests {
     fn sample_data() -> WebviewPageData {
         WebviewPageData {
             html_lang: "vi".to_string(),
-            // Pre-escaped, as the real caller (src/webview.rs) always sends it.
             title: "Work &lt;Calendar&gt;".to_string(),
             body_html: "<header>top</header><div id=\"calendar\"></div><button id=\"modal-delete-btn\">Xoá</button>".to_string(),
             js: "console.log('webview js');".to_string(),
@@ -137,10 +103,6 @@ mod tests {
             .with(|| view! { <WebviewShell data=sample_data()/> }.to_html());
         assert!(html.contains("console.log('webview js')"));
         assert!(html.contains("fullcalendar@6.1.15"));
-        // `title` lands in `head_html` as raw text (head isn't a real view!
-        // tree, so nothing auto-escapes it) — the caller (src/webview.rs)
-        // is responsible for pre-escaping it, which `sample_data()` mimics
-        // by using an already-`&lt;`/`&gt;`-escaped value.
         assert!(html.contains("&lt;Calendar&gt;"));
         assert!(!html.contains("</script><script>alert"));
     }

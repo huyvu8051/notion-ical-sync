@@ -1,25 +1,6 @@
-//! Phase A (static batch) of the full Leptos SSR+CSR migration — see module
-//! docs in `lib.rs` and `sync_log.rs` for the proven pattern this follows.
-//!
-//! These are the exact two pages (`/privacy`, `/terms`) that panicked with
-//! `tachys::hydration::failed_to_cast_element` under the abandoned hand-wired
-//! attempt (commit b2e7a26). Content is pure static prose with zero
-//! server-computed data and zero client interactivity, so it's embedded as a
-//! raw HTML blob via Leptos's `inner_html` attribute rather than hand-written
-//! as hundreds of individual `view!` nodes — `inner_html` sets the element's
-//! HTML directly on both the server render and the client hydration/mount,
-//! so there's no per-node structural match for tachys to get wrong, which is
-//! exactly the class of bug that sank the previous attempt.
-
 use leptos::prelude::*;
 use serde::{Deserialize, Serialize};
 
-// Owned `String` fields, not `&'static str` — `serde_json::from_str::<T>`
-// requires `T: Deserialize<'de>` with no borrowed data outliving the input
-// buffer, so a `&'static str` field can never round-trip through the
-// client-side JSON parse (the wasm build fails to compile: "does not live
-// long enough"). `sync_log.rs`'s `SyncLogPageData` never hit this because it
-// was already all owned `String`s.
 #[derive(Clone, Serialize, Deserialize)]
 pub struct LegalPageData {
     pub title: String,
@@ -160,15 +141,13 @@ pub fn terms_data() -> LegalPageData {
     }
 }
 
-/// The whole HTML document. Same shape as `SyncLogShell` — data script in
-/// `<head>`, `<body>` is exactly `<LegalPage/>`'s own output.
 #[component]
 pub fn LegalShell(data: LegalPageData) -> impl IntoView {
     let title = format!("{} — NotionCal", data.title);
 
     let json = serde_json::to_string(&data).unwrap_or_default();
-    let json_safe = json.replace('<', "\\u003c");
-    let inline_data_script = format!("window.__LEGAL_DATA__ = {json_safe};");
+    let script_breakout_safe_json = json.replace('<', "\\u003c");
+    let inline_data_script = format!("window.__LEGAL_DATA__ = {script_breakout_safe_json};");
 
     view! {
         <!DOCTYPE html>

@@ -1,9 +1,3 @@
-//! Transactional email — self-hosted via Stalwart (see infra plan), not a
-//! third-party SaaS. Templates are plain inline-styled HTML: unlike the
-//! webview/landing pages, email clients don't run `<script>` or fetch
-//! external stylesheets, so the app's usual Tailwind-CDN approach doesn't
-//! apply here.
-
 use lettre::message::header::ContentType;
 use lettre::transport::smtp::authentication::Credentials;
 use lettre::transport::smtp::client::{Tls, TlsParameters};
@@ -32,6 +26,14 @@ impl EmailConfig {
     }
 }
 
+fn stalwart_self_signed_tls_parameters(host: &str) -> Result<TlsParameters, String> {
+    TlsParameters::builder(host.to_string())
+        .dangerous_accept_invalid_certs(true)
+        .dangerous_accept_invalid_hostnames(true)
+        .build()
+        .map_err(|e| format!("failed to configure TLS: {e}"))
+}
+
 pub async fn send_email(
     cfg: &EmailConfig,
     to: &str,
@@ -50,21 +52,7 @@ pub async fn send_email(
         .body(html.to_string())
         .map_err(|e| format!("failed to build message: {e}"))?;
 
-    // Stalwart's first-run wizard only bound ports 25 and 465 (submissions,
-    // implicit TLS) — not 587 (STARTTLS submission) — confirmed empirically, so
-    // this connects with implicit TLS (`Tls::Wrapper`) rather than STARTTLS.
-    // Stalwart has no ACME cert (no inbound path for HTTP-01), so it presents a
-    // self-signed one for "localhost" — both cert-chain AND hostname validation
-    // need to be disabled, since `dangerous_accept_invalid_certs` alone still
-    // enforces hostname matching (confirmed empirically: it rejected the cert as
-    // "not valid for name stalwart.stalwart.svc.cluster.local" even with that
-    // flag set). Safe here: this is an internal, same-cluster, trusted-network
-    // hop, not the public internet.
-    let tls_parameters = TlsParameters::builder(cfg.host.clone())
-        .dangerous_accept_invalid_certs(true)
-        .dangerous_accept_invalid_hostnames(true)
-        .build()
-        .map_err(|e| format!("failed to configure TLS: {e}"))?;
+    let tls_parameters = stalwart_self_signed_tls_parameters(&cfg.host)?;
 
     let mailer = AsyncSmtpTransport::<Tokio1Executor>::builder_dangerous(&cfg.host)
         .port(cfg.port)
@@ -79,9 +67,6 @@ pub async fn send_email(
     Ok(())
 }
 
-/// Fire-and-forget send used from spots that must never fail the actual
-/// request (welcome email on signup, billing notices from the Stripe
-/// webhook) — same posture as `AppState::log_sync`.
 pub fn spawn_send(cfg: EmailConfig, to: String, subject: String, html: String) {
     tokio::spawn(async move {
         if let Err(e) = send_email(&cfg, &to, &subject, &html).await {
@@ -90,7 +75,7 @@ pub fn spawn_send(cfg: EmailConfig, to: String, subject: String, html: String) {
     });
 }
 
-fn wrapper(body: &str) -> String {
+fn wrap_in_email_template(body: &str) -> String {
     format!(
         r#"<!doctype html>
 <html><body style="margin:0;padding:0;background:#fbf9f9;font-family:Arial,Helvetica,sans-serif;color:#1b1c1c;">
@@ -110,7 +95,7 @@ pub fn welcome_email(lang: Lang) -> (&'static str, String) {
     match lang {
         Lang::Vi => (
             "Chào mừng đến với NotionCal",
-            wrapper(
+            wrap_in_email_template(
                 r#"<p>Chào bạn,</p>
 <p>Cảm ơn bạn đã đăng ký NotionCal. Bạn đang có <strong>6 tháng miễn phí, không giới hạn</strong> để đồng bộ Notion với lịch của mình.</p>
 <p>Bắt đầu ngay: kết nối Notion và chọn database bạn muốn đồng bộ tại <a href="https://notion-caldav.opendiy.vn/me">trang của bạn</a>.</p>
@@ -119,7 +104,7 @@ pub fn welcome_email(lang: Lang) -> (&'static str, String) {
         ),
         Lang::En => (
             "Welcome to NotionCal",
-            wrapper(
+            wrap_in_email_template(
                 r#"<p>Hi there,</p>
 <p>Thanks for signing up for NotionCal. You've got <strong>6 free, unlimited months</strong> to sync Notion with your calendar.</p>
 <p>Get started: connect Notion and pick a database to sync from <a href="https://notion-caldav.opendiy.vn/me">your dashboard</a>.</p>
@@ -133,7 +118,7 @@ pub fn trial_ending_email(lang: Lang, free_until: &str) -> (&'static str, String
     match lang {
         Lang::Vi => (
             "6 tháng miễn phí của bạn sắp hết hạn",
-            wrapper(&format!(
+            wrap_in_email_template(&format!(
                 r#"<p>Chào bạn,</p>
 <p>6 tháng miễn phí của bạn sẽ hết hạn vào <strong>{free_until}</strong>. Sau đó, nếu chưa đăng ký, tài khoản của bạn sẽ bị giới hạn 10 sự kiện mới/ngày.</p>
 <p>Nâng cấp $1/năm để tiếp tục không giới hạn: <a href="https://notion-caldav.opendiy.vn/billing/checkout">nâng cấp ngay</a>.</p>
@@ -142,7 +127,7 @@ pub fn trial_ending_email(lang: Lang, free_until: &str) -> (&'static str, String
         ),
         Lang::En => (
             "Your free 6 months are ending soon",
-            wrapper(&format!(
+            wrap_in_email_template(&format!(
                 r#"<p>Hi there,</p>
 <p>Your free 6 months end on <strong>{free_until}</strong>. After that, if you haven't subscribed, your account will be capped at 10 new events/day.</p>
 <p>Upgrade for $1/year to stay unlimited: <a href="https://notion-caldav.opendiy.vn/billing/checkout">upgrade now</a>.</p>
@@ -156,7 +141,7 @@ pub fn subscribed_email(lang: Lang) -> (&'static str, String) {
     match lang {
         Lang::Vi => (
             "Đăng ký thành công",
-            wrapper(
+            wrap_in_email_template(
                 r#"<p>Chào bạn,</p>
 <p>Bạn đã đăng ký gói $1/năm thành công. Nếu bạn đang trong 6 tháng miễn phí, chưa bị tính phí ngay — việc thanh toán chỉ bắt đầu sau khi hết 6 tháng.</p>
 <p>Cảm ơn bạn đã đồng hành cùng NotionCal.</p>
@@ -165,7 +150,7 @@ pub fn subscribed_email(lang: Lang) -> (&'static str, String) {
         ),
         Lang::En => (
             "You're subscribed",
-            wrapper(
+            wrap_in_email_template(
                 r#"<p>Hi there,</p>
 <p>Your $1/year subscription is confirmed. If you're still inside your free 6 months, you won't be charged yet — billing only starts once that period ends.</p>
 <p>Thanks for using NotionCal.</p>
@@ -179,7 +164,7 @@ pub fn payment_failed_email(lang: Lang) -> (&'static str, String) {
     match lang {
         Lang::Vi => (
             "Thanh toán không thành công",
-            wrapper(
+            wrap_in_email_template(
                 r#"<p>Chào bạn,</p>
 <p>Chúng tôi không thể thu phí $1/năm cho tài khoản của bạn. Vui lòng kiểm tra và cập nhật phương thức thanh toán trên Stripe để tránh gián đoạn dịch vụ.</p>
 <p>— Đội ngũ NotionCal</p>"#,
@@ -187,7 +172,7 @@ pub fn payment_failed_email(lang: Lang) -> (&'static str, String) {
         ),
         Lang::En => (
             "Your payment failed",
-            wrapper(
+            wrap_in_email_template(
                 r#"<p>Hi there,</p>
 <p>We couldn't charge your $1/year subscription. Please check and update your payment method on Stripe to avoid any interruption.</p>
 <p>— The NotionCal team</p>"#,
@@ -200,7 +185,7 @@ pub fn subscription_canceled_email(lang: Lang) -> (&'static str, String) {
     match lang {
         Lang::Vi => (
             "Gói đăng ký của bạn đã bị huỷ",
-            wrapper(
+            wrap_in_email_template(
                 r#"<p>Chào bạn,</p>
 <p>Gói $1/năm của bạn đã bị huỷ. Nếu đã hết 6 tháng miễn phí, tài khoản của bạn sẽ bị giới hạn 10 sự kiện mới/ngày cho đến khi đăng ký lại.</p>
 <p>Đăng ký lại bất cứ lúc nào tại <a href="https://notion-caldav.opendiy.vn/billing/checkout">đây</a>.</p>
@@ -209,7 +194,7 @@ pub fn subscription_canceled_email(lang: Lang) -> (&'static str, String) {
         ),
         Lang::En => (
             "Your subscription was canceled",
-            wrapper(
+            wrap_in_email_template(
                 r#"<p>Hi there,</p>
 <p>Your $1/year subscription was canceled. If your free 6 months have already ended, your account is now capped at 10 new events/day until you resubscribe.</p>
 <p>Resubscribe anytime <a href="https://notion-caldav.opendiy.vn/billing/checkout">here</a>.</p>

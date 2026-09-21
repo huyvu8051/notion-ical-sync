@@ -1,11 +1,3 @@
-//! Privacy Policy / Terms of Service pages — required both for the Notion
-//! OAuth consent screen and for eventual Notion Marketplace submission.
-//! Plain unauthenticated routes, no DB access, so they render even if
-//! something else is broken. Rendered via `leptos_axum::render_app_to_stream`
-//! (see `crates/app/src/legal.rs` for the actual Leptos components/content —
-//! these are the exact two pages that previously panicked under a hand-wired
-//! Leptos integration, see that module's doc comment).
-
 use axum::response::IntoResponse;
 
 pub async fn privacy_policy_page(request: axum::extract::Request) -> axum::response::Response {
@@ -30,12 +22,6 @@ pub async fn robots_txt() -> impl IntoResponse {
     )
 }
 
-/// A simple calendar glyph matching the brand's black-on-cream palette
-/// (see `LANDING_PAGE_HTML_*` in auth.rs). Served at both `/favicon.svg`
-/// (referenced by `<link rel="icon">`) and `/favicon.ico` (the path browsers
-/// request by convention even without a `<link>` tag) — both need an
-/// explicit unauthenticated route here, otherwise they fall through to the
-/// CalDAV catch-all handlers under Basic Auth and 401 instead of 404/200.
 const FAVICON_SVG: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
 <rect x="2" y="2" width="28" height="28" rx="6" fill="#fbf9f9"/>
 <rect x="6" y="9" width="20" height="17" rx="2" fill="none" stroke="#000" stroke-width="2"/>
@@ -48,7 +34,10 @@ const FAVICON_SVG: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0
 </svg>"##;
 
 pub async fn favicon() -> impl IntoResponse {
-    ([(axum::http::header::CONTENT_TYPE, "image/svg+xml")], FAVICON_SVG)
+    (
+        [(axum::http::header::CONTENT_TYPE, "image/svg+xml")],
+        FAVICON_SVG,
+    )
 }
 
 pub async fn sitemap_xml() -> impl IntoResponse {

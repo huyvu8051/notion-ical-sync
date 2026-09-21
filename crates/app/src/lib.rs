@@ -1,34 +1,4 @@
-// Deeply nested `view!` trees (see pick_databases.rs) compose into a type
-// whose layout computation exceeds rustc's default query recursion limit —
-// a known, benign Leptos issue (not a design smell), fixed the same way
-// rustc's own diagnostic suggests.
 #![recursion_limit = "256"]
-
-//! Phase-0 retry of the full Leptos SSR+CSR migration abandoned in
-//! `~/.claude/plans/mighty-scribbling-floyd.md` (commit b2e7a26). That
-//! attempt used a hand-wired `view! {}.to_html()` on the server +
-//! `leptos::mount::hydrate_body` on the client, bypassing leptos_axum's real
-//! SSR pipeline entirely — and hit a reproducible
-//! `tachys::hydration::failed_to_cast_element` panic that survived three
-//! structurally different fixes. The plan's own conclusion: prove
-//! `leptos_axum`'s real SSR pipeline (`render_app_to_stream`) works
-//! standalone, without `LeptosRoutes` owning the router, before migrating
-//! any real page again.
-//!
-//! Phase 0 (`TestApp`, mounted at the throwaway `/dev/leptos-check`, not
-//! linked from anywhere) proved the mechanism itself: SSR via
-//! `leptos_axum::render_app_to_stream` + client hydration both work,
-//! verified locally and in production (see git log for that verification).
-//!
-//! Phase 1 (`sync_log`) is the first real page: real DB data + real OIDC
-//! auth, read-only. It proves the harder part the plan flagged — the
-//! SSR→CSR *data* flow (design decision 3): the server serializes the
-//! fetched rows once into the SSR'd HTML, and the client-side bootstrap
-//! script reads that same blob back and re-mounts an identical component
-//! tree with it, rather than re-fetching. If the client rendered with
-//! different data than the server did, hydration would mismatch the DOM
-//! tachys expects to find and panic — same failure class as the abandoned
-//! attempt, just triggered by a data mismatch instead of a structural one.
 
 pub mod confirm_button;
 pub mod connect_notion;
@@ -41,23 +11,11 @@ pub mod webview;
 
 use leptos::prelude::*;
 
-/// Must be called exactly once, before the host binds any route that renders
-/// this crate's components — `render_app_to_stream` schedules reactive work
-/// onto a global executor that cargo-leptos apps normally get initialized
-/// for free via `LeptosRoutes`. Since this crate is wired in with a plain
-/// `.route(path, get(render_app_to_stream(Shell)))` instead (see Cargo.toml
-/// feature comment), that init never happens unless the host does it.
 #[cfg(feature = "ssr")]
 pub fn init_executor() {
     any_spawner::Executor::init_tokio().expect("failed to init leptos reactive executor");
 }
 
-/// The whole HTML document, including `<html>`/`<head>`/`<body>` — this is
-/// what gets passed to `leptos_axum::render_app_to_stream`. The wasm loader
-/// script lives in `<head>` (not as a `<body>` sibling of `<TestApp/>`) so
-/// that `<body>`'s children exactly match what `TestApp` renders — a bare
-/// sibling script tag in `<body>` was one of the failure modes in the
-/// abandoned attempt (see module docs).
 #[component]
 pub fn Shell() -> impl IntoView {
     view! {
@@ -78,11 +36,6 @@ pub fn Shell() -> impl IntoView {
     }
 }
 
-/// Single reactive counter, single root element (no page-sized tuple of
-/// top-level siblings — that shape was the other failure mode in the
-/// abandoned attempt). If the count increments on click after WASM loads,
-/// hydration genuinely attached; if clicking does nothing, or the console
-/// shows a hydration panic, the mechanism is still broken.
 #[component]
 pub fn TestApp() -> impl IntoView {
     let (count, set_count) = signal(0);
@@ -101,11 +54,6 @@ pub fn TestApp() -> impl IntoView {
     }
 }
 
-// Named export, not `#[wasm_bindgen(start)]` — this crate now hosts more
-// than one page's worth of components in a single wasm bundle (see
-// sync_log), each needing to hydrate a different root component, so each
-// page's own bootstrap script calls its own named function after `init()`
-// instead of relying on a single fixed auto-run hydrate target.
 #[cfg(feature = "hydrate")]
 #[wasm_bindgen::prelude::wasm_bindgen]
 pub fn hydrate_test_app() {

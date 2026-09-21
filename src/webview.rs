@@ -23,12 +23,6 @@ async fn current_user_id(
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
 }
 
-/// Every `/app/{public_id}/...` handler needs this same check: the calendar
-/// must exist, and must belong to whoever is logged in — otherwise one user
-/// could read or edit another user's Notion events just by guessing an id.
-/// Looked up by public_id, not database_id: several users can now each have
-/// their own subscription to the same Notion database, so database_id alone
-/// no longer identifies a single owner.
 async fn require_owned_calendar(
     state: &AppState,
     claims: &OidcClaims<EmptyAdditionalClaims>,
@@ -186,12 +180,6 @@ const WEBVIEW_LABELS_EN: WebviewLabels = WebviewLabels {
     attendees_display_prefix: "Invited: ",
 };
 
-/// Server-rendered page shell (no client-side hydration/wasm — Leptos here
-/// is just producing the static HTML; FullCalendar (CDN) is still the actual
-/// calendar engine — this only restyles the surrounding chrome/nav and
-/// replaces the old prompt()/confirm() add/edit/delete flow with a real
-/// modal, per the Stitch "Chi tiết lịch" mockup (project 7966553897766226544,
-/// screen 7a5ff90c2ebc48b4b202f9061739819e).
 pub async fn handle_webview_page(
     State(state): State<AppState>,
     claims: OidcClaims<EmptyAdditionalClaims>,
@@ -201,10 +189,6 @@ pub async fn handle_webview_page(
 ) -> axum::response::Response {
     let cal = match require_owned_calendar(&state, &claims, &public_id, lang).await {
         Ok(cal) => cal,
-        // Unlike the JSON API handlers below (which correctly return a bare
-        // status for fetch()-based JS), this is a real page a browser
-        // navigates to directly — a bare 403/404 with no body/back-link left
-        // the user stranded on a blank page (see plan Phase 5).
         Err(StatusCode::FORBIDDEN) => {
             return crate::oauth::error_page(lang, crate::oauth::OauthError::AccessDenied)
         }
@@ -226,12 +210,6 @@ pub async fn handle_webview_page(
 
     let events_url = format!("/app/{}/api/events", public_id);
 
-    // The whole page, fully self-contained (all tags balanced) — mounted as
-    // a single inner_html blob (see module doc in crates/app/src/webview.rs
-    // for why nothing on this page needs to be a real view! node: the
-    // delete-confirm button was the one piece that did, and it's now plain
-    // JS — handleDeleteClick() below — after folding it in as a real Leptos
-    // component caused a real hydration panic).
     let body_html = format!(
         r##"<header class="h-16 flex items-center justify-between px-lg border-b border-outline-variant bg-surface">
 <div class="flex items-center gap-md">
@@ -376,12 +354,6 @@ pub async fn handle_webview_page(
 
     let data = app::webview::WebviewPageData {
         html_lang: l.html_lang.to_string(),
-        // Escaped here, not left for crates/app's Shell to escape — `title`
-        // is embedded into `head_html`'s `<title>` tag as raw text (head
-        // isn't part of the hydrated Leptos tree, so it can't auto-escape
-        // like a real view! text node would), and calendar_name comes from
-        // a user-controlled Notion database name, unlike every other
-        // migrated page's title so far.
         title: html_escape(&calendar_name),
         body_html,
         js: webview_js(&events_url, l),
@@ -393,10 +365,6 @@ pub async fn handle_webview_page(
     handler(request).await
 }
 
-/// Escapes a Rust string for safe interpolation inside a single-quoted JS
-/// string literal — labels like `alert_quota_exceeded` are plain prose (can
-/// contain `'` or `\`) and get spliced directly into `alert('...')` calls
-/// below via `format!`, so an unescaped apostrophe breaks the whole script.
 fn js_escape(s: &str) -> String {
     s.replace('\\', "\\\\").replace('\'', "\\'")
 }
@@ -495,19 +463,11 @@ function saveFromModal() {{
   var startVal = document.getElementById('modal-field-start').value;
   var endVal = document.getElementById('modal-field-end').value;
   if (!startVal) {{ alert('{alert_pick_start}'); return; }}
-  // startVal/endVal come from <input type="datetime-local">, which holds a
-  // timezone-less wall-clock string (the browser's local time). Sending that
-  // straight to the server made every edit silently shift the stored time by
-  // the browser's UTC offset, since nothing downstream knew it wasn't
-  // already UTC — new Date(...) parses it as local time, so .toISOString()
-  // converts it to the correct UTC instant before it leaves the browser.
-  var start = allDay ? startVal.slice(0, 10) : new Date(startVal).toISOString();
-  var end = endVal ? (allDay ? endVal.slice(0, 10) : new Date(endVal).toISOString()) : null;
+  var localStartToUtcIso = allDay ? startVal.slice(0, 10) : new Date(startVal).toISOString();
+  var localEndToUtcIso = endVal ? (allDay ? endVal.slice(0, 10) : new Date(endVal).toISOString()) : null;
+  var start = localStartToUtcIso;
+  var end = localEndToUtcIso;
 
-  // Blank/unset fields are left out entirely (not sent as empty string/null)
-  // so saving without touching e.g. Location doesn't clear whatever's
-  // already on the Notion page — same "only update what's provided" posture
-  // notion_update_event already has server-side.
   var payload = {{ title: title, start: start, end: end }};
   var location = document.getElementById('modal-field-location').value.trim();
   if (location) payload.location = location;
@@ -555,13 +515,6 @@ function deleteFromModal() {{
     }});
 }}
 
-// Arm/confirm-again UI in place of a blocking native confirm() (halts all
-// further JS/CDP automation until a human dismisses it) for #modal-delete-btn
-// — click once to arm (3s window), click again to actually delete. Plain JS
-// rather than a Leptos component: folding this in as a real component
-// (crates/islands::ConfirmActionButton's replacement) caused a real
-// hydration panic isolated to the component itself, and this button doesn't
-// need Rust-side reactivity at all.
 var deleteBtnConfirming = false;
 var deleteBtnResetTimer = null;
 function handleDeleteClick() {{
@@ -590,20 +543,15 @@ document.addEventListener('DOMContentLoaded', function() {{
     editable: true,
     events: '{events_url}',
 
-    // Click/drag an empty date or time slot to open the create modal
-    // pre-filled with the selected range.
     select: function(info) {{
       openCreateModal(info.startStr, info.endStr, info.allDay);
       calendar.unselect();
     }},
 
-    // Click an existing event to open the edit modal.
     eventClick: function(info) {{
       openEditModal(info);
     }},
 
-    // Drag/resize an event to move its date — applied immediately, no modal
-    // (matches the drag gesture's own implicit confirmation).
     eventDrop: function(info) {{ patchEventDates(info); }},
     eventResize: function(info) {{ patchEventDates(info); }},
   }});
@@ -662,10 +610,6 @@ pub async fn handle_list_events(
                 "title": p.title,
                 "start": p.start,
                 "end": p.end,
-                // Not FullCalendar's special top-level "url" field (that
-                // makes clicking navigate away instead of firing eventClick)
-                // — this lands in event.extendedProps.notionUrl instead, for
-                // the edit modal's "Mở trong Notion" link.
                 "notionUrl": p.url,
                 "location": p.location,
                 "notes": p.notes,
@@ -777,7 +721,7 @@ pub async fn handle_create_event(
 pub struct UpdateEventBody {
     title: Option<String>,
     start: Option<String>,
-    #[serde(default, deserialize_with = "deserialize_optional_field")]
+    #[serde(default, deserialize_with = "deserialize_field_present_but_maybe_null")]
     end: Option<Option<String>>,
     #[serde(default)]
     location: Option<String>,
@@ -793,9 +737,9 @@ pub struct UpdateEventBody {
     travel_minutes: Option<i64>,
 }
 
-// Distinguishes "end omitted" (None) from "end explicitly cleared" (Some(None))
-// so an all-day drag doesn't accidentally leave a stale end date behind.
-fn deserialize_optional_field<'de, D>(deserializer: D) -> Result<Option<Option<String>>, D::Error>
+fn deserialize_field_present_but_maybe_null<'de, D>(
+    deserializer: D,
+) -> Result<Option<Option<String>>, D::Error>
 where
     D: serde::Deserializer<'de>,
 {
@@ -911,13 +855,6 @@ pub async fn handle_delete_event(
 mod tests {
     use super::*;
 
-    /// Regression guard for the exact class of bug that shipped a blank
-    /// webview page to production (2026-08-02): embedded JS inside a Rust
-    /// `format!` string can be syntactically invalid JavaScript while still
-    /// compiling fine as Rust, since `cargo build` never parses the string
-    /// contents. Shells out to `node --check` on the actual rendered output
-    /// for both languages; skips (doesn't fail) if node isn't installed,
-    /// since it's not required for `cargo build`/CI, just a local dev aid.
     #[test]
     fn webview_js_is_valid_javascript_in_both_languages() {
         use std::io::Write;

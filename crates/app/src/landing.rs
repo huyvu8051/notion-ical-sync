@@ -1,21 +1,3 @@
-//! Phase A (static batch) of the full Leptos SSR+CSR migration — public
-//! marketing landing page at `/`. `<head>` (SEO tags — title/description/OG/
-//! Twitter/canonical/locale, added in dedicated prior commits, must not
-//! regress — plus the hydrate bootstrap script) and `<body>`'s single
-//! `LandingPage` child's content are both built from per-language data via
-//! `inner_html`, same reasoning as `legal.rs`: pure static content, zero
-//! interactivity, `inner_html` sets it identically on SSR and hydration so
-//! there's no per-node structural mismatch risk. `<head>` specifically also
-//! sidesteps a `view!` macro quirk: the OG tags' `property=` attribute name
-//! collides with tachys's own `.property()` DOM-IDL-property setter method,
-//! and `attr:property` (the usual escape hatch for non-standard attribute
-//! names) fails to parse — a single-word, non-hyphenated `attr:` key hits a
-//! different macro codegen path than the documented `attr:data-foo`
-//! hyphenated case. Not worth fighting: `<head>` is never part of
-//! `hydrate_body`'s reconciliation anyway (only `<body>` is hydrated — see
-//! `legal.rs`/`sync_log.rs`), so it gets zero benefit from being real view
-//! nodes.
-
 use leptos::prelude::*;
 use serde::{Deserialize, Serialize};
 
@@ -441,14 +423,11 @@ pub fn en_data() -> LandingPageData {
     }
 }
 
-/// The whole HTML document (see module doc for why `<head>`, including the
-/// data script and hydrate bootstrap, is one `inner_html` blob rather than
-/// `view!` elements). `<body>` stays exactly `<LandingPage/>`'s own output.
 #[component]
 pub fn LandingShell(data: LandingPageData) -> impl IntoView {
     let json = serde_json::to_string(&data).unwrap_or_default();
-    let json_safe = json.replace('<', "\\u003c");
-    let inline_data_script = format!("window.__LANDING_DATA__ = {json_safe};");
+    let script_breakout_safe_json = json.replace('<', "\\u003c");
+    let inline_data_script = format!("window.__LANDING_DATA__ = {script_breakout_safe_json};");
 
     let head_html = format!(
         r#"<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="msvalidate.01" content="{bing}"><title>{title}</title><meta name="description" content="{desc}"><link rel="canonical" href="{canonical}"><link rel="icon" href="/favicon.svg" type="image/svg+xml"><meta property="og:site_name" content="NotionCal"><meta property="og:type" content="website"><meta property="og:title" content="{title}"><meta property="og:description" content="{desc}"><meta property="og:url" content="{canonical}"><meta property="og:locale" content="{locale}"><meta name="twitter:card" content="summary"><meta name="twitter:title" content="{title}"><meta name="twitter:description" content="{twitter_desc}"><link rel="stylesheet" href="/assets/style-auth-b.css"><link href="{fonts}" rel="stylesheet"><style>{style}</style><script>{data_script}</script><script type="module">import init, {{ hydrate_landing }} from '/pkg/app.js'; init('/pkg/app_bg.wasm').then(() => hydrate_landing(JSON.stringify(window.__LANDING_DATA__)));</script>"#,
@@ -463,10 +442,6 @@ pub fn LandingShell(data: LandingPageData) -> impl IntoView {
         data_script = inline_data_script,
     );
 
-    // Bound before `view!` rather than inlined as `data.html_lang.clone()`
-    // on the `<html>` tag: the macro's generated code evaluates attributes
-    // on an outer element after building its children, so an inline access
-    // there would run after `data` is already moved into `<LandingPage/>`.
     let html_lang = data.html_lang.clone();
 
     view! {

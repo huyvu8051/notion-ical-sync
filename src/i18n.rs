@@ -1,11 +1,3 @@
-//! Minimal i18n: language is detected from a `lang` cookie (explicit user
-//! choice, set via `/lang/{code}`) falling back to the browser's
-//! `Accept-Language` header, falling back to Vietnamese (the app's original
-//! and still-primary audience). No translation-string crate — pages that
-//! need it hold their own EN/VI copy (either two full HTML consts for fully
-//! static pages, or a small per-page `Labels` struct for pages with dynamic
-//! content interleaved).
-
 use axum::extract::{FromRequestParts, Path, Query};
 use axum::http::{header, request::Parts, HeaderMap};
 use axum::response::{IntoResponse, Redirect};
@@ -32,8 +24,6 @@ impl Lang {
         }
     }
 
-    /// Reads back a value stored via `code()` (e.g. `users.preferred_lang`).
-    /// Anything unrecognized falls back to Vietnamese, same default as `detect()`.
     pub fn from_code(code: &str) -> Self {
         if code == "en" {
             Lang::En
@@ -56,18 +46,14 @@ impl Lang {
         })
     }
 
-    /// Crude but sufficient: Accept-Language lists tags in preference order
-    /// like "en-US,en;q=0.9,vi;q=0.8" — the first tag decides. Vietnamese by
-    /// default since that's the app's primary audience and every existing
-    /// page was written in Vietnamese first.
-    fn from_accept_language(header_val: &str) -> Self {
-        let first_tag = header_val
+    fn from_accept_language_header(header_value: &str) -> Self {
+        let most_preferred_tag = header_value
             .split(',')
             .next()
             .unwrap_or("")
             .trim()
             .to_lowercase();
-        if first_tag.starts_with("en") {
+        if most_preferred_tag.starts_with("en") {
             Lang::En
         } else {
             Lang::Vi
@@ -83,7 +69,7 @@ impl Lang {
         headers
             .get(header::ACCEPT_LANGUAGE)
             .and_then(|v| v.to_str().ok())
-            .map(Self::from_accept_language)
+            .map(Self::from_accept_language_header)
             .unwrap_or(Lang::Vi)
     }
 }
@@ -96,10 +82,10 @@ impl<S: Sync> FromRequestParts<S> for Lang {
     }
 }
 
-/// `/lang/{en|vi}?next=/some/path` — sets the override cookie (one year) and
-/// redirects back. `next` must be a same-app relative path; anything else
-/// (missing, or not starting with `/`) falls back to `/` rather than acting
-/// as an open redirect.
+fn is_safe_same_app_redirect_path(path: &str) -> bool {
+    path.starts_with('/') && !path.starts_with("//")
+}
+
 pub async fn set_lang(
     Path(code): Path<String>,
     Query(params): Query<HashMap<String, String>>,
@@ -107,7 +93,7 @@ pub async fn set_lang(
     let lang = if code == "en" { Lang::En } else { Lang::Vi };
     let next = params
         .get("next")
-        .filter(|n| n.starts_with('/') && !n.starts_with("//"))
+        .filter(|n| is_safe_same_app_redirect_path(n))
         .cloned()
         .unwrap_or_else(|| "/".to_string());
     let cookie = format!(
@@ -117,13 +103,11 @@ pub async fn set_lang(
     ([(header::SET_COOKIE, cookie)], Redirect::to(&next))
 }
 
-/// Small `EN | VI` toggle linking to whichever language isn't currently
-/// active, back to `current_path` once set.
 pub fn lang_toggle(current: Lang, current_path: &str) -> String {
     let other = current.other();
-    let path = current_path.replace('&', "%26");
+    let escaped_path = current_path.replace('&', "%26");
     format!(
-        r#"<a href="/lang/{code}?next={path}" class="text-label-md text-on-surface-variant hover:text-primary transition-colors">{label}</a>"#,
+        r#"<a href="/lang/{code}?next={escaped_path}" class="text-label-md text-on-surface-variant hover:text-primary transition-colors">{label}</a>"#,
         code = other.code(),
         label = match other {
             Lang::En => "EN",

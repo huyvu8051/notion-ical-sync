@@ -36,8 +36,6 @@ pub fn trial_end(trial_started_at: DateTime<Utc>) -> DateTime<Utc> {
         .unwrap_or(trial_started_at)
 }
 
-/// Single source of truth for "can this user write right now" — reused by
-/// both the quota-enforcement call sites and the /me dashboard card.
 pub async fn effective_access(state: &AppState, user_id: i64) -> AccessLevel {
     let row: Option<BillingRow> =
         sqlx::query_as("SELECT trial_started_at, subscription_status FROM users WHERE id = $1")
@@ -47,7 +45,6 @@ pub async fn effective_access(state: &AppState, user_id: i64) -> AccessLevel {
             .ok()
             .flatten();
 
-    // Fail-open: a DB hiccup mid-request must never lock a user out.
     let Some(row) = row else {
         return AccessLevel::Unlimited;
     };
@@ -80,8 +77,6 @@ async fn count_writes_today(pool: &sqlx::PgPool, user_id: i64) -> i64 {
     .unwrap_or(0)
 }
 
-/// The actual gate the 3 write paths (CalDAV PUT, webview create/update)
-/// call before touching Notion.
 pub async fn enforce_quota(state: &AppState, user_id: i64) -> Result<(), ()> {
     match effective_access(state, user_id).await {
         AccessLevel::Unlimited => Ok(()),
@@ -112,15 +107,6 @@ struct CheckoutSessionResponse {
     url: String,
 }
 
-/// Creates a Stripe Checkout session in subscription mode and returns the
-/// hosted checkout URL to redirect the user to.
-///
-/// `subscription_data[trial_end]` is set to the user's own trial_end (see
-/// `trial_end()` above) so Stripe won't actually start charging until their
-/// free 6 months are up, no matter when they check out — but Stripe rejects
-/// any `trial_end` under 48h in the future, so right at the boundary (or
-/// once the trial has already lapsed) we omit it and let Stripe bill
-/// normally/immediately instead.
 pub async fn create_checkout_session(
     state: &AppState,
     stripe: &StripeConfig,
@@ -145,9 +131,13 @@ pub async fn create_checkout_session(
         Some(customer_id) => params.push(("customer", customer_id.to_string())),
         None => params.push(("customer_email", email.to_string())),
     }
-    let te = trial_end(trial_started_at);
-    if te > Utc::now() + chrono::Duration::hours(48) {
-        params.push(("subscription_data[trial_end]", te.timestamp().to_string()));
+    let trial_end_at = trial_end(trial_started_at);
+    let stripe_min_trial_end = Utc::now() + chrono::Duration::hours(48);
+    if trial_end_at > stripe_min_trial_end {
+        params.push((
+            "subscription_data[trial_end]",
+            trial_end_at.timestamp().to_string(),
+        ));
     }
 
     info!(user_id, "-> Stripe API request (create checkout session)");
@@ -174,10 +164,6 @@ pub async fn create_checkout_session(
         .map_err(|e| e.to_string())
 }
 
-/// Verifies `Stripe-Signature: t=<unix_ts>,v1=<hex>[,v1=<hex>...]` — HMAC-SHA256
-/// over the literal string "{t}.{raw_body}" (not the raw body alone, unlike
-/// Notion's own webhook scheme in webhook.rs). Multiple v1= values can appear
-/// during Stripe's signing-secret rotation; accept if any one matches.
 fn verify_stripe_signature(secret: &str, header: &str, body: &[u8]) -> bool {
     let mut timestamp = None;
     let mut signatures = Vec::new();
@@ -218,9 +204,6 @@ fn hex_decode(s: &str) -> Result<Vec<u8>, ()> {
         .collect()
 }
 
-/// Handles Stripe's webhook events for the $1/year subscription: links a
-/// Stripe customer/subscription to our user on checkout completion, then
-/// keeps `subscription_status` in sync as Stripe's own status changes.
 pub async fn handle_stripe_webhook(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -280,9 +263,6 @@ pub async fn handle_stripe_webhook(
                 {
                     warn!("stripe webhook: failed to link customer/subscription to user {}: {}", user_id, e);
                 } else if let Some(cfg) = state.email.clone() {
-                    // This — not `customer.subscription.updated` — is the one genuine
-                    // "just subscribed" moment; `.updated` fires on lots of unrelated
-                    // changes too and would spam a confirmation email repeatedly.
                     notify_user_by_id(&state, cfg, user_id, crate::email::subscribed_email).await;
                 }
             } else {
@@ -357,9 +337,6 @@ pub async fn handle_stripe_webhook(
     StatusCode::OK
 }
 
-/// Shared by the webhook arms above that need to email a user identified by
-/// our own `users.id` (checkout completion, where we already have it from
-/// `client_reference_id`).
 async fn notify_user_by_id(
     state: &AppState,
     cfg: crate::email::EmailConfig,
@@ -379,8 +356,6 @@ async fn notify_user_by_id(
     }
 }
 
-/// Shared by the webhook arms above that only carry a Stripe customer id
-/// (subscription/invoice events), looked up back to our own user row.
 async fn notify_user_by_customer_id(
     state: &AppState,
     cfg: crate::email::EmailConfig,
@@ -406,8 +381,6 @@ struct CheckoutUserRow {
     stripe_customer_id: Option<String>,
 }
 
-/// `GET /billing/checkout` — OIDC-gated. Redirects to a Stripe-hosted
-/// checkout session for the logged-in user's $1/year subscription.
 pub async fn start_checkout(
     State(state): State<AppState>,
     claims: OidcClaims<EmptyAdditionalClaims>,
@@ -461,10 +434,6 @@ pub async fn start_checkout(
     }
 }
 
-/// Daily background job (see `main.rs`'s spawned interval loop, modeled on
-/// the existing 10-minute Notion refresh) — emails anyone whose free 6
-/// months end within the next 7 days and who hasn't subscribed, then stamps
-/// `trial_reminder_sent_at` so a later run of this same job never resends it.
 pub async fn send_trial_reminders(state: &AppState) {
     let Some(cfg) = state.email.clone() else {
         return;
@@ -507,13 +476,6 @@ pub struct ResetBillingRequest {
     email: String,
 }
 
-/// Dev/test-only: resets one user's trial/subscription state back to a
-/// fresh 6-month trial, cancelling any live Stripe subscription first so
-/// Stripe and our DB don't end up disagreeing. Gated by `X-Admin-Secret`
-/// matching `state.admin_secret` — `None` (unset `ADMIN_SECRET`) disables
-/// the route entirely rather than leaving a real reset action reachable
-/// with no gate. Never meant to be user-facing: there's no reason a real
-/// customer should ever be able to rewind their own trial clock.
 pub async fn reset_billing(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -552,10 +514,6 @@ pub async fn reset_billing(
         match cancel_stripe_subscription(&state, stripe, sub_id).await {
             Ok(()) => stripe_cancel_result = "cancelled",
             Err(e) => {
-                // Not fatal — the subscription may already be canceled on
-                // Stripe's side (e.g. a prior manual cancel), which is fine;
-                // still proceed to reset the DB row either way so the test
-                // account is usable again.
                 warn!(
                     "reset_billing: failed to cancel Stripe subscription {}: {}",
                     sub_id, e

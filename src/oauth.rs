@@ -1,9 +1,3 @@
-//! Notion OAuth: this app's permission to read/write a specific user's own
-//! Notion workspace — a "Public Integration" grant, separate from the SaaS's
-//! own login in auth.rs (Keycloak). A user authenticates via Keycloak first,
-//! then goes through this flow to grant Notion access and pick which
-//! databases become calendars.
-
 use std::collections::HashMap;
 
 use aes_gcm::aead::{Aead, KeyInit};
@@ -23,10 +17,6 @@ use crate::AppState;
 
 const NOTION_VERSION: &str = "2025-09-03";
 
-/// Config for the Notion Public Integration OAuth flow. Absent (`None`) in
-/// AppState until `NOTION_OAUTH_CLIENT_ID`/`NOTION_OAUTH_CLIENT_SECRET` are
-/// set — connect routes render a "not configured" page instead of panicking,
-/// same posture as `webhook_secret` being optional.
 #[derive(Debug, Clone)]
 pub struct NotionOAuthConfig {
     pub client_id: String,
@@ -61,10 +51,6 @@ fn hash_password(password: &str) -> Result<String, argon2::password_hash::Error>
         .to_string())
 }
 
-/// Encrypts a CalDAV password for storage in `caldav_password_encrypted`, so
-/// the dashboard's "Hiện mật khẩu" action can recover it later — separate
-/// from `caldav_password_hash` (Argon2, one-way), which is what actual
-/// CalDAV Basic Auth verifies against and is unaffected by this.
 fn encrypt_password(key: &[u8; 32], plaintext: &str) -> Option<String> {
     let cipher = Aes256Gcm::new(key.into());
     let mut nonce_bytes = [0u8; 12];
@@ -90,10 +76,6 @@ fn decrypt_password(key: &[u8; 32], encoded: &str) -> Option<String> {
     String::from_utf8(plaintext).ok()
 }
 
-/// Every failure state shown via `error_page` below, across the Notion
-/// connect flow and billing checkout — kept as one enum (rather than each
-/// call site building its own string) so the VI/EN pair for each case lives
-/// in exactly one place instead of getting hardcoded ad hoc at 29 call sites.
 pub(crate) enum OauthError {
     NotionNotConfigured,
     TryAgain,
@@ -251,8 +233,6 @@ const CONNECT_NOTION_LABELS_EN: ConnectNotionLabels = ConnectNotionLabels {
     terms_link: "Terms of Service",
 };
 
-/// Step 1 confirmation screen (matches the Stitch "Kết nối Notion" design) —
-/// shown before we actually redirect away to Notion's consent screen.
 pub async fn connect_notion_page(
     claims: OidcClaims<EmptyAdditionalClaims>,
     lang: crate::i18n::Lang,
@@ -283,8 +263,6 @@ pub async fn connect_notion_page(
     handler(request).await
 }
 
-/// Actually redirects to Notion's OAuth consent screen, stashing a CSRF
-/// state token in the session first.
 pub async fn connect_notion_start(
     State(state): State<AppState>,
     session: tower_sessions::Session,
@@ -318,8 +296,6 @@ pub struct CallbackParams {
     error: Option<String>,
 }
 
-/// Notion redirects here after the user grants (or denies) access. Exchanges
-/// the code for an access token and upserts `notion_connections`.
 pub async fn notion_oauth_callback(
     State(state): State<AppState>,
     session: tower_sessions::Session,
@@ -449,18 +425,9 @@ struct DatabaseCandidate {
     data_source_id: String,
     title: String,
     icon_emoji: Option<String>,
-    /// Name of the first date-typed property found, if any. Databases
-    /// without one can't be synced (refresh_db needs a date property to
-    /// filter/sort on).
     date_property: Option<String>,
 }
 
-/// Searches the workspace for every data source (Notion's 2025-09-03 API
-/// split "database" into a container plus one-or-more data sources —
-/// `properties` now lives on the data source, not the database, so search
-/// for `data_source` objects directly rather than `database` objects) the
-/// user granted access to, checking each one for a date property (needed
-/// for both sync and this picker's compatibility check).
 async fn list_syncable_databases(
     client: &reqwest::Client,
     token: &str,
@@ -559,9 +526,6 @@ pub struct DatabasesPageParams {
     connection_id: i64,
 }
 
-/// Step 2 (matches the Stitch "Pick a database" design) — lists every
-/// database found in the just-connected workspace, disabling ones without a
-/// date property.
 pub async fn pick_databases_page(
     State(state): State<AppState>,
     claims: OidcClaims<EmptyAdditionalClaims>,
@@ -615,11 +579,6 @@ struct CreateCalendarsForm {
 }
 
 impl CreateCalendarsForm {
-    /// Parsed by hand from the raw body via `url::form_urlencoded` rather
-    /// than `axum::Form` — `serde_urlencoded` (what `Form` uses) can't
-    /// deserialize a `Vec<String>` field from a single `db_ids=x` pair (only
-    /// happens to work when 2+ checkboxes are checked), which broke the
-    /// single-database-selected case, the most common one.
     fn parse(body: &str) -> Option<Self> {
         let mut connection_id = None;
         let mut db_ids = Vec::new();
@@ -637,11 +596,6 @@ impl CreateCalendarsForm {
     }
 }
 
-/// Creates one `calendars` row (with freshly generated CalDAV credentials)
-/// per selected, syncable database. Re-fetches the candidate list from
-/// Notion server-side rather than trusting metadata from the form, so a
-/// tampered request can at most select an id that isn't actually syncable
-/// (silently skipped) — never inject arbitrary data_source_id/date_property.
 pub async fn create_calendars(
     State(state): State<AppState>,
     claims: OidcClaims<EmptyAdditionalClaims>,
@@ -678,16 +632,8 @@ pub async fn create_calendars(
         }
     };
 
-    // (display_name, caldav_username, plaintext password) for calendars
-    // actually created just now — shown once on the dashboard (reveal-able
-    // again later via caldav_password_encrypted, see encrypt_password).
-    let mut new_credentials: Vec<(String, String, String)> = Vec::new();
-    // Titles of databases already connected under *this* user's own account.
-    // database_id is no longer globally unique (see migrations/0003 — the
-    // same Notion database can now have many subscribers), so the only
-    // remaining conflict is UNIQUE(user_id, database_id): re-selecting one
-    // you already have. Surfaced on /me instead of failing silently.
-    let mut already_connected: Vec<String> = Vec::new();
+    let mut newly_created_calendar_credentials: Vec<(String, String, String)> = Vec::new();
+    let mut already_connected_database_titles: Vec<String> = Vec::new();
 
     for db_id in &form.db_ids {
         let Some(candidate) = candidates
@@ -733,17 +679,22 @@ pub async fn create_calendars(
         .await;
 
         match result {
-            Ok(r) if r.rows_affected() > 0 => {
-                new_credentials.push((candidate.title.clone(), caldav_username, caldav_password))
-            }
-            Ok(_) => already_connected.push(candidate.title.clone()),
+            Ok(r) if r.rows_affected() > 0 => newly_created_calendar_credentials.push((
+                candidate.title.clone(),
+                caldav_username,
+                caldav_password,
+            )),
+            Ok(_) => already_connected_database_titles.push(candidate.title.clone()),
             Err(e) => error!("failed to insert calendar {}: {}", candidate.database_id, e),
         }
     }
 
-    if !new_credentials.is_empty() {
+    if !newly_created_calendar_credentials.is_empty() {
         if let Err(e) = session
-            .insert("new_calendar_credentials", &new_credentials)
+            .insert(
+                "new_calendar_credentials",
+                &newly_created_calendar_credentials,
+            )
             .await
         {
             error!("failed to stash new calendar credentials in session: {}", e);
@@ -751,9 +702,12 @@ pub async fn create_calendars(
         state.refresh_all().await;
     }
 
-    if !already_connected.is_empty() {
+    if !already_connected_database_titles.is_empty() {
         if let Err(e) = session
-            .insert("calendar_connect_errors", &already_connected)
+            .insert(
+                "calendar_connect_errors",
+                &already_connected_database_titles,
+            )
             .await
         {
             error!("failed to stash calendar connect errors in session: {}", e);
@@ -763,9 +717,6 @@ pub async fn create_calendars(
     Redirect::to("/me").into_response()
 }
 
-/// Ownership-checked lookup shared by the delete/reveal/regenerate actions
-/// below — same shape as webview.rs's `require_owned_calendar`, kept as its
-/// own small copy here since oauth.rs doesn't depend on webview.rs.
 async fn owned_calendar_or_error(
     state: &AppState,
     claims: &OidcClaims<EmptyAdditionalClaims>,
@@ -784,10 +735,6 @@ async fn owned_calendar_or_error(
     }
 }
 
-/// Removes a calendar subscription (the SaaS's own row only — the
-/// underlying Notion database/pages are untouched). Evicts the shared cache
-/// entry too, but only once no other subscriber still references the same
-/// database_id.
 pub async fn delete_calendar(
     State(state): State<AppState>,
     claims: OidcClaims<EmptyAdditionalClaims>,
@@ -821,12 +768,6 @@ pub async fn delete_calendar(
     Redirect::to("/me").into_response()
 }
 
-/// Decrypts and re-surfaces a calendar's current CalDAV password via the
-/// same one-time session stash `create_calendars` uses — reuses `me()`'s
-/// existing "just created" display path rather than a separate UI state.
-/// Rows created before `caldav_password_encrypted` existed (or before
-/// `CALDAV_PASSWORD_ENC_KEY` was configured) have nothing recoverable here;
-/// "Tạo lại mật khẩu" is the only way to get a working password shown again.
 pub async fn reveal_password(
     State(state): State<AppState>,
     claims: OidcClaims<EmptyAdditionalClaims>,
@@ -869,9 +810,6 @@ pub async fn reveal_password(
     Redirect::to("/me").into_response()
 }
 
-/// Issues a brand new CalDAV password for a calendar, invalidating the old
-/// one — for rows whose original password isn't recoverable (see
-/// `reveal_password`), or just as a routine credential rotation.
 pub async fn regenerate_password(
     State(state): State<AppState>,
     claims: OidcClaims<EmptyAdditionalClaims>,
@@ -917,9 +855,6 @@ pub async fn regenerate_password(
     Redirect::to("/me").into_response()
 }
 
-/// Reads and clears the one-time post-onboarding credential stash written by
-/// `create_calendars` (and by `reveal_password`/`regenerate_password`),
-/// keyed by caldav_username for `me()` to display.
 pub async fn take_new_calendar_credentials(
     session: &tower_sessions::Session,
 ) -> HashMap<String, String> {
@@ -940,9 +875,6 @@ pub async fn take_new_calendar_credentials(
         .collect()
 }
 
-/// Reads and clears the one-time stash of database titles that were already
-/// connected under this same account (see `create_calendars`) — `me()` shows
-/// these as a notice instead of the previous silent no-op.
 pub async fn take_calendar_connect_errors(session: &tower_sessions::Session) -> Vec<String> {
     let stashed: Vec<String> = session
         .get("calendar_connect_errors")
@@ -983,19 +915,6 @@ impl From<SyncLogRow> for app::sync_log::SyncLogRow {
     }
 }
 
-/// Shows the last 200 create/update/delete attempts for one calendar
-/// (whether via CalDAV client or the webview), newest first — so a user can
-/// self-diagnose sync issues (did the write reach the server? did it reach
-/// Notion? what error?) from a browser instead of asking someone to read
-/// the application's raw logs. See AppState::log_sync for what gets
-/// recorded and from where.
-///
-/// Phase 1 of the Leptos SSR+CSR migration retry (see crates/app's module
-/// docs) — first real page (real DB data + real OIDC auth) migrated off
-/// hand-rolled `format!()` HTML. `request` is only here to hand off to
-/// `leptos_axum::render_app_to_stream`'s returned handler; every actual
-/// piece of data this route needs still comes from the extractors above it,
-/// same as before this migration.
 pub async fn sync_log_page(
     State(state): State<AppState>,
     claims: OidcClaims<EmptyAdditionalClaims>,

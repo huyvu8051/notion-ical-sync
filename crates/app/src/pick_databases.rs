@@ -1,17 +1,3 @@
-//! Phase B1 of the full Leptos SSR+CSR migration — "Pick a database" step 2
-//! of the onboarding flow at `/connect/notion/databases`. First page in the
-//! migration with real post-hydration interactivity: the checkbox-count →
-//! submit-button label used to be a plain `document.addEventListener` script
-//! (see the removed `oauth.rs::pick_databases_page`); here it's a genuine
-//! Leptos `signal()` per checkbox, same reactivity mechanism `TestApp`
-//! proved in `lib.rs`. Head/shell shape (inner_html `<head>`, single-root
-//! `<body>`) otherwise follows `connect_notion.rs`.
-//!
-//! Server-side data flow (Notion API call, DB re-fetch to validate selected
-//! ids on submit) is untouched — `create_calendars` (the POST target, still
-//! in `oauth.rs`) doesn't render a page at all, so it isn't part of this
-//! migration.
-
 use leptos::ev::Event;
 use leptos::prelude::*;
 use serde::{Deserialize, Serialize};
@@ -21,8 +7,6 @@ pub struct CandidateData {
     pub icon: String,
     pub title: String,
     pub database_id: String,
-    /// `Some(name)` = syncable (has a date property, pre-checked and
-    /// selectable); `None` = shown disabled, never counted/submitted.
     pub date_property: Option<String>,
 }
 
@@ -33,14 +17,12 @@ pub struct PickDatabasesPageData {
     pub candidates: Vec<CandidateData>,
 }
 
-/// The whole HTML document. `<head>` is one `inner_html` blob for the same
-/// reason as `landing.rs`/`connect_notion.rs` — never part of `hydrate_body`
-/// reconciliation, so real `view!` elements buy nothing there.
 #[component]
 pub fn PickDatabasesShell(data: PickDatabasesPageData) -> impl IntoView {
     let json = serde_json::to_string(&data).unwrap_or_default();
-    let json_safe = json.replace('<', "\\u003c");
-    let inline_data_script = format!("window.__PICK_DATABASES_DATA__ = {json_safe};");
+    let script_breakout_safe_json = json.replace('<', "\\u003c");
+    let inline_data_script =
+        format!("window.__PICK_DATABASES_DATA__ = {script_breakout_safe_json};");
 
     let head_html = format!(
         r#"<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Chọn cơ sở dữ liệu — NotionCal</title><link rel="stylesheet" href="/assets/style-oauth.css"><link href="{fonts}" rel="stylesheet"><style>{style}</style><script>{data_script}</script><script type="module">import init, {{ hydrate_pick_databases }} from '/pkg/app.js'; init('/pkg/app_bg.wasm').then(() => hydrate_pick_databases(JSON.stringify(window.__PICK_DATABASES_DATA__)));</script>"#,
@@ -62,9 +44,6 @@ pub fn PickDatabasesShell(data: PickDatabasesPageData) -> impl IntoView {
 
 #[component]
 pub fn PickDatabasesPage(data: PickDatabasesPageData) -> impl IntoView {
-    // `inner_html` on the top-nav (pre-rendered server-side, identical both
-    // SSR/hydrate) — everything below is real `view!` nodes since this is
-    // where the new reactivity lives.
     let top_nav_html = data.top_nav_html.clone();
 
     if data.candidates.is_empty() {
@@ -84,22 +63,16 @@ pub fn PickDatabasesPage(data: PickDatabasesPageData) -> impl IntoView {
         .into_any();
     }
 
-    // One signal per *syncable* candidate (checked by default, matching the
-    // old markup's unconditional `checked` attribute on those rows only).
-    // Disabled candidates (`date_property: None`) get no signal — they can
-    // never be checked or counted, same as before.
-    let checked_signals: Vec<Option<RwSignal<bool>>> = data
+    let syncable_checked_signals: Vec<Option<RwSignal<bool>>> = data
         .candidates
         .iter()
         .map(|c| c.date_property.is_some().then(|| RwSignal::new(true)))
         .collect();
 
-    // `Memo` (not a plain closure) so `count` itself is `Copy` — it's read
-    // from multiple places below (button `disabled`, label text, icon).
-    let count = {
-        let checked_signals = checked_signals.clone();
+    let checked_count = {
+        let syncable_checked_signals = syncable_checked_signals.clone();
         Memo::new(move |_| {
-            checked_signals
+            syncable_checked_signals
                 .iter()
                 .filter(|s| s.map(|s| s.get()).unwrap_or(false))
                 .count()
@@ -111,7 +84,7 @@ pub fn PickDatabasesPage(data: PickDatabasesPageData) -> impl IntoView {
     let rows = data
         .candidates
         .into_iter()
-        .zip(checked_signals)
+        .zip(syncable_checked_signals)
         .map(|(c, sig)| match (c.date_property, sig) {
             (Some(date_prop), Some(sig)) => view! {
                 <label class="group flex items-center gap-md p-md bg-white border border-outline-variant rounded-lg cursor-pointer hover:border-primary transition-all duration-200 card-shadow">
@@ -179,16 +152,16 @@ pub fn PickDatabasesPage(data: PickDatabasesPageData) -> impl IntoView {
                                 <button
                                     type="submit"
                                     id="continue-btn"
-                                    disabled=move || count.get() == 0
+                                    disabled=move || checked_count.get() == 0
                                     class="px-lg h-[40px] bg-primary text-white text-label-md rounded hover:opacity-90 transition-all flex items-center gap-sm active:scale-95 shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
                                 >
-                                    {move || if count.get() > 0 {
-                                        format!("Tiếp tục với {} cơ sở dữ liệu", count.get())
+                                    {move || if checked_count.get() > 0 {
+                                        format!("Tiếp tục với {} cơ sở dữ liệu", checked_count.get())
                                     } else {
                                         "Chọn ít nhất 1 cơ sở dữ liệu".to_string()
                                     }}
                                     <span class="material-symbols-outlined text-[18px]">
-                                        {move || if count.get() > 0 { "arrow_forward" } else { "error" }}
+                                        {move || if checked_count.get() > 0 { "arrow_forward" } else { "error" }}
                                     </span>
                                 </button>
                             </div>
@@ -235,11 +208,6 @@ mod tests {
         }
     }
 
-    // This module is the first to create real signals (`RwSignal::new`)
-    // during render, which needs an active reactive `Owner`/arena scope —
-    // provided per-request by `render_app_to_stream` in the real app, but
-    // not by a bare `#[test]` fn, hence the explicit `Owner::new().with(..)`
-    // wrapper the other modules' tests didn't need.
     #[test]
     fn renders_candidates_without_panicking() {
         any_spawner::Executor::init_futures_executor().ok();
@@ -248,7 +216,6 @@ mod tests {
         assert!(html.contains("db-1"));
         assert!(html.contains("Due date"));
         assert!(html.contains("Không tìm thấy thuộc tính ngày"));
-        // Leptos auto-escapes text content.
         assert!(html.contains("&lt;Tasks&gt;") || html.contains("Work"));
     }
 

@@ -15,7 +15,6 @@ use tower_http::cors::CorsLayer;
 use tower_http::trace::{DefaultMakeSpan, TraceLayer};
 use tracing::{error, info};
 
-// Page info for ICS
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct PageInfo {
     pub id: String,
@@ -24,30 +23,16 @@ pub struct PageInfo {
     pub end: Option<String>,
     pub url: String,
     pub last_edited: String,
-    /// Below: auto-detected from a conventionally-named Notion property (see
-    /// `extract_*` helpers near `refresh_db`) — absent if that property
-    /// doesn't exist on the source database, never an error.
     pub location: Option<String>,
     pub notes: Option<String>,
-    /// iCal `PRIORITY` value (1 = high, 5 = medium, 9 = low), pre-mapped from
-    /// the Notion select option name at extraction time.
     pub priority: Option<u8>,
-    /// iCal `TRANSP` — `true` = OPAQUE (busy), `false` = TRANSPARENT (free).
-    /// `None` means the property isn't set, in which case `TRANSP` is
-    /// omitted entirely (clients default to busy either way).
     pub busy: Option<bool>,
     pub reminder_minutes: Option<i64>,
     pub travel_minutes: Option<i64>,
-    /// Pre-mapped `RRULE` value fragment (e.g. `"FREQ=WEEKLY"`), read-only —
-    /// never parsed back out of a CalDAV client's PUT, see plan Decisions.
     pub repeat_rule: Option<String>,
-    /// Attendee emails, read-only for the same reason as `repeat_rule`.
     pub attendees: Vec<String>,
 }
 
-/// Notion property names are user-created, so lookups here are
-/// case-insensitive — `find_property_case_insensitive(props, "Location")`
-/// matches a property the user happened to name "location" or "LOCATION".
 fn find_property_case_insensitive<'a>(
     props: &'a serde_json::Value,
     name: &str,
@@ -72,9 +57,6 @@ fn rich_text_plain(value: &serde_json::Value) -> Option<String> {
     }
 }
 
-/// Location accepts either a `rich_text` or `url` Notion property (both are
-/// reasonable ways someone might store an address/link); Notes only makes
-/// sense as `rich_text`.
 fn extract_text_or_url_property(props: &serde_json::Value, name: &str) -> Option<String> {
     let prop = find_property_case_insensitive(props, name)?;
     match prop.get("type").and_then(|t| t.as_str())? {
@@ -103,9 +85,6 @@ fn extract_number_property(props: &serde_json::Value, name: &str) -> Option<i64>
     prop.get("number")?.as_f64().map(|n| n as i64)
 }
 
-/// iCal `PRIORITY`: 1 (high) .. 9 (low), 0/omitted = undefined. Unrecognized
-/// select option names map to `None` (property present but not one of our
-/// three expected values — safer to omit than guess).
 fn map_priority(select_name: &str) -> Option<u8> {
     match select_name.to_lowercase().as_str() {
         "high" => Some(1),
@@ -115,10 +94,6 @@ fn map_priority(select_name: &str) -> Option<u8> {
     }
 }
 
-/// Inverse of `map_priority`, for writing an iCal `PRIORITY` value (or our
-/// own modal's priority selection) back to a Notion select option. Uses
-/// ranges rather than the exact 1/5/9 this app itself emits, since a CalDAV
-/// client could send any 1-9 value.
 fn priority_number_to_select_name(n: u8) -> Option<&'static str> {
     match n {
         1..=3 => Some("High"),
@@ -128,11 +103,6 @@ fn priority_number_to_select_name(n: u8) -> Option<&'static str> {
     }
 }
 
-/// Optional per-event fields shared by `notion_create_event` and
-/// `notion_update_event` — split out from the required title/start/end
-/// params (which differ in shape between create and update) since this set
-/// is identical between the two and would otherwise be an unwieldy number of
-/// positional arguments.
 #[derive(Default)]
 pub struct ExtraEventFields<'a> {
     pub location: Option<&'a str>,
@@ -143,8 +113,6 @@ pub struct ExtraEventFields<'a> {
     pub travel_minutes: Option<i64>,
 }
 
-/// `Busy` (checkbox) takes priority if present; falls back to `Show As`
-/// (select, "Busy"/"Free"). `None` if neither property exists.
 fn extract_busy(props: &serde_json::Value) -> Option<bool> {
     if let Some(prop) = find_property_case_insensitive(props, "Busy") {
         if prop.get("type").and_then(|t| t.as_str()) == Some("checkbox") {
@@ -167,9 +135,6 @@ fn map_repeat_to_rrule(select_name: &str) -> Option<String> {
     }
 }
 
-/// `people`-type Notion property (extracts each person's email) or a plain
-/// `rich_text` comma/semicolon-separated list — either way, read-only (see
-/// plan Decisions: no RSVP protocol, never written back to Notion).
 fn extract_attendees(props: &serde_json::Value, name: &str) -> Vec<String> {
     let Some(prop) = find_property_case_insensitive(props, name) else {
         return Vec::new();
@@ -227,72 +192,30 @@ impl CaldavAllowWrites {
     }
 }
 
-// Shared app state
 #[derive(Clone)]
 pub struct AppState {
     pub client: Client,
     pub db: PgPool,
     pub cache: Arc<RwLock<HashMap<String, Vec<PageInfo>>>>,
     pub caldav_allow_writes: CaldavAllowWrites,
-    /// The `verification_token` Notion issued for the webhook subscription,
-    /// reused as the HMAC key to authenticate `X-Notion-Signature` on every
-    /// subsequent event. None disables signature checking (events are
-    /// still logged but not applied) until it's configured.
     pub webhook_secret: Option<String>,
-    /// Notion Public Integration OAuth credentials (see oauth.rs). None
-    /// disables the "Connect Notion" flow — /connect/notion renders a
-    /// "not configured" page instead of panicking, same posture as
-    /// `webhook_secret`.
     pub notion_oauth: Option<crate::oauth::NotionOAuthConfig>,
-    /// AES-256-GCM key (from `CALDAV_PASSWORD_ENC_KEY`) used to store CalDAV
-    /// passwords in a form the dashboard's "Hiện mật khẩu" action can
-    /// decrypt later — separate from `caldav_password_hash`, which is what
-    /// actual CalDAV Basic Auth verifies against and stays one-way. None
-    /// disables reveal (rows just show "Tạo lại" instead), same posture as
-    /// `webhook_secret`/`notion_oauth`.
     pub password_enc_key: Option<[u8; 32]>,
-    /// Stripe API credentials for the $1/year checkout flow. None disables
-    /// `/billing/checkout` ("not configured" page), same posture as
-    /// `notion_oauth`/`webhook_secret`/`password_enc_key`.
     pub stripe: Option<crate::billing::StripeConfig>,
-    /// SMTP credentials for transactional email (self-hosted Stalwart). None
-    /// disables sending — welcome/billing emails are silently skipped rather
-    /// than failing the request they'd otherwise piggyback on, same posture
-    /// as `stripe`/`notion_oauth`/`webhook_secret`.
     pub email: Option<crate::email::EmailConfig>,
-    /// Gates `POST /admin/reset-billing` (see billing.rs) — a caller must
-    /// send this exact value in `X-Admin-Secret`. `None` disables the route
-    /// entirely (404) rather than leaving it reachable with no real gate,
-    /// since it fully resets a user's trial/subscription state and cancels
-    /// any live Stripe subscription — this is strictly a dev/test tool, not
-    /// meant to ever be user-reachable.
     pub admin_secret: Option<String>,
 }
 
-// Notion API response types
 #[derive(Debug, Deserialize)]
 struct NotionQueryResponse {
     results: Vec<serde_json::Value>,
 }
 
-/// A tracked calendar joined with its owning Notion connection's access
-/// token — everything a request needs to talk to Notion on that user's
-/// behalf. Looked up per-request from Postgres rather than held as flat
-/// AppState fields, since (post multi-tenancy) each row can belong to a
-/// different user with a different token.
 #[derive(Debug, Clone, sqlx::FromRow)]
 pub struct CalendarRow {
     pub id: i64,
     pub user_id: i64,
-    /// The real Notion database id — shared cache key and what Notion API
-    /// calls use. Not unique across rows anymore (see migrations/0003):
-    /// several users can each have their own subscription to the same
-    /// underlying Notion database.
     pub database_id: String,
-    /// Per-subscription identifier used in public URLs (/cal/{id},
-    /// /app/{id}) and CalDAV auth ownership checks — this, not
-    /// `database_id`, is what makes one subscription unambiguous from
-    /// another when several users share a `database_id`.
     pub public_id: String,
     pub data_source_id: String,
     pub date_property: String,
@@ -301,10 +224,6 @@ pub struct CalendarRow {
     pub notion_access_token: String,
 }
 
-/// Identity resolved from a valid CalDAV Basic Auth credential — attached to
-/// the request by `auth_middleware` so handlers that need to scope by owner
-/// (e.g. `/refresh`, `/cal.ics`, `/calendars/{user}`) don't have to re-parse
-/// and re-verify the Authorization header themselves.
 #[derive(Debug, Clone)]
 pub struct AuthenticatedCaldavUser {
     pub user_id: i64,
@@ -368,9 +287,6 @@ impl AppState {
         })
     }
 
-    /// Looks up a calendar by its public, URL-facing identifier — the only
-    /// lookup that's safe to drive routing/ownership checks off, since
-    /// `database_id` alone can now match several different users' rows.
     pub async fn calendar_by_public_id(&self, public_id: &str) -> Option<CalendarRow> {
         sqlx::query_as::<_, CalendarRow>(
             "SELECT c.id, c.user_id, c.database_id, c.public_id, c.data_source_id, c.date_property, c.display_name, c.caldav_username, nc.notion_access_token
@@ -386,13 +302,6 @@ impl AppState {
         })
     }
 
-    /// Looks up the real Notion page id a CalDAV client's own event UID was
-    /// mapped to on a prior PUT (create). Needed because a client keeps
-    /// using its own generated UID for subsequent edits, but the cache
-    /// (rebuilt from Notion's actual state) only ever indexes events by
-    /// their real Notion page id — without this, every edit of a
-    /// CalDAV-created event looked like a brand new event and created a
-    /// fresh duplicate Notion page instead of updating the existing one.
     pub async fn lookup_caldav_uid(&self, calendar_id: i64, caldav_uid: &str) -> Option<String> {
         sqlx::query_scalar("SELECT notion_page_id FROM caldav_event_ids WHERE calendar_id = $1 AND caldav_uid = $2")
             .bind(calendar_id)
@@ -440,11 +349,6 @@ impl AppState {
         }
     }
 
-    /// Records one write attempt (create/update/delete, from either a CalDAV
-    /// client or the webview) so a user can see their own sync history from
-    /// a browser (see oauth.rs::sync_log_page) instead of needing someone to
-    /// read the raw application logs. Fire-and-forget: a logging failure
-    /// must never fail the actual CalDAV/webview request it's describing.
     #[allow(clippy::too_many_arguments)]
     pub async fn log_sync(
         &self,
@@ -474,12 +378,6 @@ impl AppState {
         }
     }
 
-    /// Looks up *a* row for a given Notion database_id — used only by the
-    /// legacy host-based aliases (calendar.opendiy.vn/mytime.opendiy.vn, see
-    /// `get_public_id_for_host`), a single-owner shortcut that predates
-    /// multi-tenancy. Deterministic (oldest row) since database_id is no
-    /// longer unique, but still only meaningful for those two hardcoded
-    /// hosts — never used for general routing/ownership decisions.
     async fn calendar_by_db_id(&self, db_id: &str) -> Option<CalendarRow> {
         sqlx::query_as::<_, CalendarRow>(
             "SELECT c.id, c.user_id, c.database_id, c.public_id, c.data_source_id, c.date_property, c.display_name, c.caldav_username, nc.notion_access_token
@@ -512,11 +410,6 @@ impl AppState {
         })
     }
 
-    /// Verifies a CalDAV Basic Auth credential against the `calendars` table,
-    /// returning the owning user's id and that calendar's public_id on
-    /// success. Callers still need to check the returned public_id against
-    /// whatever calendar the request is actually targeting — a valid
-    /// credential only proves identity, not that it's for *this* calendar.
     pub async fn verify_caldav_credentials(
         &self,
         username: &str,
@@ -547,9 +440,6 @@ impl AppState {
         Some((row.user_id, row.public_id))
     }
 
-    /// Same as `refresh_all` but scoped to one user's own calendars — used by
-    /// the per-user `/refresh` CalDAV endpoint so one tenant can't trigger a
-    /// refresh (and Notion API calls) for calendars they don't own.
     pub async fn refresh_for_user(&self, user_id: i64) {
         for cal in self.calendars_for_user(user_id).await {
             match self
@@ -701,9 +591,6 @@ impl AppState {
 
     pub async fn refresh_all(&self) {
         let calendars = self.all_calendars().await;
-        // Several rows can now share a database_id (multiple subscribers of
-        // the same Notion database) — the cache is keyed by database_id, so
-        // only fetch each one once per cycle rather than once per subscriber.
         let mut seen = std::collections::HashSet::new();
         let mut cache = self.cache.write().await;
         for cal in calendars {
@@ -727,8 +614,6 @@ impl AppState {
         }
     }
 
-    /// Refresh just the one database matching `data_source_id`, used to react
-    /// to a webhook event immediately instead of waiting for the next poll.
     pub async fn refresh_by_data_source(&self, data_source_id: &str) {
         let Some(cal) = self.calendar_by_data_source_id(data_source_id).await else {
             info!(
@@ -769,13 +654,6 @@ impl AppState {
         serde_json::Value::Object(date)
     }
 
-    /// Fetches the data source's property schema — `(lowercased name) ->
-    /// (original name, Notion type)` — so `notion_create_event`/
-    /// `notion_update_event` can tell whether e.g. a "Location" property
-    /// actually exists (and what shape it needs) before attempting to write
-    /// it: Notion's API rejects the *entire* request if `properties`
-    /// references a name that isn't on the target schema, so this has to be
-    /// checked up front rather than just attempting the write.
     async fn get_data_source_properties(
         &self,
         data_source_id: &str,
@@ -819,13 +697,6 @@ impl AppState {
     }
 }
 
-/// Builds the `properties` entries for the optional fields (Location, Notes,
-/// Priority, Busy/Free, Reminder, Travel time) — only for whichever ones are
-/// both `Some` in `fields` *and* present on `schema` with a compatible type;
-/// anything else is silently skipped rather than erroring, same
-/// "auto-detect, tolerate absence" posture as the read side (`extract_*`
-/// helpers near `refresh_db`). Free function (doesn't need `&self`) so it's
-/// directly unit-testable without a real `AppState`.
 fn optional_event_properties(
     schema: &HashMap<String, (String, String)>,
     fields: &ExtraEventFields,
@@ -901,11 +772,6 @@ fn optional_event_properties(
 }
 
 impl AppState {
-    /// Create a new Notion page under `data_source_id` with a title and the
-    /// configured date property set, mirroring what the webview's "add
-    /// event" flow needs. Notion is always the source of truth: this writes
-    /// through to it directly rather than touching our own cache, which the
-    /// caller refreshes afterward from the real Notion state.
     #[allow(clippy::too_many_arguments)]
     pub async fn notion_create_event(
         &self,
@@ -970,8 +836,6 @@ impl AppState {
         page_id.ok_or_else(|| "Notion response missing page id".to_string())
     }
 
-    /// Patch title and/or the date property on an existing page. Any field
-    /// left as `None` is left untouched on the Notion side.
     #[allow(clippy::too_many_arguments)]
     pub async fn notion_update_event(
         &self,
@@ -1010,7 +874,6 @@ impl AppState {
         self.patch_page(page_id, notion_token, &body).await
     }
 
-    /// Move a page to trash (Notion has no hard-delete via the public API).
     pub async fn notion_delete_event(
         &self,
         page_id: &str,
@@ -1155,10 +1018,6 @@ pub fn build_ics(db_id: &str, name: &str, pages: &[PageInfo]) -> String {
             }
         }
         ics.push_str(&format!("SUMMARY:{}\r\n", escape_ics(&page.title)));
-        // The Notion deep-link used to be crammed into DESCRIPTION (there
-        // was nowhere else for it) — now that real Notes exist, it belongs
-        // in iCal's own URL property instead; DESCRIPTION is only emitted
-        // when there's an actual Notes property to show.
         ics.push_str(&format!("URL:{}\r\n", escape_ics(&page.url)));
         if let Some(notes) = &page.notes {
             ics.push_str(&format!("DESCRIPTION:{}\r\n", escape_ics(notes)));
@@ -1185,10 +1044,6 @@ pub fn build_ics(db_id: &str, name: &str, pages: &[PageInfo]) -> String {
                 email
             ));
         }
-        // Best-effort: Apple Calendar's travel-time UI normally also wants a
-        // structured (geocoded) location to compute this itself — we only
-        // have a plain-text Location, so this just advertises the duration
-        // the Notion property says, which Apple may or may not surface.
         if let Some(minutes) = page.travel_minutes {
             ics.push_str(&format!(
                 "X-APPLE-TRAVEL-DURATION;VALUE=DURATION:PT{}M\r\n",
@@ -1308,10 +1163,6 @@ pub fn parse_ics_to_page_info(ics_content: &str, default_id: &str) -> PageInfo {
         title,
         start,
         end,
-        // Not a real Notion property today — regenerated server-side on
-        // every read from `refresh_db`, so what a client sends here (if
-        // anything) is irrelevant; kept empty rather than reusing it for
-        // notes now that DESCRIPTION has a real meaning of its own.
         url: String::new(),
         last_edited: chrono::Utc::now().to_rfc3339(),
         location,
@@ -1319,9 +1170,6 @@ pub fn parse_ics_to_page_info(ics_content: &str, default_id: &str) -> PageInfo {
         priority,
         busy,
         reminder_minutes,
-        // Travel time has no iCal-standard input line worth trusting from
-        // an arbitrary client — Notion stays the source of truth for it,
-        // same as Repeat/Attendees below.
         travel_minutes: None,
         repeat_rule: None,
         attendees: Vec::new(),
@@ -1499,10 +1347,6 @@ pub fn build_report_response(
     xml
 }
 
-/// Resolves the legacy per-host calendar alias (calendar.opendiy.vn /
-/// mytime.opendiy.vn — a single-owner shortcut that predates multi-tenancy)
-/// to that calendar's public_id, so it flows through the exact same
-/// auth-ownership and routing logic as path-based `/cal/{public_id}` access.
 pub async fn get_public_id_for_host(
     headers: &axum::http::HeaderMap,
     state: &AppState,
@@ -1712,25 +1556,6 @@ pub async fn handle_calendar_event_impl(
     }
 
     if method == axum::http::Method::PUT {
-        // Writes through to Notion (create or update, mirroring the
-        // webview's handle_create_event/handle_update_event) instead of
-        // just mutating the local cache — a cache-only write used to get
-        // silently discarded on the very next refresh_all()/webhook-driven
-        // refresh, since Notion is the source of truth for that cache.
-        //
-        // Resolution order for "is this an edit of an existing event":
-        // 1. The cache already has a page under this exact id — true for
-        //    events that originated in Notion, since the client is (by
-        //    construction, see build_propfind_calendar_with_events) using
-        //    Notion's own page id as its local UID/href.
-        // 2. A persisted caldav_event_ids mapping from a prior CalDAV PUT
-        //    under this same client-generated UID. Needed because a
-        //    CalDAV-created event's UID never becomes the advertised href
-        //    (that's always the real Notion page id) — without this, every
-        //    edit of a CalDAV-created event looked like a new event to this
-        //    handler and created a fresh duplicate Notion page each time
-        //    (confirmed live: one edited title produced 5 separate Notion
-        //    pages — "test", "test", "dung", "chung", "aaaaaa").
         let new_page = parse_ics_to_page_info(&body, &event_id_clean);
         let existing_id = {
             let cache = state.cache.read().await;
@@ -1900,7 +1725,6 @@ pub async fn handle_calendar_event_impl(
     axum::http::StatusCode::METHOD_NOT_ALLOWED.into_response()
 }
 
-/// Extracts (username, password) from an HTTP Basic Authorization header.
 fn extract_basic_auth(headers: &axum::http::HeaderMap) -> Option<(String, String)> {
     let auth_header = headers.get("Authorization").and_then(|h| h.to_str().ok())?;
     let basic_val = auth_header.strip_prefix("Basic ")?;
@@ -1911,9 +1735,6 @@ fn extract_basic_auth(headers: &axum::http::HeaderMap) -> Option<(String, String
     Some((username, password))
 }
 
-/// Pulls `{public_id}` out of a `/cal/{public_id}/...` request path, used to
-/// confirm the authenticated calendar's own public_id matches the one being
-/// requested (a valid credential for calendar A must not open calendar B).
 fn extract_path_public_id(path: &str) -> Option<String> {
     let rest = path.strip_prefix("/cal/")?;
     let seg = rest.split('/').next().unwrap_or("");
@@ -1979,11 +1800,6 @@ pub async fn handle_host_calendar(
         add_caldav_headers(res)
     } else {
         if method == axum::http::Method::GET || method == axum::http::Method::HEAD {
-            // `render_app_to_stream` (inside `landing_page`) needs the full
-            // `axum::extract::Request`, but this handler already consumed
-            // the body as a plain `String` (needed for the CalDAV branch
-            // above) — rebuild a minimal request from the parts still
-            // available. The landing page reads nothing from the body.
             let mut synthetic_request = axum::http::Request::builder()
                 .method(method.clone())
                 .uri(uri.clone())
@@ -2081,7 +1897,6 @@ fn add_caldav_headers(mut response: axum::response::Response) -> axum::response:
     response
 }
 
-// Fallback/catch-all or custom route handlers for new endpoints with Auth.
 async fn handle_well_known(
     method: axum::http::Method,
     headers: axum::http::HeaderMap,
@@ -2250,17 +2065,6 @@ async fn handle_calendars_propfind(
         )
             .into_response();
     }
-    // Scoped to the *specific calendar* these credentials belong to — not
-    // just the app-account owner. Each calendar has its own generated
-    // caldav_username/password (see oauth.rs::create_calendars), so a user
-    // with several calendars gets several independent credential pairs. A
-    // prior version of this filtered by `user_id` alone, which listed every
-    // one of that user's calendars regardless of which pair authenticated —
-    // discovery would hand a client hrefs for calendars it doesn't hold
-    // credentials for, and it would then dutifully try (and get 403 on) all
-    // of them. Confirmed live in production logs: Apple Calendar retrying
-    // PROPFIND/PROPPATCH every ~30s against two calendars it wasn't
-    // authenticated for, using a third calendar's credentials.
     let owner_calendars = match &auth {
         Some(a) => state
             .calendars_for_user(a.0.user_id)
@@ -2432,11 +2236,6 @@ async fn handle_calendars_propfind(
     axum::http::StatusCode::METHOD_NOT_ALLOWED.into_response()
 }
 
-// Authentication middleware wrapper — every CalDAV request needs a Basic
-// Auth credential matching some calendar's own caldav_username/password
-// (looked up in Postgres). There's no "auth disabled" bypass anymore: unlike
-// the single-tenant env-var scheme this replaced, every calendar has real
-// per-tenant credentials from the moment it's created via onboarding.
 async fn auth_middleware(
     State(state): State<AppState>,
     headers: axum::http::HeaderMap,
@@ -2470,17 +2269,6 @@ async fn auth_middleware(
 
     let start = std::time::Instant::now();
 
-    // Only OPTIONS (CORS preflight, no calendar data in the response) skips
-    // auth. GET/PROPFIND/REPORT used to bypass here too, which meant every
-    // "protected" CalDAV route was actually readable by anyone — reads are
-    // exactly what needs protecting, not just writes.
-    //
-    // The one other bypass: a bare GET/HEAD "/" on a host with no personal
-    // calendar alias (see get_public_id_for_host) isn't a CalDAV request at
-    // all — it's a browser hitting the marketing domain, which should see
-    // the landing page, not a Basic Auth prompt. calendar.opendiy.vn/
-    // mytime.opendiy.vn (real personal calendar aliases) are unaffected
-    // since get_public_id_for_host returns Some for those hosts.
     let is_landing_page_request = (method == axum::http::Method::GET
         || method == axum::http::Method::HEAD)
         && path == "/"
@@ -2545,11 +2333,6 @@ async fn auth_middleware(
         return response;
     };
 
-    // Path-scoped (/cal/{public_id}/...) or legacy host-based requests must
-    // match the authenticated calendar's own public_id — otherwise user A's
-    // valid credentials could read/write user B's calendar just by knowing
-    // its id (or, now that database_id can be shared by multiple users'
-    // rows, by knowing a database_id someone else also subscribed to).
     let target_public_id = match extract_path_public_id(&path) {
         Some(id) => Some(id),
         None => get_public_id_for_host(&headers, &state).await,
@@ -2658,12 +2441,6 @@ pub fn create_app(
             "/{event_id}/",
             axum::routing::any(handle_host_calendar_event),
         )
-        // Both moved here (from the unauthenticated router below) since they
-        // either leak calendar data (/cal.ics) or let anyone force a Notion
-        // API call (/refresh) — same auth requirement as the CalDAV routes.
-        // Both scoped to the AuthenticatedCaldavUser the middleware resolved
-        // — this used to operate over *every* tenant's calendars given any
-        // one valid credential, a real cross-tenant leak/abuse vector.
         .route(
             "/refresh",
             post(
@@ -2708,12 +2485,6 @@ pub fn create_app(
             auth_middleware,
         ));
 
-    // Built as its own router (not chained onto the others before calling
-    // .layer()) because Router::layer() wraps *every* route already
-    // registered on that router, not just the one added right before it —
-    // chaining this after /health and /webhook/notion-test made those force
-    // a Keycloak login redirect too, which isn't what "/me forces login" was
-    // supposed to mean.
     let me_route = Router::new()
         .route("/me", get(crate::auth::me))
         .route("/connect/notion", get(crate::oauth::connect_notion_page))
@@ -2745,15 +2516,6 @@ pub fn create_app(
             "/me/calendars/{public_id}/log",
             get(crate::oauth::sync_log_page),
         )
-        // Webview: server-rendered FullCalendar page + its JSON CRUD API,
-        // writing straight through to Notion (see notion_create/update/
-        // delete_event on AppState). Was CalDAV-Basic-Auth-protected
-        // before, alongside routes meant for calendar apps, not browsers —
-        // now gated the same way as the rest of the dashboard (OIDC
-        // session), with per-handler ownership checks against the logged-in
-        // user's own calendars.
-        // Superseded by /me (the real dashboard, with credentials/cards) —
-        // kept as a redirect so old bookmarks/links to the bare index still land somewhere useful.
         .route(
             "/app",
             get(|| async { axum::response::Redirect::to("/me") }),
@@ -2782,40 +2544,15 @@ pub fn create_app(
             })
             .layer(CorsLayer::permissive()),
         )
-        // Not auth-protected: Notion can't send Basic Auth credentials, so
-        // this is instead authenticated via HMAC signature verification
-        // inside the handler itself (see webhook.rs).
         .route(
             "/webhook/notion-test",
             post(crate::webhook::handle_notion_webhook),
         )
-        // Not auth-protected: Stripe can't send session cookies either — its
-        // own signature scheme (see billing.rs) authenticates the request.
         .route(
             "/billing/webhook",
             post(crate::billing::handle_stripe_webhook),
         )
-        // Not auth-protected via session either — gated by the X-Admin-Secret
-        // header instead (see billing.rs::reset_billing). Dev/test-only tool,
-        // 404s entirely unless ADMIN_SECRET is configured.
         .route("/admin/reset-billing", post(crate::billing::reset_billing))
-        // Static WASM/JS (app.js/app_bg.wasm) that hydrates every
-        // server-rendered page (see crates/app) — every page goes through
-        // leptos_axum::render_app_to_stream now, this is what attaches
-        // client-side interactivity (confirm buttons, signal-driven UI) to
-        // that same tree afterward. Built by `wasm-bindgen` into `pkg/` (see
-        // Dockerfile), not `cargo build`, so it isn't produced by a plain
-        // `cargo run` unless that step has been run at least once.
-        //
-        // no-cache (not no-store): forces revalidation on every request
-        // instead of trusting a blind TTL. app.js and app_bg.wasm are a
-        // matched pair rebuilt together on every deploy — a browser or CDN
-        // caching one past its TTL while refetching the other (observed in
-        // prod with the same app.js/app_bg.wasm split back when this pair
-        // was islands.js/islands_bg.wasm: Cloudflare cached the JS for 4h
-        // across a deploy that changed the wasm) produces a WebAssembly
-        // LinkError, since the JS glue's imports no longer match the wasm
-        // binary's exports.
         .nest_service(
             "/pkg",
             tower::ServiceBuilder::new()
@@ -2825,13 +2562,6 @@ pub fn create_app(
                 ))
                 .service(tower_http::services::ServeDir::new("pkg")),
         )
-        // Statically compiled Tailwind CSS (see tailwind/ + the
-        // tailwind-builder Dockerfile stage) — replaces the old
-        // cdn.tailwindcss.com runtime compiler, which was ~7s of
-        // render-blocking JS on a throttled mobile connection. no-cache for
-        // the same reason as /pkg above: rebuilt on every deploy, and a CDN
-        // holding a stale copy just means outdated styling until it
-        // revalidates, but there's no reason to let that linger.
         .nest_service(
             "/assets",
             tower::ServiceBuilder::new()
@@ -2841,30 +2571,14 @@ pub fn create_app(
                 ))
                 .service(tower_http::services::ServeDir::new("assets")),
         )
-        // Public/unauthenticated: linked from the Notion OAuth consent step
-        // and the dashboard footer, and required for eventual Notion
-        // Marketplace submission.
         .route("/privacy", get(crate::legal::privacy_policy_page))
         .route("/terms", get(crate::legal::terms_of_service_page))
         .route("/robots.txt", get(crate::legal::robots_txt))
         .route("/sitemap.xml", get(crate::legal::sitemap_xml))
-        // Without these, /favicon.ico (requested by every browser tab
-        // regardless of a <link rel="icon"> tag) falls through to the
-        // CalDAV catch-all handlers below and 401s under Basic Auth instead
-        // of serving an icon.
         .route("/favicon.ico", get(crate::legal::favicon))
         .route("/favicon.svg", get(crate::legal::favicon))
         .route("/lang/{code}", get(crate::i18n::set_lang))
-        // Phase-0 retry of the abandoned full Leptos SSR+CSR migration (see
-        // ~/.claude/plans/mighty-scribbling-floyd.md and crates/app). Not
-        // linked from anywhere — throwaway proof-of-mechanism page only.
-        // Remove once the mechanism is confirmed working (or migration is
-        // re-abandoned again).
         .route("/dev/leptos-check", get(leptos_axum::render_app_to_stream(app::Shell)))
-        // SaaS login (Keycloak) — separate identity from the CalDAV Basic
-        // Auth / Notion OAuth above. /me forces login via oidc_login_service;
-        // /oidc (callback) and /logout must NOT themselves force a redirect,
-        // so they sit outside that layer.
         .merge(me_route)
         .route(
             "/oidc",
@@ -2872,19 +2586,9 @@ pub fn create_app(
         )
         .route("/logout", get(crate::auth::logout))
         .merge(caldav_routes)
-        // Applied last so it wraps everything above — only populates claims
-        // when a session exists, never forces a redirect itself (that's
-        // oidc_login_service's job, scoped to /me only).
         .layer(oidc_auth_service)
         .layer(axum::Extension(app_config))
         .with_state(state)
-        // Outermost layer: logs method/path/status/latency for every request
-        // across the whole app (webview, OIDC, oauth, legal, CalDAV — not
-        // just the routes that already had their own manual info!() calls).
-        // Custom on_request/on_response closures instead of tower_http's
-        // DefaultOnRequest/DefaultOnResponse: those log method/uri only as
-        // span fields, which tracing_subscriber::fmt's default formatter
-        // doesn't print inline, so they were invisible in `kubectl logs`.
         .layer(
             TraceLayer::new_for_http()
                 .make_span_with(DefaultMakeSpan::new().include_headers(false))
