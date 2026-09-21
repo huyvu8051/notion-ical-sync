@@ -1,0 +1,241 @@
+//! Phase A (static batch) of the full Leptos SSR+CSR migration — see module
+//! docs in `lib.rs` and `sync_log.rs` for the proven pattern this follows.
+//!
+//! These are the exact two pages (`/privacy`, `/terms`) that panicked with
+//! `tachys::hydration::failed_to_cast_element` under the abandoned hand-wired
+//! attempt (commit b2e7a26). Content is pure static prose with zero
+//! server-computed data and zero client interactivity, so it's embedded as a
+//! raw HTML blob via Leptos's `inner_html` attribute rather than hand-written
+//! as hundreds of individual `view!` nodes — `inner_html` sets the element's
+//! HTML directly on both the server render and the client hydration/mount,
+//! so there's no per-node structural match for tachys to get wrong, which is
+//! exactly the class of bug that sank the previous attempt.
+
+use leptos::prelude::*;
+use serde::{Deserialize, Serialize};
+
+// Owned `String` fields, not `&'static str` — `serde_json::from_str::<T>`
+// requires `T: Deserialize<'de>` with no borrowed data outliving the input
+// buffer, so a `&'static str` field can never round-trip through the
+// client-side JSON parse (the wasm build fails to compile: "does not live
+// long enough"). `sync_log.rs`'s `SyncLogPageData` never hit this because it
+// was already all owned `String`s.
+#[derive(Clone, Serialize, Deserialize)]
+pub struct LegalPageData {
+    pub title: String,
+    pub back_label: String,
+    pub body_html: String,
+}
+
+const LEGAL_STYLE: &str = r#"
+* { box-sizing: border-box; }
+body { font-family: -apple-system, sans-serif; max-width: 720px; margin: 3rem auto; padding: 0 1.25rem; line-height: 1.6; color: #1a1a1a; }
+h1 { margin-bottom: 0.25rem; }
+.updated { color: #888; font-size: 0.85rem; margin-bottom: 2rem; }
+h2 { margin-top: 2rem; font-size: 1.15rem; }
+ul { padding-left: 1.25rem; }
+li { margin: 0.35rem 0; }
+a { color: #2563eb; }
+.top-nav { display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem; }
+.top-nav a.back { font-size: 0.85rem; color: #666; text-decoration: none; }
+"#;
+
+const PRIVACY_TITLE: &str = "Privacy Policy";
+const PRIVACY_BACK_LABEL: &str = "← Back";
+const PRIVACY_BODY_HTML: &str = r#"
+<h1>Privacy Policy</h1>
+<p class="updated">Last updated: 2026-08-02</p>
+
+<p>NotionCal ("the Service") turns a Notion database into a CalDAV feed and
+a browser calendar view. This page explains what data we collect and how we use it.</p>
+
+<h2>What we collect</h2>
+<ul>
+  <li><strong>Account:</strong> the email address from your login (via our
+  self-hosted Keycloak identity provider) — used only to identify your account.</li>
+  <li><strong>Notion access:</strong> when you connect your Notion workspace, we
+  store the OAuth access token Notion issues us, along with your workspace id/name
+  and integration bot id. This token is what lets the Service read and write the
+  specific pages you granted access to.</li>
+  <li><strong>Calendar configuration:</strong> for each Notion database you choose
+  to sync, we store its database id, the date property used for scheduling, and a
+  display name.</li>
+  <li><strong>CalDAV credentials:</strong> we generate a random username/password
+  per calendar so you can subscribe from Apple/Google Calendar or any CalDAV
+  client. Only a salted hash (Argon2) of the password is stored — the plaintext is
+  shown to you once, at creation time, and never again.</li>
+</ul>
+
+<h2>What we don't collect</h2>
+<ul>
+  <li>No payment or billing information — the Service is free.</li>
+  <li>No analytics or advertising trackers.</li>
+  <li>No data is sold or shared with third parties for marketing.</li>
+</ul>
+
+<h2>How we use it</h2>
+<p>Solely to operate the Service: fetching events from your Notion database,
+converting them to CalDAV/iCalendar format, keeping them in sync (via periodic
+polling and Notion's webhook events), and rendering the calendar webview so you
+can view and edit events yourself.</p>
+
+<h2>Where it's stored</h2>
+<p>All data lives in a private PostgreSQL database we operate, not exposed to the
+public internet, reachable only by the Service itself. We do not use third-party
+data processors beyond Notion's own API (needed to read/write your workspace) and
+the infrastructure hosting our servers.</p>
+
+<h2>Your controls</h2>
+<ul>
+  <li>You can revoke the Service's access at any time from Notion's own
+  "Connections" settings in your workspace — this immediately invalidates the
+  access token we hold.</li>
+  <li>To delete your account and all associated data (connections, calendars,
+  credentials), email us at the address below.</li>
+</ul>
+
+<h2>Contact</h2>
+<p>Questions about this policy: <a href="mailto:huyvu8051@gmail.com">huyvu8051@gmail.com</a></p>
+"#;
+
+pub fn privacy_data() -> LegalPageData {
+    LegalPageData {
+        title: PRIVACY_TITLE.to_string(),
+        back_label: PRIVACY_BACK_LABEL.to_string(),
+        body_html: PRIVACY_BODY_HTML.to_string(),
+    }
+}
+
+const TERMS_TITLE: &str = "Terms of Service";
+const TERMS_BACK_LABEL: &str = "← Back";
+const TERMS_BODY_HTML: &str = r#"
+<h1>Terms of Service</h1>
+<p class="updated">Last updated: 2026-08-02</p>
+
+<p>By using NotionCal ("the Service"), you agree to these terms.</p>
+
+<h2>The Service</h2>
+<p>The Service connects to a Notion workspace you authorize, and exposes the
+database(s) you choose as a CalDAV feed and a browser-based calendar view. It is
+provided free of charge, with no guaranteed uptime or support response time.</p>
+
+<h2>Your responsibilities</h2>
+<ul>
+  <li>You're responsible for the content of the Notion pages you connect, and for
+  keeping your CalDAV credentials confidential.</li>
+  <li>Don't use the Service to store or distribute illegal content, or in a way
+  that places excessive load on it (e.g. automated scraping outside normal
+  calendar-client sync behavior).</li>
+  <li>You must have the right to grant the Service access to any Notion workspace
+  you connect.</li>
+</ul>
+
+<h2>No warranty</h2>
+<p>The Service is provided "as is," without warranty of any kind. We don't
+guarantee it will be uninterrupted, error-free, or that data will never be lost —
+Notion remains the source of truth for your data, and we recommend not relying on
+the Service as your only backup of important events.</p>
+
+<h2>Termination</h2>
+<p>We may suspend or terminate access to the Service for any account found abusing
+it (as described above), or discontinue the Service entirely. You may stop using
+the Service and revoke its Notion access at any time.</p>
+
+<h2>Changes</h2>
+<p>We may update these terms as the Service evolves; continued use after a change
+means you accept the updated terms.</p>
+
+<h2>Governing law</h2>
+<p>These terms are governed by the laws of Vietnam.</p>
+
+<h2>Contact</h2>
+<p><a href="mailto:huyvu8051@gmail.com">huyvu8051@gmail.com</a></p>
+"#;
+
+pub fn terms_data() -> LegalPageData {
+    LegalPageData {
+        title: TERMS_TITLE.to_string(),
+        back_label: TERMS_BACK_LABEL.to_string(),
+        body_html: TERMS_BODY_HTML.to_string(),
+    }
+}
+
+/// The whole HTML document. Same shape as `SyncLogShell` — data script in
+/// `<head>`, `<body>` is exactly `<LegalPage/>`'s own output.
+#[component]
+pub fn LegalShell(data: LegalPageData) -> impl IntoView {
+    let title = format!("{} — NotionCal", data.title);
+
+    let json = serde_json::to_string(&data).unwrap_or_default();
+    let json_safe = json.replace('<', "\\u003c");
+    let inline_data_script = format!("window.__LEGAL_DATA__ = {json_safe};");
+
+    view! {
+        <!DOCTYPE html>
+        <html lang="en">
+            <head>
+                <meta charset="utf-8"/>
+                <meta name="viewport" content="width=device-width, initial-scale=1"/>
+                <title>{title}</title>
+                <style>{LEGAL_STYLE}</style>
+                <script inner_html=inline_data_script></script>
+                <script type="module">
+                    "import init, { hydrate_legal } from '/pkg/app.js'; init('/pkg/app_bg.wasm').then(() => hydrate_legal(JSON.stringify(window.__LEGAL_DATA__)));"
+                </script>
+            </head>
+            <body>
+                <LegalPage data=data/>
+            </body>
+        </html>
+    }
+}
+
+#[component]
+pub fn LegalPage(data: LegalPageData) -> impl IntoView {
+    view! {
+        <div id="legal-root">
+            <div class="top-nav">
+                <strong>"NotionCal"</strong>
+                <a class="back" href="/me">{data.back_label}</a>
+            </div>
+            <div inner_html=data.body_html></div>
+        </div>
+    }
+}
+
+#[cfg(feature = "hydrate")]
+#[wasm_bindgen::prelude::wasm_bindgen]
+pub fn hydrate_legal(json: String) {
+    console_error_panic_hook::set_once();
+    let data: LegalPageData =
+        serde_json::from_str(&json).expect("invalid legal page payload from server");
+    leptos::mount::hydrate_body(move || view! { <LegalPage data=data.clone()/> });
+}
+
+#[cfg(all(test, feature = "ssr"))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn renders_privacy_without_panicking() {
+        any_spawner::Executor::init_futures_executor().ok();
+        let html = view! { <LegalPage data=privacy_data()/> }.to_html();
+        assert!(html.contains("Privacy Policy"));
+        assert!(html.contains("huyvu8051@gmail.com"));
+    }
+
+    #[test]
+    fn renders_terms_without_panicking() {
+        any_spawner::Executor::init_futures_executor().ok();
+        let html = view! { <LegalPage data=terms_data()/> }.to_html();
+        assert!(html.contains("Terms of Service"));
+        assert!(html.contains("Governing law"));
+    }
+
+    #[test]
+    fn shell_embeds_escaped_json_safe_from_script_breakout() {
+        any_spawner::Executor::init_futures_executor().ok();
+        let html = view! { <LegalShell data=privacy_data()/> }.to_html();
+        assert!(!html.contains("</script><script>alert"));
+    }
+}
