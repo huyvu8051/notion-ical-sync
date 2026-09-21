@@ -12,7 +12,10 @@ module.exports = {
         "surface-container-low": "#f5f3f3", "surface-container": "#efeded"
       },
       spacing: { "md": "16px", "lg": "24px", "sm": "8px", "margin-desktop": "32px", "xs": "4px", "xl": "40px", "margin-mobile": "16px", "gutter": "16px" },
-      fontFamily: { "sans": ["Inter"], "code": ["Geist"] },
+      fontFamily: {
+        "sans": ["Inter", "ui-sans-serif", "system-ui", "-apple-system", "sans-serif"],
+        "code": ["Geist", "ui-sans-serif", "system-ui", "-apple-system", "sans-serif"]
+      },
       fontSize: {
         "display": ["32px", { lineHeight: "1.2", letterSpacing: "-0.02em", fontWeight: "600" }],
         "h1": ["24px", { lineHeight: "1.3", letterSpacing: "-0.015em", fontWeight: "600" }],
