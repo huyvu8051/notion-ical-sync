@@ -23,7 +23,7 @@ pub fn init_executor() {
 pub fn shell(options: LeptosOptions) -> impl IntoView {
     view! {
         <!DOCTYPE html>
-        <html lang="en">
+        <html>
             <head>
                 <meta charset="utf-8"/>
                 <meta name="viewport" content="width=device-width, initial-scale=1"/>
@@ -39,12 +39,25 @@ pub fn shell(options: LeptosOptions) -> impl IntoView {
 }
 
 #[component]
+fn NotYetMigratedFallback() -> impl IntoView {
+    #[cfg(feature = "hydrate")]
+    {
+        let location = leptos_router::hooks::use_location();
+        let path = format!("{}{}", location.pathname.get_untracked(), location.search.get_untracked());
+        if let Some(window) = web_sys::window() {
+            let _ = window.location().replace(&path);
+        }
+    }
+}
+
+#[component]
 pub fn App() -> impl IntoView {
     leptos_meta::provide_meta_context();
     view! {
         <Title text="NotionCal"/>
         <Router>
-            <Routes fallback=|| "404 Not Found">
+            <Routes fallback=NotYetMigratedFallback>
+                <Route path=StaticSegment("") view=landing::LandingRoutePage/>
                 <Route path=StaticSegment("privacy") view=legal::PrivacyRoutePage/>
                 <Route path=StaticSegment("terms") view=legal::TermsRoutePage/>
             </Routes>

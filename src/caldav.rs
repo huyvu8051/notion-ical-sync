@@ -1820,12 +1820,9 @@ pub async fn handle_host_calendar(
                 .body(axum::body::Body::empty())
                 .expect("method/uri from a real incoming request are always valid");
             *synthetic_request.headers_mut() = headers.clone();
-            return crate::pages::landing::landing_page(
-                crate::i18n::Lang::detect(&headers),
-                synthetic_request,
-            )
-            .await
-            .into_response();
+            let leptos_options = state.leptos_options.clone();
+            let handler = leptos_axum::render_app_to_stream(move || app::shell(leptos_options.clone()));
+            return handler(synthetic_request).await.into_response();
         }
         if method == axum::http::Method::OPTIONS {
             return axum::http::StatusCode::OK.into_response();
@@ -2403,10 +2400,11 @@ pub fn create_app(
         error::MiddlewareError, handle_oidc_redirect, EmptyAdditionalClaims, OidcAuthLayer,
         OidcLoginLayer,
     };
-    use leptos_axum::{generate_route_list, LeptosRoutes};
+    use leptos_axum::{generate_route_list_with_exclusions, LeptosRoutes};
     use tower::ServiceBuilder;
 
-    let leptos_routes = generate_route_list(app::App);
+    let leptos_routes =
+        generate_route_list_with_exclusions(app::App, Some(vec!["/".to_string()]));
     let leptos_options = state.leptos_options.clone();
 
     let oidc_login_service = ServiceBuilder::new()

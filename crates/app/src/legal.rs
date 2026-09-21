@@ -157,6 +157,7 @@ pub fn LegalPage(data: LegalPageData) -> impl IntoView {
         "Privacy Policy"
     };
     view! {
+        <leptos_meta::Html attr:lang="en"/>
         <leptos_meta::Title text=title/>
         <leptos_meta::Style>{LEGAL_STYLE}</leptos_meta::Style>
         <div id="legal-root">

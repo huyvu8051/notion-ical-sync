@@ -7,17 +7,7 @@ edition = "2021"
 crate-type = ["cdylib", "rlib"]
 
 [features]
-# Mirrors crates/islands' ssr/hydrate split: the host server binary opts into
-# `ssr` (pulls in leptos_axum's real render_app_to_stream pipeline, host
-# target only); the separate wasm32 build opts into `hydrate` instead. Never
-# both in the same build — see crates/islands/Cargo.toml for why.
-#
-# Deliberately NOT using leptos_axum's `LeptosRoutes`/route-list machinery —
-# see ~/.claude/plans/mighty-scribbling-floyd.md. This crate exposes a plain
-# axum handler (via render_app_to_stream) that the host wires into its own
-# router with a normal `.route(path, get(handler))` call, same as any other
-# handler in src/caldav.rs. Leptos owns nothing about routing.
-ssr = ["leptos/ssr", "dep:leptos_axum", "dep:any_spawner"]
+ssr = ["leptos/ssr", "dep:leptos_axum", "dep:any_spawner", "dep:axum"]
 hydrate = ["leptos/hydrate"]
 
 [dependencies]
@@ -25,11 +15,12 @@ leptos = { version = "0.8", default-features = false }
 leptos_router = { version = "0.8", default-features = false }
 leptos_meta = "0.8"
 leptos_axum = { version = "0.8", optional = true }
-# render_app_to_stream needs a global reactive-graph executor. cargo-leptos
-# apps get this for free from LeptosRoutes' setup; since we deliberately
-# don't use LeptosRoutes (see feature comment above), the host must call
-# `app::init_executor()` once at startup instead — omitting it panics on the
-# first request ("tried to spawn a Future ... before a global executor was
+axum = { version = "0.8", optional = true, default-features = false }
+# render_app_to_stream needs a global reactive-graph executor. The pages
+# still on the old per-handler render_app_to_stream pattern (not yet
+# migrated into the single App/LeptosRoutes tree) need the host to call
+# `app::init_executor()` once at startup — omitting it panics on the first
+# request ("tried to spawn a Future ... before a global executor was
 # initialized"), caught by running this locally against real Postgres/Keycloak.
 # futures-executor: only used by sync_log's #[cfg(test)] render smoke tests
 # (init_futures_executor) — a lighter single-thread executor than pulling in
@@ -52,4 +43,4 @@ wasm-bindgen-futures = "0.4"
 gloo-net = { version = "0.6", features = ["http"] }
 gloo-timers = { version = "0.3", features = ["futures"] }
 js-sys = "0.3"
-web-sys = { version = "0.3", features = ["Window"] }
+web-sys = { version = "0.3", features = ["Window", "Location"] }

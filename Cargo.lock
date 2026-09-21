@@ -49,6 +49,7 @@ name = "app"
 version = "0.1.0"
 dependencies = [
  "any_spawner",
+ "axum",
  "console_error_panic_hook",
  "gloo-net",
  "gloo-timers",

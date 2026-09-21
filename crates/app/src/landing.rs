@@ -421,35 +421,77 @@ pub fn en_data() -> LandingPageData {
     }
 }
 
+fn detect_landing_lang() -> &'static str {
+    #[cfg(feature = "ssr")]
+    {
+        if let Some(parts) = use_context::<axum::http::request::Parts>() {
+            if let Some(cookie) = parts.headers.get("cookie").and_then(|v| v.to_str().ok()) {
+                for pair in cookie.split(';') {
+                    if let Some((k, v)) = pair.trim().split_once('=') {
+                        if k.trim() == "lang" {
+                            if v == "en" {
+                                return "en";
+                            }
+                            if v == "vi" {
+                                return "vi";
+                            }
+                        }
+                    }
+                }
+            }
+            let accept_language = parts
+                .headers
+                .get("accept-language")
+                .and_then(|v| v.to_str().ok())
+                .unwrap_or("");
+            let most_preferred = accept_language
+                .split(',')
+                .next()
+                .unwrap_or("")
+                .trim()
+                .to_lowercase();
+            return if most_preferred.starts_with("en") {
+                "en"
+            } else {
+                "vi"
+            };
+        }
+    }
+    "vi"
+}
+
 #[component]
-pub fn LandingShell(data: LandingPageData) -> impl IntoView {
-    let json = serde_json::to_string(&data).unwrap_or_default();
-    let script_breakout_safe_json = json.replace('<', "\\u003c");
-    let inline_data_script = format!("window.__LANDING_DATA__ = {script_breakout_safe_json};");
+pub fn LandingRoutePage() -> impl IntoView {
+    let data = if detect_landing_lang() == "en" {
+        en_data()
+    } else {
+        vi_data()
+    };
+    view! { <LandingHead data=data.clone()/> <LandingPage data=data/> }
+}
 
-    let head_html = format!(
-        r#"<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="msvalidate.01" content="{bing}"><title>{title}</title><meta name="description" content="{desc}"><link rel="canonical" href="{canonical}"><link rel="icon" href="/favicon.svg" type="image/svg+xml"><meta property="og:site_name" content="NotionCal"><meta property="og:type" content="website"><meta property="og:title" content="{title}"><meta property="og:description" content="{desc}"><meta property="og:url" content="{canonical}"><meta property="og:locale" content="{locale}"><meta name="twitter:card" content="summary"><meta name="twitter:title" content="{title}"><meta name="twitter:description" content="{twitter_desc}"><link rel="stylesheet" href="/assets/style-auth-b.css"><link href="{fonts}" rel="stylesheet"><style>{style}</style><script>{data_script}</script><script type="module">import init, {{ hydrate_landing }} from '/pkg/app.js'; init('/pkg/app_bg.wasm').then(() => hydrate_landing(JSON.stringify(window.__LANDING_DATA__)));</script>"#,
-        bing = BING_VALIDATE,
-        title = data.page_title.clone(),
-        desc = data.meta_description.clone(),
-        canonical = CANONICAL_URL,
-        locale = data.og_locale.clone(),
-        twitter_desc = data.twitter_description.clone(),
-        fonts = GOOGLE_FONTS_HREF,
-        style = LANDING_HEAD_STYLE,
-        data_script = inline_data_script,
-    );
-
-    let html_lang = data.html_lang.clone();
-
+#[component]
+fn LandingHead(data: LandingPageData) -> impl IntoView {
     view! {
-        <!DOCTYPE html>
-        <html class="light" lang=html_lang>
-            <head inner_html=head_html></head>
-            <body>
-                <LandingPage data=data/>
-            </body>
-        </html>
+        <leptos_meta::Html attr:class="light" attr:lang=data.html_lang.clone()/>
+        <leptos_meta::Title text=data.page_title.clone()/>
+        <leptos_meta::Meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+        <leptos_meta::Meta name="msvalidate.01" content=BING_VALIDATE/>
+        <leptos_meta::Meta name="description" content=data.meta_description.clone()/>
+        <leptos_meta::Link rel="canonical" href=CANONICAL_URL/>
+        <leptos_meta::Link rel="icon" href="/favicon.svg" type_="image/svg+xml"/>
+        <leptos_meta::Meta property="og:site_name" content="NotionCal"/>
+        <leptos_meta::Meta property="og:type" content="website"/>
+        <leptos_meta::Meta property="og:title" content=data.page_title.clone()/>
+        <leptos_meta::Meta property="og:description" content=data.meta_description.clone()/>
+        <leptos_meta::Meta property="og:url" content=CANONICAL_URL/>
+        <leptos_meta::Meta property="og:locale" content=data.og_locale.clone()/>
+        <leptos_meta::Meta name="twitter:card" content="summary"/>
+        <leptos_meta::Meta name="twitter:title" content=data.page_title.clone()/>
+        <leptos_meta::Meta name="twitter:description" content=data.twitter_description.clone()/>
+        <leptos_meta::Link rel="stylesheet" href="/assets/style-auth-b.css"/>
+        <leptos_meta::Link href=GOOGLE_FONTS_HREF rel="stylesheet"/>
+        <leptos_meta::Style>{LANDING_HEAD_STYLE}</leptos_meta::Style>
     }
 }
 
@@ -458,15 +500,6 @@ pub fn LandingPage(data: LandingPageData) -> impl IntoView {
     view! {
         <div id="landing-root" class="bg-background text-on-surface" inner_html=data.body_html></div>
     }
-}
-
-#[cfg(feature = "hydrate")]
-#[wasm_bindgen::prelude::wasm_bindgen]
-pub fn hydrate_landing(json: String) {
-    console_error_panic_hook::set_once();
-    let data: LandingPageData =
-        serde_json::from_str(&json).expect("invalid landing page payload from server");
-    leptos::mount::hydrate_body(move || view! { <LandingPage data=data.clone()/> });
 }
 
 #[cfg(all(test, feature = "ssr"))]
@@ -487,15 +520,5 @@ mod tests {
         let html = view! { <LandingPage data=en_data()/> }.to_html();
         assert!(html.contains("Log in"));
         assert!(html.contains("Privacy Policy"));
-    }
-
-    #[test]
-    fn shell_preserves_seo_tags_and_is_script_breakout_safe() {
-        any_spawner::Executor::init_futures_executor().ok();
-        let html = view! { <LandingShell data=vi_data()/> }.to_html();
-        assert!(html.contains("NotionCal - Đồng bộ hóa Notion với Calendar"));
-        assert!(html.contains("og:locale"));
-        assert!(html.contains("msvalidate.01"));
-        assert!(!html.contains("</script><script>alert"));
     }
 }
