@@ -2681,7 +2681,6 @@ pub fn create_app(
         .route("/favicon.ico", get(crate::pages::legal::favicon))
         .route("/favicon.svg", get(crate::pages::legal::favicon))
         .route("/lang/{code}", get(crate::i18n::set_lang))
-        .route("/dev/leptos-check", get(leptos_axum::render_app_to_stream(app::Shell)))
         .merge(me_route)
         .route(
             "/oidc",
