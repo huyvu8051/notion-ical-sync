@@ -270,71 +270,31 @@ const CONNECT_NOTION_LABELS_EN: ConnectNotionLabels = ConnectNotionLabels {
 pub async fn connect_notion_page(
     claims: OidcClaims<EmptyAdditionalClaims>,
     lang: crate::i18n::Lang,
-) -> impl IntoResponse {
+    request: axum::extract::Request,
+) -> axum::response::Response {
     let email = claims.email().map(|e| e.as_str()).unwrap_or("");
     let l = match lang {
         crate::i18n::Lang::Vi => &CONNECT_NOTION_LABELS_VI,
         crate::i18n::Lang::En => &CONNECT_NOTION_LABELS_EN,
     };
-    let html_lang = lang.code();
-    Html(format!(
-        r#"<!doctype html>
-<html lang="{html_lang}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>{title} — NotionCal</title>{ONBOARDING_HEAD}</head>
-<body class="min-h-screen flex flex-col">
-{top_nav}
-<main class="flex-grow flex items-center justify-center pt-[56px] px-margin-mobile md:px-margin-desktop">
-<div class="w-full max-w-[480px] bg-surface-container-lowest border border-outline-variant p-xl rounded-lg card-shadow">
-<div class="flex justify-center items-center gap-md mb-lg">
-<div class="w-12 h-12 flex items-center justify-center bg-surface-container border border-outline-variant rounded-xl">
-<span class="material-symbols-outlined text-[28px]">link</span>
-</div>
-<div class="w-2 h-[1px] bg-outline-variant"></div>
-<div class="w-12 h-12 flex items-center justify-center bg-primary rounded-xl">
-<svg class="w-7 h-7 text-white fill-current" viewBox="0 0 24 24"><path d="M4.459 4.208c.673-.51 1.258-.69 2.067-.69h11.974c.421 0 .762.341.762.762v15.44c0 .421-.341.762-.762.762H5.539c-.588 0-1.026-.411-1.127-1.002L3.13 10.985C3.01 10.378 3.167 9.754 3.56 9.27L4.459 4.208zM17.15 17.61V6.63h-.04l-3.32 4.45h-.04V6.63h-1.28v10.98h.04l3.32-4.44h.04v4.44h1.28z"></path></svg>
-</div>
-</div>
-<div class="text-center mb-xl">
-<h1 class="text-h1 mb-sm tracking-tight text-primary">{heading}</h1>
-<p class="text-body-md text-on-surface-variant leading-relaxed">{body}</p>
-</div>
-<a class="w-full h-12 bg-primary text-white text-label-md flex items-center justify-center gap-sm rounded-lg hover:bg-zinc-800 transition-all active:scale-[0.98] mb-lg" href="/connect/notion/start">
-<svg class="w-5 h-5 fill-current" viewBox="0 0 24 24"><path d="M4.459 4.208c.673-.51 1.258-.69 2.067-.69h11.974c.421 0 .762.341.762.762v15.44c0 .421-.341.762-.762.762H5.539c-.588 0-1.026-.411-1.127-1.002L3.13 10.985C3.01 10.378 3.167 9.754 3.56 9.27L4.459 4.208zM17.15 17.61V6.63h-.04l-3.32 4.45h-.04V6.63h-1.28v10.98h.04l3.32-4.44h.04v4.44h1.28z"></path></svg>
-{connect_cta}
-</a>
-<div class="border-t border-outline-variant pt-lg space-y-md">
-<div class="flex items-start gap-md">
-<span class="material-symbols-outlined text-[20px] text-secondary mt-0.5" style="font-variation-settings: 'FILL' 1;">check_circle</span>
-<span class="text-body-md text-on-surface-variant">{bullet_read_write}</span>
-</div>
-<div class="flex items-start gap-md">
-<span class="material-symbols-outlined text-[20px] text-secondary mt-0.5" style="font-variation-settings: 'FILL' 1;">check_circle</span>
-<span class="text-body-md text-on-surface-variant">{bullet_disconnect}</span>
-</div>
-<div class="flex items-start gap-md">
-<span class="material-symbols-outlined text-[20px] text-secondary mt-0.5" style="font-variation-settings: 'FILL' 1;">check_circle</span>
-<span class="text-body-md text-on-surface-variant">{bullet_no_sharing}</span>
-</div>
-</div>
-<div class="mt-xl text-center">
-<a class="text-label-md text-on-surface-variant hover:text-primary transition-colors underline underline-offset-4" href="/privacy">{privacy_link}</a>
-<span class="text-outline-variant mx-2">·</span>
-<a class="text-label-md text-on-surface-variant hover:text-primary transition-colors underline underline-offset-4" href="/terms">{terms_link}</a>
-</div>
-</div>
-</main>
-</body></html>"#,
-        title = l.title,
-        top_nav = onboarding_top_nav(email, lang),
-        heading = l.heading,
-        body = l.body,
-        connect_cta = l.connect_cta,
-        bullet_read_write = l.bullet_read_write,
-        bullet_disconnect = l.bullet_disconnect,
-        bullet_no_sharing = l.bullet_no_sharing,
-        privacy_link = l.privacy_link,
-        terms_link = l.terms_link,
-    ))
+    let data = app::connect_notion::ConnectNotionPageData {
+        html_lang: lang.code().to_string(),
+        title: l.title.to_string(),
+        top_nav_html: onboarding_top_nav(email, lang),
+        heading: l.heading.to_string(),
+        body: l.body.to_string(),
+        connect_cta: l.connect_cta.to_string(),
+        bullet_read_write: l.bullet_read_write.to_string(),
+        bullet_disconnect: l.bullet_disconnect.to_string(),
+        bullet_no_sharing: l.bullet_no_sharing.to_string(),
+        privacy_link: l.privacy_link.to_string(),
+        terms_link: l.terms_link.to_string(),
+    };
+    let handler = leptos_axum::render_app_to_stream(move || {
+        let data = data.clone();
+        leptos::view! { <app::connect_notion::ConnectNotionShell data=data/> }
+    });
+    handler(request).await
 }
 
 /// Actually redirects to Notion's OAuth consent screen, stashing a CSRF
