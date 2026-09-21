@@ -1953,6 +1953,7 @@ pub async fn handle_path_calendar_event(
 
 pub async fn handle_host_calendar(
     method: axum::http::Method,
+    uri: axum::http::Uri,
     headers: axum::http::HeaderMap,
     State(state): State<AppState>,
     body: String,
@@ -1978,9 +1979,23 @@ pub async fn handle_host_calendar(
         add_caldav_headers(res)
     } else {
         if method == axum::http::Method::GET || method == axum::http::Method::HEAD {
-            return crate::auth::landing_page(crate::i18n::Lang::detect(&headers))
-                .await
-                .into_response();
+            // `render_app_to_stream` (inside `landing_page`) needs the full
+            // `axum::extract::Request`, but this handler already consumed
+            // the body as a plain `String` (needed for the CalDAV branch
+            // above) — rebuild a minimal request from the parts still
+            // available. The landing page reads nothing from the body.
+            let mut synthetic_request = axum::http::Request::builder()
+                .method(method.clone())
+                .uri(uri.clone())
+                .body(axum::body::Body::empty())
+                .expect("method/uri from a real incoming request are always valid");
+            *synthetic_request.headers_mut() = headers.clone();
+            return crate::auth::landing_page(
+                crate::i18n::Lang::detect(&headers),
+                synthetic_request,
+            )
+            .await
+            .into_response();
         }
         if method == axum::http::Method::OPTIONS {
             return axum::http::StatusCode::OK.into_response();

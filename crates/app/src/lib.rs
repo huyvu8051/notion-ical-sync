@@ -24,6 +24,7 @@
 //! tachys expects to find and panic — same failure class as the abandoned
 //! attempt, just triggered by a data mismatch instead of a structural one.
 
+pub mod landing;
 pub mod legal;
 pub mod sync_log;
 
