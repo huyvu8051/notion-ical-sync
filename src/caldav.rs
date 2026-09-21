@@ -2643,7 +2643,10 @@ pub fn create_app(
                     http::header::CACHE_CONTROL,
                     http::HeaderValue::from_static("no-cache"),
                 ))
-                .service(tower_http::services::ServeDir::new("pkg")),
+                .service(tower_http::services::ServeDir::new(format!(
+                    "{}/{}",
+                    leptos_options.site_root, leptos_options.site_pkg_dir
+                ))),
         )
         .nest_service(
             "/assets",

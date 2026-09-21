@@ -51,10 +51,12 @@ base64 = "0.22"
 # pulling in a second TLS stack (openssl) as a transitive dependency.
 lettre = { version = "0.11", default-features = false, features = ["tokio1-rustls-tls", "smtp-transport", "builder", "hostname"] }
 
-[package.metadata.leptos]
+[[workspace.metadata.leptos]]
+name = "notion-ical-sync"
 bin-package = "notion-ical-sync"
+bin-target = "notion-ical-sync"
 lib-package = "app"
-site-root = "."
+site-root = "target/site"
 site-pkg-dir = "pkg"
 site-addr = "127.0.0.1:8080"
 reload-port = 3002
