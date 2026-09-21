@@ -30,17 +30,28 @@ pub struct SyncLogPageData {
     pub rows: Vec<SyncLogRow>,
 }
 
+fn pkg_js_and_wasm_file_names(options: &leptos::config::LeptosOptions) -> (String, String) {
+    let js_file_name = options.output_name.to_string();
+    let mut wasm_file_name = options.output_name.to_string();
+    let compiled_under_cargo_leptos = option_env!("LEPTOS_OUTPUT_NAME").is_some();
+    if !compiled_under_cargo_leptos {
+        wasm_file_name.push_str("_bg");
+    }
+    (js_file_name, wasm_file_name)
+}
+
 #[component]
-pub fn SyncLogShell(data: SyncLogPageData) -> impl IntoView {
+pub fn SyncLogShell(data: SyncLogPageData, leptos_options: leptos::config::LeptosOptions) -> impl IntoView {
     let html_lang = data.html_lang.clone();
     let title = format!("{} — {}", data.heading_label, data.calendar_name);
 
     let json = serde_json::to_string(&data).unwrap_or_default();
     let script_breakout_safe_json = json.replace('<', "\\u003c");
     let inline_data_script = format!("window.__SYNC_LOG_DATA__ = {script_breakout_safe_json};");
+    let (js_file_name, wasm_file_name) = pkg_js_and_wasm_file_names(&leptos_options);
 
     let head_html = format!(
-        r#"<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>{title}</title><link rel="stylesheet" href="/assets/style-auth-a.css"><link href="{fonts}" rel="stylesheet"><style>{style}</style><script>{data_script}</script><script type="module">import init, {{ hydrate_sync_log }} from '/pkg/app.js'; init('/pkg/app_bg.wasm').then(() => hydrate_sync_log(JSON.stringify(window.__SYNC_LOG_DATA__)));</script>"#,
+        r#"<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>{title}</title><link rel="stylesheet" href="/assets/style-auth-a.css"><link href="{fonts}" rel="stylesheet"><style>{style}</style><script>{data_script}</script><script type="module">import init, {{ hydrate_sync_log }} from '/pkg/{js_file_name}.js'; init('/pkg/{wasm_file_name}.wasm').then(() => hydrate_sync_log(JSON.stringify(window.__SYNC_LOG_DATA__)));</script>"#,
         fonts = crate::page_shell::GOOGLE_FONTS_HREF,
         style = crate::page_shell::ONBOARDING_HEAD_STYLE,
         data_script = inline_data_script,
@@ -59,6 +70,12 @@ pub fn SyncLogShell(data: SyncLogPageData) -> impl IntoView {
 
 #[component]
 pub fn SyncLogPage(data: SyncLogPageData) -> impl IntoView {
+    #[cfg(feature = "hydrate")]
+    {
+        crate::page_shell::install_client_timezone_label();
+        crate::page_shell::install_client_local_time_labels();
+    }
+
     let top_nav_html = data.top_nav_html.clone();
     let status_ok = data.status_ok.clone();
     let status_error = data.status_error.clone();
@@ -143,7 +160,7 @@ fn SyncLogRowView(row: SyncLogRow, status_ok: String, status_error: String) -> i
 
     view! {
         <tr class="border-t border-outline-variant align-top">
-            <td class="px-md py-sm">{row.occurred_at.clone()}</td>
+            <td class="occurred-at px-md py-sm" data-utc=row.occurred_at.clone()>{row.occurred_at.clone()}</td>
             <td class="px-md py-sm">
                 <span class="inline-block px-sm py-[2px] rounded bg-surface-container-low text-label-md">{row.source.clone()}</span>
             </td>
@@ -230,8 +247,13 @@ mod tests {
         any_spawner::Executor::init_futures_executor().ok();
         let mut row = sample_row();
         row.detail = "</script><script>alert(1)</script>".to_string();
-        let html = leptos::prelude::Owner::new()
-            .with(|| view! { <SyncLogShell data=sample_data(vec![row])/> }.to_html());
+        let leptos_options = leptos::config::LeptosOptions::builder()
+            .output_name("app")
+            .build();
+        let html = leptos::prelude::Owner::new().with(|| {
+            view! { <SyncLogShell data=sample_data(vec![row]) leptos_options=leptos_options/> }
+                .to_html()
+        });
         assert!(!html.contains("</script><script>alert"));
     }
 }

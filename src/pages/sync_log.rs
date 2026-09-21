@@ -85,7 +85,8 @@ pub async fn sync_log_page(
     };
 
     let rows: Vec<SyncLogRow> = sqlx::query_as(
-        "SELECT occurred_at::text AS occurred_at, source, action, event_uid, notion_page_id, status, detail
+        "SELECT to_char(occurred_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"') AS occurred_at, \
+         source, action, event_uid, notion_page_id, status, detail
          FROM sync_log WHERE calendar_id = $1 ORDER BY occurred_at DESC LIMIT 200",
     )
     .bind(cal.id)
@@ -122,9 +123,11 @@ pub async fn sync_log_page(
         rows: rows.into_iter().map(Into::into).collect(),
     };
 
+    let leptos_options = state.leptos_options.clone();
     let handler = leptos_axum::render_app_to_stream(move || {
         let data = data.clone();
-        leptos::view! { <app::sync_log::SyncLogShell data=data/> }
+        let leptos_options = leptos_options.clone();
+        leptos::view! { <app::sync_log::SyncLogShell data=data leptos_options=leptos_options/> }
     });
     handler(request).await
 }
