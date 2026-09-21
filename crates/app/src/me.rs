@@ -41,8 +41,9 @@ const DASHBOARD_HEAD_STYLE: &str = r#"
 .success-banner-gradient { background: linear-gradient(90deg, rgba(220, 252, 231, 0.5) 0%, rgba(220, 252, 231, 0.2) 100%); }
 .error-banner-gradient { background: linear-gradient(90deg, rgba(254, 226, 226, 0.5) 0%, rgba(254, 226, 226, 0.2) 100%); }
 "#;
-const GOOGLE_FONTS_HREF_A: &str = "https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Geist:wght@400;500&display=swap";
-const GOOGLE_FONTS_HREF_B: &str = "https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&icon_names=add,arrow_back,arrow_forward,calendar_add_on,calendar_month,calendar_today,check_circle,close,content_copy,database,error,event_available,link,login,logout,open_in_new,security,sync,sync_alt,verified,warning&display=swap";
+
+use crate::page_shell::GOOGLE_FONTS_HREF;
+
 const COPY_TO_CLIPBOARD_JS: &str = r#"
 function copyToClipboard(text, btn) {
   navigator.clipboard.writeText(text).then(() => {
@@ -64,10 +65,9 @@ pub fn MeShell(data: MePageData) -> impl IntoView {
     let inline_data_script = format!("window.__ME_DATA__ = {script_breakout_safe_json};");
 
     let head_html = format!(
-        r#"<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>{title}</title><link rel="stylesheet" href="/assets/style-auth-a.css"><link href="{fonts_a}" rel="stylesheet"><link href="{fonts_b}" rel="stylesheet"><style>{style}</style><script>{copy_js}</script><script>{data_script}</script><script type="module">import init, {{ hydrate_me }} from '/pkg/app.js'; init('/pkg/app_bg.wasm').then(() => hydrate_me(JSON.stringify(window.__ME_DATA__)));</script>"#,
+        r#"<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>{title}</title><link rel="stylesheet" href="/assets/style-auth-a.css"><link href="{fonts}" rel="stylesheet"><style>{style}</style><script>{copy_js}</script><script>{data_script}</script><script type="module">import init, {{ hydrate_me }} from '/pkg/app.js'; init('/pkg/app_bg.wasm').then(() => hydrate_me(JSON.stringify(window.__ME_DATA__)));</script>"#,
         title = data.page_title,
-        fonts_a = GOOGLE_FONTS_HREF_A,
-        fonts_b = GOOGLE_FONTS_HREF_B,
+        fonts = GOOGLE_FONTS_HREF,
         style = DASHBOARD_HEAD_STYLE,
         copy_js = COPY_TO_CLIPBOARD_JS,
         data_script = inline_data_script,

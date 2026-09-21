@@ -22,7 +22,7 @@ body { font-family: 'Inter', sans-serif; -webkit-font-smoothing: antialiased; -m
 .glass-header { backdrop-filter: blur(8px); background: rgba(251, 249, 249, 0.85); }
 "#;
 
-const GOOGLE_FONTS_HREF: &str = "https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Geist:wght@400;500&family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&icon_names=add,arrow_back,arrow_forward,calendar_add_on,calendar_month,calendar_today,check_circle,close,content_copy,database,error,event_available,link,login,logout,open_in_new,security,sync,sync_alt,verified,warning&display=swap";
+use crate::page_shell::GOOGLE_FONTS_HREF;
 
 const BING_VALIDATE: &str = "B2ADD65C06672433A78251607DBB1250";
 const CANONICAL_URL: &str = "https://notion-caldav.opendiy.vn/";

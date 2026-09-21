@@ -26,8 +26,8 @@ pub fn PickDatabasesShell(data: PickDatabasesPageData) -> impl IntoView {
 
     let head_html = format!(
         r#"<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Chọn cơ sở dữ liệu — NotionCal</title><link rel="stylesheet" href="/assets/style-auth-a.css"><link href="{fonts}" rel="stylesheet"><style>{style}</style><script>{data_script}</script><script type="module">import init, {{ hydrate_pick_databases }} from '/pkg/app.js'; init('/pkg/app_bg.wasm').then(() => hydrate_pick_databases(JSON.stringify(window.__PICK_DATABASES_DATA__)));</script>"#,
-        fonts = crate::connect_notion::GOOGLE_FONTS_HREF,
-        style = crate::connect_notion::ONBOARDING_HEAD_STYLE,
+        fonts = crate::page_shell::GOOGLE_FONTS_HREF,
+        style = crate::page_shell::ONBOARDING_HEAD_STYLE,
         data_script = inline_data_script,
     );
 
