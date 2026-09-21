@@ -477,7 +477,10 @@ impl AppState {
         date_property: &str,
         notion_token: &str,
     ) -> Result<Vec<PageInfo>, String> {
-        let url = format!("{}/v1/data_sources/{}/query", self.notion_api_base_url, ds_id);
+        let url = format!(
+            "{}/v1/data_sources/{}/query",
+            self.notion_api_base_url, ds_id
+        );
 
         let body = serde_json::json!({
             "filter": {
@@ -671,7 +674,10 @@ impl AppState {
         data_source_id: &str,
         notion_token: &str,
     ) -> HashMap<String, (String, String)> {
-        let url = format!("{}/v1/data_sources/{}", self.notion_api_base_url, data_source_id);
+        let url = format!(
+            "{}/v1/data_sources/{}",
+            self.notion_api_base_url, data_source_id
+        );
         let resp = match self
             .client
             .get(&url)
@@ -1821,7 +1827,8 @@ pub async fn handle_host_calendar(
                 .expect("method/uri from a real incoming request are always valid");
             *synthetic_request.headers_mut() = headers.clone();
             let leptos_options = state.leptos_options.clone();
-            let handler = leptos_axum::render_app_to_stream(move || app::shell(leptos_options.clone()));
+            let handler =
+                leptos_axum::render_app_to_stream(move || app::shell(leptos_options.clone()));
             return handler(synthetic_request).await.into_response();
         }
         if method == axum::http::Method::OPTIONS {
@@ -2403,12 +2410,31 @@ pub fn create_app(
     use leptos_axum::{generate_route_list_with_exclusions, LeptosRoutes};
     use tower::ServiceBuilder;
 
-    let (leptos_login_required_routes, leptos_public_routes): (Vec<_>, Vec<_>) =
-        generate_route_list_with_exclusions(app::App, Some(vec!["/".to_string()]))
-            .into_iter()
-            .partition(|route| route.path() == "/connect/notion");
+    // Only ever call `.leptos_routes()`/`.leptos_routes_with_context()` once
+    // for the whole app — it also (re-)registers every #[server] function's
+    // endpoint every time it's called, and calling it a second time panics
+    // at startup ("Overlapping method route") on the duplicate registration.
+    // Pages that need the "must be logged in" redirect (which only
+    // `me_route`'s `oidc_login_service` layer provides) are therefore
+    // excluded here and dispatched via a manual render_app_to_stream call
+    // inside `me_route` instead — same trick already used for `/` landing's
+    // Host-header-based special case below. Client-side navigation to them
+    // still works: they're registered in `App`'s `<Routes>` tree, just not
+    // auto-mounted server-side by this call.
+    let leptos_routes = generate_route_list_with_exclusions(
+        app::App,
+        Some(vec![
+            "/".to_string(),
+            "/connect/notion".to_string(),
+            "/connect/notion/databases".to_string(),
+        ]),
+    );
     let leptos_options = state.leptos_options.clone();
     let leptos_options_for_login_required = leptos_options.clone();
+    let db_pool_for_context = state.db.clone();
+    let http_client_for_context = state.client.clone();
+    let notion_api_base_url_for_context =
+        app::page_shell::NotionApiBaseUrl(state.notion_api_base_url.clone());
 
     let oidc_login_service = ServiceBuilder::new()
         .layer(HandleErrorLayer::new(|e: MiddlewareError| async move {
@@ -2504,19 +2530,46 @@ pub fn create_app(
             auth_middleware,
         ));
 
+    let leptos_login_required_page = {
+        let leptos_options = leptos_options_for_login_required.clone();
+        let db_pool = db_pool_for_context.clone();
+        let http_client = http_client_for_context.clone();
+        let notion_api_base_url = notion_api_base_url_for_context.clone();
+        move || {
+            let leptos_options = leptos_options.clone();
+            let db_pool = db_pool.clone();
+            let http_client = http_client.clone();
+            let notion_api_base_url = notion_api_base_url.clone();
+            move |request: axum::extract::Request| {
+                let leptos_options = leptos_options.clone();
+                let db_pool = db_pool.clone();
+                let http_client = http_client.clone();
+                let notion_api_base_url = notion_api_base_url.clone();
+                async move {
+                    let handler = leptos_axum::render_app_to_stream_with_context(
+                        move || {
+                            leptos::prelude::provide_context(db_pool.clone());
+                            leptos::prelude::provide_context(http_client.clone());
+                            leptos::prelude::provide_context(notion_api_base_url.clone());
+                        },
+                        move || app::shell(leptos_options.clone()),
+                    );
+                    handler(request).await
+                }
+            }
+        }
+    };
+
     let me_route = Router::new()
         .route("/me", get(crate::pages::me::me))
-        .leptos_routes(&state, leptos_login_required_routes, move || {
-            app::shell(leptos_options_for_login_required.clone())
-        })
+        .route("/connect/notion", get(leptos_login_required_page()))
         .route(
             "/connect/notion/start",
             get(crate::pages::connect_notion::connect_notion_start),
         )
         .route(
             "/connect/notion/databases",
-            get(crate::pages::pick_databases::pick_databases_page)
-                .post(crate::pages::pick_databases::create_calendars),
+            get(leptos_login_required_page()).post(crate::pages::pick_databases::create_calendars),
         )
         .route(
             "/oauth/notion/callback",
@@ -2602,7 +2655,16 @@ pub fn create_app(
                 ))
                 .service(tower_http::services::ServeDir::new("static")),
         )
-        .leptos_routes(&state, leptos_public_routes, move || app::shell(leptos_options.clone()))
+        .leptos_routes_with_context(
+            &state,
+            leptos_routes,
+            move || {
+                leptos::prelude::provide_context(db_pool_for_context.clone());
+                leptos::prelude::provide_context(http_client_for_context.clone());
+                leptos::prelude::provide_context(notion_api_base_url_for_context.clone());
+            },
+            move || app::shell(leptos_options.clone()),
+        )
         .route("/robots.txt", get(crate::pages::legal::robots_txt))
         .route("/sitemap.xml", get(crate::pages::legal::sitemap_xml))
         .route("/favicon.ico", get(crate::pages::legal::favicon))
@@ -2832,18 +2894,12 @@ mod ics_dt_tests {
 
     #[test]
     fn converts_negative_offset_to_true_utc() {
-        assert_eq!(
-            ics_dt("2026-09-17T18:00:00.000-06:00"),
-            "20260918T000000Z"
-        );
+        assert_eq!(ics_dt("2026-09-17T18:00:00.000-06:00"), "20260918T000000Z");
     }
 
     #[test]
     fn converts_positive_offset_to_true_utc() {
-        assert_eq!(
-            ics_dt("2026-09-17T18:00:00.000+07:00"),
-            "20260917T110000Z"
-        );
+        assert_eq!(ics_dt("2026-09-17T18:00:00.000+07:00"), "20260917T110000Z");
     }
 
     #[test]

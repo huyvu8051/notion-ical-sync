@@ -17,28 +17,157 @@ pub struct PickDatabasesPageData {
     pub candidates: Vec<CandidateData>,
 }
 
+#[cfg(feature = "ssr")]
+const NOTION_VERSION: &str = "2025-09-03";
+
+#[cfg(feature = "ssr")]
+async fn connection_token_for_user(
+    pool: &sqlx::PgPool,
+    connection_id: i64,
+    keycloak_sub: &str,
+) -> Option<String> {
+    sqlx::query_scalar(
+        "SELECT nc.notion_access_token FROM notion_connections nc \
+         JOIN users u ON u.id = nc.user_id \
+         WHERE nc.id = $1 AND u.keycloak_sub = $2",
+    )
+    .bind(connection_id)
+    .bind(keycloak_sub)
+    .fetch_optional(pool)
+    .await
+    .unwrap_or(None)
+}
+
+#[cfg(feature = "ssr")]
+async fn fetch_syncable_databases(
+    client: &reqwest::Client,
+    api_base_url: &str,
+    token: &str,
+) -> Result<Vec<CandidateData>, String> {
+    let resp = client
+        .post(format!("{api_base_url}/v1/search"))
+        .bearer_auth(token)
+        .header("Notion-Version", NOTION_VERSION)
+        .json(&serde_json::json!({ "filter": { "value": "data_source", "property": "object" } }))
+        .send()
+        .await
+        .map_err(|e| format!("search request failed: {e}"))?;
+
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let txt = resp.text().await.unwrap_or_default();
+        return Err(format!("Notion search error {status}: {txt}"));
+    }
+
+    let body: serde_json::Value = resp
+        .json()
+        .await
+        .map_err(|e| format!("parse failed: {e}"))?;
+    let results = body
+        .get("results")
+        .and_then(|r| r.as_array())
+        .cloned()
+        .unwrap_or_default();
+
+    let mut candidates = Vec::new();
+    for ds in results {
+        let Some(database_id) = ds
+            .get("parent")
+            .and_then(|p| p.get("database_id"))
+            .and_then(|id| id.as_str())
+        else {
+            continue;
+        };
+
+        let title = ds
+            .get("title")
+            .and_then(|t| t.as_array())
+            .and_then(|arr| arr.first())
+            .and_then(|item| item.get("plain_text"))
+            .and_then(|t| t.as_str())
+            .unwrap_or("(untitled)")
+            .to_string();
+        let icon = ds
+            .get("icon")
+            .and_then(|icon| icon.get("emoji"))
+            .and_then(|e| e.as_str())
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| "📄".to_string());
+
+        let date_property = ds
+            .get("properties")
+            .and_then(|p| p.as_object())
+            .and_then(|props| {
+                props
+                    .iter()
+                    .find(|(_, def)| def.get("type").and_then(|t| t.as_str()) == Some("date"))
+                    .map(|(name, _)| name.clone())
+            });
+
+        candidates.push(CandidateData {
+            icon,
+            title,
+            database_id: database_id.to_string(),
+            date_property,
+        });
+    }
+
+    Ok(candidates)
+}
+
+#[server]
+async fn list_candidates(connection_id: i64) -> Result<Vec<CandidateData>, ServerFnError> {
+    let claims: axum_oidc::OidcClaims<axum_oidc::EmptyAdditionalClaims> =
+        leptos_axum::extract().await?;
+    let pool = use_context::<sqlx::PgPool>()
+        .ok_or_else(|| ServerFnError::new("missing db pool context"))?;
+    let client = use_context::<reqwest::Client>()
+        .ok_or_else(|| ServerFnError::new("missing http client context"))?;
+    let api_base_url = use_context::<crate::page_shell::NotionApiBaseUrl>()
+        .ok_or_else(|| ServerFnError::new("missing notion api base url context"))?
+        .0;
+
+    let Some(access_token) =
+        connection_token_for_user(&pool, connection_id, claims.subject().as_str()).await
+    else {
+        return Err(ServerFnError::new("connection not found"));
+    };
+
+    fetch_syncable_databases(&client, &api_base_url, &access_token)
+        .await
+        .map_err(ServerFnError::new)
+}
+
 #[component]
-pub fn PickDatabasesShell(data: PickDatabasesPageData) -> impl IntoView {
-    let json = serde_json::to_string(&data).unwrap_or_default();
-    let script_breakout_safe_json = json.replace('<', "\\u003c");
-    let inline_data_script =
-        format!("window.__PICK_DATABASES_DATA__ = {script_breakout_safe_json};");
-
-    let head_html = format!(
-        r#"<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Chọn cơ sở dữ liệu — NotionCal</title><link rel="stylesheet" href="/assets/style-auth-a.css"><link href="{fonts}" rel="stylesheet"><style>{style}</style><script>{data_script}</script><script type="module">import init, {{ hydrate_pick_databases }} from '/pkg/app.js'; init('/pkg/app_bg.wasm').then(() => hydrate_pick_databases(JSON.stringify(window.__PICK_DATABASES_DATA__)));</script>"#,
-        fonts = crate::page_shell::GOOGLE_FONTS_HREF,
-        style = crate::page_shell::ONBOARDING_HEAD_STYLE,
-        data_script = inline_data_script,
+pub fn PickDatabasesRoutePage() -> impl IntoView {
+    let connection_id = crate::page_shell::query_param_i64("connection_id").unwrap_or_default();
+    #[cfg(feature = "ssr")]
+    let email = crate::page_shell::current_user_email();
+    #[cfg(not(feature = "ssr"))]
+    let email = String::new();
+    let top_nav_html = crate::page_shell::top_nav_html(
+        &email,
+        crate::page_shell::detect_lang(),
+        "/connect/notion/databases",
     );
-
+    let candidates = Resource::new(move || connection_id, list_candidates);
     view! {
-        <!DOCTYPE html>
-        <html lang="vi">
-            <head inner_html=head_html></head>
-            <body class="min-h-screen flex flex-col">
-                <PickDatabasesPage data=data/>
-            </body>
-        </html>
+        <leptos_meta::Title text="Chọn cơ sở dữ liệu — NotionCal"/>
+        <leptos_meta::Link rel="stylesheet" href="/assets/style-auth-a.css"/>
+        <leptos_meta::Link href=crate::page_shell::GOOGLE_FONTS_HREF rel="stylesheet"/>
+        <leptos_meta::Style>{crate::page_shell::ONBOARDING_HEAD_STYLE}</leptos_meta::Style>
+        <Suspense fallback=|| ()>
+            {move || candidates.get().map(|result| {
+                let candidates = result.unwrap_or_default();
+                view! {
+                    <PickDatabasesPage data=PickDatabasesPageData {
+                        top_nav_html: top_nav_html.clone(),
+                        connection_id,
+                        candidates,
+                    }/>
+                }
+            })}
+        </Suspense>
     }
 }
 
@@ -174,15 +303,6 @@ pub fn PickDatabasesPage(data: PickDatabasesPageData) -> impl IntoView {
     .into_any()
 }
 
-#[cfg(feature = "hydrate")]
-#[wasm_bindgen::prelude::wasm_bindgen]
-pub fn hydrate_pick_databases(json: String) {
-    console_error_panic_hook::set_once();
-    let data: PickDatabasesPageData =
-        serde_json::from_str(&json).expect("invalid pick-databases page payload from server");
-    leptos::mount::hydrate_body(move || view! { <PickDatabasesPage data=data.clone()/> });
-}
-
 #[cfg(all(test, feature = "ssr"))]
 mod tests {
     use super::*;
@@ -230,13 +350,5 @@ mod tests {
         let html = leptos::prelude::Owner::new()
             .with(|| view! { <PickDatabasesPage data=data/> }.to_html());
         assert!(html.contains("Không tìm thấy cơ sở dữ liệu"));
-    }
-
-    #[test]
-    fn shell_is_script_breakout_safe() {
-        any_spawner::Executor::init_futures_executor().ok();
-        let html = leptos::prelude::Owner::new()
-            .with(|| view! { <PickDatabasesShell data=sample_data()/> }.to_html());
-        assert!(!html.contains("</script><script>alert"));
     }
 }

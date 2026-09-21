@@ -61,6 +61,7 @@ pub fn App() -> impl IntoView {
                 <Route path=StaticSegment("privacy") view=legal::PrivacyRoutePage/>
                 <Route path=StaticSegment("terms") view=legal::TermsRoutePage/>
                 <Route path=(StaticSegment("connect"), StaticSegment("notion")) view=connect_notion::ConnectNotionRoutePage/>
+                <Route path=(StaticSegment("connect"), StaticSegment("notion"), StaticSegment("databases")) view=pick_databases::PickDatabasesRoutePage/>
             </Routes>
         </Router>
     }

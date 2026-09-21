@@ -7,7 +7,7 @@ edition = "2021"
 crate-type = ["cdylib", "rlib"]
 
 [features]
-ssr = ["leptos/ssr", "dep:leptos_axum", "dep:any_spawner", "dep:axum", "dep:axum-oidc"]
+ssr = ["leptos/ssr", "dep:leptos_axum", "dep:any_spawner", "dep:axum", "dep:axum-oidc", "dep:sqlx", "dep:reqwest"]
 hydrate = ["leptos/hydrate"]
 
 [dependencies]
@@ -17,6 +17,8 @@ leptos_meta = "0.8"
 leptos_axum = { version = "0.8", optional = true }
 axum = { version = "0.8", optional = true, default-features = false }
 axum-oidc = { version = "=1.0.0-dev-2", optional = true }
+sqlx = { version = "0.8", optional = true, default-features = false, features = ["postgres", "runtime-tokio"] }
+reqwest = { version = "0.12", optional = true, default-features = false, features = ["json"] }
 # render_app_to_stream needs a global reactive-graph executor. The pages
 # still on the old per-handler render_app_to_stream pattern (not yet
 # migrated into the single App/LeptosRoutes tree) need the host to call

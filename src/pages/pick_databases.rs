@@ -1,7 +1,6 @@
-use axum::extract::{Query, State};
+use axum::extract::State;
 use axum::response::{IntoResponse, Redirect};
 use axum_oidc::{EmptyAdditionalClaims, OidcClaims};
-use serde::Deserialize;
 use tracing::error;
 
 use crate::crypto::{generate_token, hash_password};
@@ -14,7 +13,6 @@ struct DatabaseCandidate {
     database_id: String,
     data_source_id: String,
     title: String,
-    icon_emoji: Option<String>,
     date_property: Option<String>,
 }
 
@@ -69,12 +67,6 @@ async fn list_syncable_databases(
             .and_then(|t| t.as_str())
             .unwrap_or("(untitled)")
             .to_string();
-        let icon_emoji = ds
-            .get("icon")
-            .and_then(|icon| icon.get("emoji"))
-            .and_then(|e| e.as_str())
-            .map(|s| s.to_string());
-
         let date_property = ds
             .get("properties")
             .and_then(|p| p.as_object())
@@ -89,7 +81,6 @@ async fn list_syncable_databases(
             database_id: database_id.to_string(),
             data_source_id: data_source_id.to_string(),
             title,
-            icon_emoji,
             date_property,
         });
     }
@@ -110,58 +101,6 @@ async fn connection_token_for_user(
     .fetch_optional(&state.db)
     .await
     .unwrap_or(None)
-}
-
-#[derive(Debug, Deserialize)]
-pub struct DatabasesPageParams {
-    connection_id: i64,
-}
-
-pub async fn pick_databases_page(
-    State(state): State<AppState>,
-    claims: OidcClaims<EmptyAdditionalClaims>,
-    lang: crate::i18n::Lang,
-    Query(params): Query<DatabasesPageParams>,
-    request: axum::extract::Request,
-) -> axum::response::Response {
-    let sub = claims.subject().as_str();
-    let email = claims.email().map(|e| e.as_str()).unwrap_or("").to_string();
-    let user_id = match find_or_create_user(&state, sub, &email, lang).await {
-        Ok(id) => id,
-        Err(_) => return error_page(lang, OauthError::Generic),
-    };
-
-    let Some(access_token) = connection_token_for_user(&state, params.connection_id, user_id).await
-    else {
-        return error_page(lang, OauthError::ConnectionNotFound);
-    };
-
-    let candidates = match list_syncable_databases(&state.client, &state.notion_api_base_url, &access_token).await {
-        Ok(c) => c,
-        Err(e) => {
-            error!("failed to list notion databases: {}", e);
-            return error_page(lang, OauthError::FailedToListDatabases);
-        }
-    };
-
-    let data = app::pick_databases::PickDatabasesPageData {
-        top_nav_html: crate::i18n::top_nav_html(&email, lang, "/connect/notion/databases"),
-        connection_id: params.connection_id,
-        candidates: candidates
-            .into_iter()
-            .map(|c| app::pick_databases::CandidateData {
-                icon: c.icon_emoji.unwrap_or_else(|| "📄".to_string()),
-                title: c.title,
-                database_id: c.database_id,
-                date_property: c.date_property,
-            })
-            .collect(),
-    };
-    let handler = leptos_axum::render_app_to_stream(move || {
-        let data = data.clone();
-        leptos::view! { <app::pick_databases::PickDatabasesShell data=data/> }
-    });
-    handler(request).await
 }
 
 struct CreateCalendarsForm {

@@ -93,6 +93,36 @@ pub(crate) fn detect_lang() -> &'static str {
 }
 
 #[cfg(feature = "ssr")]
+#[derive(Clone)]
+pub struct NotionApiBaseUrl(pub String);
+
+#[cfg(feature = "ssr")]
+pub(crate) fn query_param_i64(name: &str) -> Option<i64> {
+    let parts = leptos::prelude::use_context::<axum::http::request::Parts>()?;
+    let query = parts.uri.query()?;
+    for pair in query.split('&') {
+        let (k, v) = pair.split_once('=')?;
+        if k == name {
+            return v.parse().ok();
+        }
+    }
+    None
+}
+
+#[cfg(not(feature = "ssr"))]
+pub(crate) fn query_param_i64(name: &str) -> Option<i64> {
+    let search = web_sys::window()?.location().search().ok()?;
+    let query = search.strip_prefix('?').unwrap_or(&search);
+    for pair in query.split('&') {
+        let (k, v) = pair.split_once('=')?;
+        if k == name {
+            return v.parse().ok();
+        }
+    }
+    None
+}
+
+#[cfg(feature = "ssr")]
 pub(crate) fn current_user_email() -> String {
     leptos::prelude::use_context::<axum::http::request::Parts>()
         .and_then(|parts| {
