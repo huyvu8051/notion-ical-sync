@@ -1,5 +1,5 @@
 use axum::Router;
-use notion_ical_sync::{auth, create_app, AppState, CaldavAllowWrites, PageInfo};
+use notion_ical_sync::{create_app, session, AppState, CaldavAllowWrites, PageInfo};
 use std::sync::Mutex;
 use tokio::net::TcpListener;
 
@@ -48,14 +48,14 @@ async fn test_create_app(state: AppState) -> Router {
     // as a 400 (Keycloak's own error page body) on *every* request once
     // oidc_auth_service tried to use the client, not just login attempts.
     let client_secret = std::env::var("TEST_KEYCLOAK_CLIENT_SECRET").ok();
-    let oidc_client = auth::build_oidc_client(
+    let oidc_client = session::build_oidc_client_with_startup_retry(
         issuer,
         "notion-caldav-saas-app".to_string(),
         client_secret,
         "http://localhost:0/oidc".to_string(),
     )
     .await;
-    let app_config = auth::AppConfig {
+    let app_config = session::AppConfig {
         base_url: "http://localhost:0".to_string(),
     };
     // oidc_auth_service (applied inside create_app, wrapping every route
@@ -143,7 +143,18 @@ async fn test_state_multi(calendars: &[(&str, &str)], allow_writes: CaldavAllowW
         .unwrap();
     }
 
-    AppState::new(pool, allow_writes, None, None, None, None, None, None)
+    AppState::new(
+        pool,
+        allow_writes,
+        None,
+        None,
+        "https://api.notion.com".to_string(),
+        None,
+        None,
+        None,
+        None,
+        None,
+    )
 }
 
 #[tokio::test]
@@ -799,6 +810,8 @@ async fn test_calendars_propfind_scoped_to_authenticated_calendar_not_whole_acco
         pool,
         CaldavAllowWrites::True,
         None,
+        None,
+        "https://api.notion.com".to_string(),
         None,
         None,
         None,
