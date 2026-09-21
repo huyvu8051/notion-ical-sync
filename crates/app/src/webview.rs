@@ -92,6 +92,7 @@ body { background-color: #fbf9f9; color: #1b1c1c; -webkit-font-smoothing: antial
 .modal-shadow { box-shadow: 0px 4px 12px rgba(0, 0, 0, 0.05); }
 #calendar { max-width: 1100px; margin: 0 auto; padding: 24px; }
 .fc { --fc-border-color: #c4c7c7; --fc-button-bg-color: #fff; --fc-button-border-color: #c4c7c7; --fc-button-text-color: #1b1c1c;
+  --fc-button-hover-bg-color: #f0f0f0; --fc-button-hover-border-color: #9a9a9a;
   --fc-button-active-bg-color: #000; --fc-button-active-border-color: #000; --fc-today-bg-color: #f5f3f3; font-family: 'Inter', sans-serif; }
 .fc .fc-button { box-shadow: none !important; text-transform: none; font-weight: 500; }
 .fc .fc-button-primary:not(:disabled).fc-button-active,
