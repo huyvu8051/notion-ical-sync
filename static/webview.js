@@ -11,14 +11,7 @@ function loadScript(src) {
   });
 }
 
-// FullCalendar's core bundle and locale plugin are two separate <script>
-// tags loaded here (not via leptos_meta::Script) because leptos_meta
-// inserts <script> elements into a live document on client-side SPA
-// navigation, where dynamically-created scripts execute in load-finish
-// order rather than document order — the locale plugin can then run before
-// FullCalendar itself is defined. Chaining them explicitly here guarantees
-// order regardless of navigation path.
-function ensureFullCalendarLoaded() {
+function loadFullCalendarCoreThenLocalePlugin() {
   if (window.FullCalendar) {
     return Promise.resolve();
   }
@@ -46,10 +39,8 @@ function patchEventDates(cfg, info) {
 
 window.webview_init_calendar = function(configJson) {
   var cfg = JSON.parse(configJson);
-  ensureFullCalendarLoaded().then(function() {
+  loadFullCalendarCoreThenLocalePlugin().then(function() {
     var calendarEl = document.getElementById('calendar');
-    // Route may have already navigated away (calendar.destroy() already ran
-    // and unmounted #calendar) by the time the CDN scripts finish loading.
     if (!calendarEl) { return; }
     calendar = new FullCalendar.Calendar(calendarEl, {
       initialView: 'dayGridMonth',
@@ -103,15 +94,11 @@ window.webview_refetch_calendar_events = function() {
   if (calendar) { calendar.refetchEvents(); }
 };
 
-// The bootstrap inline script (crates/app/src/webview.rs's
-// WEBVIEW_JS_BOOTSTRAP) queues at most one pending init call in
-// window.__webviewPendingConfig while this file is still loading, since a
-// destroy (route-leave) after an init both just overwrite the same slot —
-// last write wins, matching "only the currently-mounted page's calendar
-// should end up initialized". Replay it now that the real functions above
-// are in place.
-if (window.__webviewPendingConfig) {
+function replayCalendarInitQueuedDuringLoad() {
+  if (!window.__webviewPendingConfig) { return; }
   var pendingConfig = window.__webviewPendingConfig;
   window.__webviewPendingConfig = null;
   window.webview_init_calendar(pendingConfig);
 }
+
+replayCalendarInitQueuedDuringLoad();

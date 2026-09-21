@@ -111,18 +111,7 @@ body { background-color: #fbf9f9; color: #1b1c1c; -webkit-font-smoothing: antial
 }
 "#;
 
-// `leptos_meta::Script src="..."` inserts a real <script> element into a live
-// document on client-side SPA navigation (no full reload), where dynamically
-// created scripts load and execute independently of both document order and
-// of when Effects in the newly-mounted component run — so the Effect below
-// that calls `window.webview_init_calendar` can fire before static/webview.js
-// has finished loading. This bootstrap has no `src`, so it's inserted with
-// literal text content and executes synchronously the moment it's appended —
-// no network round trip, so no race. It installs queueing stubs for the three
-// functions Rust calls into, then kicks off loading the real static/webview.js
-// (which overwrites them with the real implementations and replays whatever
-// config was queued, if any — see the bottom of that file).
-const WEBVIEW_JS_BOOTSTRAP: &str = r#"
+const WEBVIEW_JS_SYNCHRONOUS_QUEUEING_BOOTSTRAP: &str = r#"
 (function() {
   if (window.__webviewBridgeInit) { return; }
   window.__webviewBridgeInit = true;
@@ -387,11 +376,7 @@ pub fn WebviewRoutePage() -> impl IntoView {
         <leptos_meta::Link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.15/index.global.min.css"/>
         <leptos_meta::Link rel="stylesheet" href="/assets/style-auth-a.css"/>
         <leptos_meta::Link href=GOOGLE_FONTS_HREF rel="stylesheet"/>
-        // Bootstrap is inline (not `src=`) so it runs synchronously the instant
-        // it's inserted, regardless of whether this route was reached via a
-        // full page load or client-side SPA nav — see WEBVIEW_JS_BOOTSTRAP's
-        // doc comment for why a `src=` script here would race.
-        <leptos_meta::Script>{WEBVIEW_JS_BOOTSTRAP}</leptos_meta::Script>
+        <leptos_meta::Script>{WEBVIEW_JS_SYNCHRONOUS_QUEUEING_BOOTSTRAP}</leptos_meta::Script>
         <Suspense fallback=|| ()>
             {move || data.get().map(|result| match result {
                 Ok(data) => view! {

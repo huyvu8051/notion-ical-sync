@@ -2396,6 +2396,19 @@ async fn auth_middleware(
     response
 }
 
+fn routes_dispatched_outside_leptos_routes() -> Vec<String> {
+    [
+        "/",
+        "/connect/notion",
+        "/connect/notion/databases",
+        "/me",
+        "/app/{public_id}",
+    ]
+    .into_iter()
+    .map(String::from)
+    .collect()
+}
+
 pub fn create_app(
     state: AppState,
     oidc_client: axum_oidc::OidcClient<axum_oidc::EmptyAdditionalClaims>,
@@ -2410,27 +2423,8 @@ pub fn create_app(
     use leptos_axum::{generate_route_list_with_exclusions, LeptosRoutes};
     use tower::ServiceBuilder;
 
-    // Only ever call `.leptos_routes()`/`.leptos_routes_with_context()` once
-    // for the whole app — it also (re-)registers every #[server] function's
-    // endpoint every time it's called, and calling it a second time panics
-    // at startup ("Overlapping method route") on the duplicate registration.
-    // Pages that need the "must be logged in" redirect (which only
-    // `me_route`'s `oidc_login_service` layer provides) are therefore
-    // excluded here and dispatched via a manual render_app_to_stream call
-    // inside `me_route` instead — same trick already used for `/` landing's
-    // Host-header-based special case below. Client-side navigation to them
-    // still works: they're registered in `App`'s `<Routes>` tree, just not
-    // auto-mounted server-side by this call.
-    let leptos_routes = generate_route_list_with_exclusions(
-        app::App,
-        Some(vec![
-            "/".to_string(),
-            "/connect/notion".to_string(),
-            "/connect/notion/databases".to_string(),
-            "/me".to_string(),
-            "/app/{public_id}".to_string(),
-        ]),
-    );
+    let leptos_routes =
+        generate_route_list_with_exclusions(app::App, Some(routes_dispatched_outside_leptos_routes()));
     let leptos_options = state.leptos_options.clone();
     let leptos_options_for_login_required = leptos_options.clone();
     let db_pool_for_context = state.db.clone();

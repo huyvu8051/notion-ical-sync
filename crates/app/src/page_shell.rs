@@ -7,6 +7,17 @@ body { background-color: #fbf9f9; color: #1b1c1c; -webkit-font-smoothing: antial
 .card-shadow { box-shadow: 0px 4px 12px rgba(0, 0, 0, 0.05); }
 "#;
 
+#[cfg(feature = "ssr")]
+fn write_accept_language_fallback_cookie(lang: &'static str) {
+    if let Some(res_options) = leptos::prelude::use_context::<leptos_axum::ResponseOptions>() {
+        res_options.append_header(
+            axum::http::header::SET_COOKIE,
+            axum::http::HeaderValue::from_str(&format!("lang={lang}; Path=/; Max-Age=31536000"))
+                .expect("lang cookie value is always a valid header value"),
+        );
+    }
+}
+
 fn cookie_lang(cookie_header: &str) -> Option<&'static str> {
     for pair in cookie_header.split(';') {
         if let Some((k, v)) = pair.trim().split_once('=') {
@@ -53,20 +64,7 @@ pub(crate) fn detect_lang() -> &'static str {
         } else {
             "vi"
         };
-        // No explicit "lang" cookie was sent — write one back reflecting the
-        // Accept-Language-derived choice, so the client's post-hydration
-        // render (which can only read document.cookie, not the original
-        // request headers) resolves the same language instead of flashing
-        // to a hardcoded default.
-        if let Some(res_options) = leptos::prelude::use_context::<leptos_axum::ResponseOptions>() {
-            res_options.append_header(
-                axum::http::header::SET_COOKIE,
-                axum::http::HeaderValue::from_str(&format!(
-                    "lang={lang}; Path=/; Max-Age=31536000"
-                ))
-                .expect("lang cookie value is always a valid header value"),
-            );
-        }
+        write_accept_language_fallback_cookie(lang);
         return lang;
     }
     #[cfg(not(feature = "ssr"))]
