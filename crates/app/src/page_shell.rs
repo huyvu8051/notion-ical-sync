@@ -6,3 +6,11 @@ body { background-color: #fbf9f9; color: #1b1c1c; -webkit-font-smoothing: antial
 .custom-checkbox:checked { background-color: #000000; border-color: #000000; }
 .card-shadow { box-shadow: 0px 4px 12px rgba(0, 0, 0, 0.05); }
 "#;
+
+pub(crate) fn live_reload_script() -> &'static str {
+    if cfg!(debug_assertions) {
+        r#"<script>(function(){function c(){var s=new WebSocket('ws://'+location.hostname+':3002/live_reload');s.onmessage=function(){location.reload();};s.onclose=function(){setTimeout(c,1000);};}c();})();</script>"#
+    } else {
+        ""
+    }
+}

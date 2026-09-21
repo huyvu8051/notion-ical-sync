@@ -1,19 +1,5 @@
 use axum::response::IntoResponse;
 
-pub async fn privacy_policy_page(request: axum::extract::Request) -> axum::response::Response {
-    let handler = leptos_axum::render_app_to_stream(|| {
-        leptos::view! { <app::legal::LegalShell data=app::legal::privacy_data()/> }
-    });
-    handler(request).await
-}
-
-pub async fn terms_of_service_page(request: axum::extract::Request) -> axum::response::Response {
-    let handler = leptos_axum::render_app_to_stream(|| {
-        leptos::view! { <app::legal::LegalShell data=app::legal::terms_data()/> }
-    });
-    handler(request).await
-}
-
 pub async fn robots_txt() -> impl IntoResponse {
     let body = "User-agent: *\nAllow: /\nSitemap: https://notion-caldav.opendiy.vn/sitemap.xml\n";
     (

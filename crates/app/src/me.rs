@@ -63,12 +63,13 @@ pub fn MeShell(data: MePageData) -> impl IntoView {
     let inline_data_script = format!("window.__ME_DATA__ = {script_breakout_safe_json};");
 
     let head_html = format!(
-        r#"<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>{title}</title><link rel="stylesheet" href="/assets/style-auth-a.css"><link href="{fonts}" rel="stylesheet"><style>{style}</style><script>{copy_js}</script><script>{data_script}</script><script type="module">import init, {{ hydrate_me }} from '/pkg/app.js'; init('/pkg/app_bg.wasm').then(() => hydrate_me(JSON.stringify(window.__ME_DATA__)));</script>"#,
+        r#"<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>{title}</title><link rel="stylesheet" href="/assets/style-auth-a.css"><link href="{fonts}" rel="stylesheet"><style>{style}</style><script>{copy_js}</script><script>{data_script}</script><script type="module">import init, {{ hydrate_me }} from '/pkg/app.js'; init('/pkg/app_bg.wasm').then(() => hydrate_me(JSON.stringify(window.__ME_DATA__)));</script>{reload_script}"#,
         title = data.page_title,
         fonts = GOOGLE_FONTS_HREF,
         style = DASHBOARD_HEAD_STYLE,
         copy_js = COPY_TO_CLIPBOARD_JS,
         data_script = inline_data_script,
+        reload_script = crate::page_shell::live_reload_script(),
     );
 
     view! {

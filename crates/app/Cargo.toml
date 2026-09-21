@@ -22,6 +22,8 @@ hydrate = ["leptos/hydrate"]
 
 [dependencies]
 leptos = { version = "0.8", default-features = false }
+leptos_router = { version = "0.8", default-features = false }
+leptos_meta = "0.8"
 leptos_axum = { version = "0.8", optional = true }
 # render_app_to_stream needs a global reactive-graph executor. cargo-leptos
 # apps get this for free from LeptosRoutes' setup; since we deliberately

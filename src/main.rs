@@ -134,6 +134,21 @@ async fn main() -> anyhow::Result<()> {
         "ADMIN_SECRET not set; /admin/reset-billing is disabled",
     );
 
+    for (key, default) in [
+        ("LEPTOS_OUTPUT_NAME", "app"),
+        ("LEPTOS_SITE_ROOT", "."),
+        ("LEPTOS_SITE_PKG_DIR", "pkg"),
+        ("LEPTOS_SITE_ADDR", &format!("127.0.0.1:{port}")),
+        ("LEPTOS_RELOAD_PORT", "3002"),
+    ] {
+        if env::var(key).is_err() {
+            env::set_var(key, default);
+        }
+    }
+    let leptos_options = leptos::config::get_configuration(None)
+        .expect("failed to load leptos config")
+        .leptos_options;
+
     let caldav_allow_writes = CaldavAllowWrites::from_env();
     let state = AppState::new(
         pool.clone(),
@@ -145,6 +160,7 @@ async fn main() -> anyhow::Result<()> {
         stripe,
         email,
         admin_secret,
+        leptos_options,
     );
 
     state.refresh_all().await;

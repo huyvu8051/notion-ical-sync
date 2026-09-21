@@ -205,6 +205,13 @@ pub struct AppState {
     pub stripe: Option<crate::billing::StripeConfig>,
     pub email: Option<crate::email::EmailConfig>,
     pub admin_secret: Option<String>,
+    pub leptos_options: leptos::config::LeptosOptions,
+}
+
+impl axum::extract::FromRef<AppState> for leptos::config::LeptosOptions {
+    fn from_ref(state: &AppState) -> Self {
+        state.leptos_options.clone()
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -243,6 +250,7 @@ impl AppState {
         stripe: Option<crate::billing::StripeConfig>,
         email: Option<crate::email::EmailConfig>,
         admin_secret: Option<String>,
+        leptos_options: leptos::config::LeptosOptions,
     ) -> Self {
         Self {
             client: Client::builder()
@@ -259,6 +267,7 @@ impl AppState {
             stripe,
             email,
             admin_secret,
+            leptos_options,
         }
     }
 
@@ -2394,7 +2403,11 @@ pub fn create_app(
         error::MiddlewareError, handle_oidc_redirect, EmptyAdditionalClaims, OidcAuthLayer,
         OidcLoginLayer,
     };
+    use leptos_axum::{generate_route_list, LeptosRoutes};
     use tower::ServiceBuilder;
+
+    let leptos_routes = generate_route_list(app::App);
+    let leptos_options = state.leptos_options.clone();
 
     let oidc_login_service = ServiceBuilder::new()
         .layer(HandleErrorLayer::new(|e: MiddlewareError| async move {
@@ -2589,8 +2602,7 @@ pub fn create_app(
                 ))
                 .service(tower_http::services::ServeDir::new("static")),
         )
-        .route("/privacy", get(crate::pages::legal::privacy_policy_page))
-        .route("/terms", get(crate::pages::legal::terms_of_service_page))
+        .leptos_routes(&state, leptos_routes, move || app::shell(leptos_options.clone()))
         .route("/robots.txt", get(crate::pages::legal::robots_txt))
         .route("/sitemap.xml", get(crate::pages::legal::sitemap_xml))
         .route("/favicon.ico", get(crate::pages::legal::favicon))

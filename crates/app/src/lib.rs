@@ -11,10 +11,52 @@ pub mod sync_log;
 pub mod webview;
 
 use leptos::prelude::*;
+use leptos_meta::{MetaTags, Title};
+use leptos_router::components::{Route, Router, Routes};
+use leptos_router::StaticSegment;
 
 #[cfg(feature = "ssr")]
 pub fn init_executor() {
     any_spawner::Executor::init_tokio().expect("failed to init leptos reactive executor");
+}
+
+pub fn shell(options: LeptosOptions) -> impl IntoView {
+    view! {
+        <!DOCTYPE html>
+        <html lang="en">
+            <head>
+                <meta charset="utf-8"/>
+                <meta name="viewport" content="width=device-width, initial-scale=1"/>
+                <AutoReload options=options.clone()/>
+                <HydrationScripts options/>
+                <MetaTags/>
+            </head>
+            <body>
+                <App/>
+            </body>
+        </html>
+    }
+}
+
+#[component]
+pub fn App() -> impl IntoView {
+    leptos_meta::provide_meta_context();
+    view! {
+        <Title text="NotionCal"/>
+        <Router>
+            <Routes fallback=|| "404 Not Found">
+                <Route path=StaticSegment("privacy") view=legal::PrivacyRoutePage/>
+                <Route path=StaticSegment("terms") view=legal::TermsRoutePage/>
+            </Routes>
+        </Router>
+    }
+}
+
+#[cfg(feature = "hydrate")]
+#[wasm_bindgen::prelude::wasm_bindgen]
+pub fn hydrate() {
+    console_error_panic_hook::set_once();
+    leptos::mount::hydrate_body(App);
 }
 
 #[component]

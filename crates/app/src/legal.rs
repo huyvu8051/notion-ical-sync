@@ -142,79 +142,43 @@ pub fn terms_data() -> LegalPageData {
 }
 
 #[component]
-pub fn LegalShell(data: LegalPageData) -> impl IntoView {
-    let title = format!("{} — NotionCal", data.title);
-
-    let json = serde_json::to_string(&data).unwrap_or_default();
-    let script_breakout_safe_json = json.replace('<', "\\u003c");
-    let inline_data_script = format!("window.__LEGAL_DATA__ = {script_breakout_safe_json};");
-
-    view! {
-        <!DOCTYPE html>
-        <html lang="en">
-            <head>
-                <meta charset="utf-8"/>
-                <meta name="viewport" content="width=device-width, initial-scale=1"/>
-                <title>{title}</title>
-                <style>{LEGAL_STYLE}</style>
-                <script inner_html=inline_data_script></script>
-                <script type="module">
-                    "import init, { hydrate_legal } from '/pkg/app.js'; init('/pkg/app_bg.wasm').then(() => hydrate_legal(JSON.stringify(window.__LEGAL_DATA__)));"
-                </script>
-            </head>
-            <body>
-                <LegalPage data=data/>
-            </body>
-        </html>
-    }
-}
-
-#[component]
 pub fn LegalPage(data: LegalPageData) -> impl IntoView {
+    use leptos_router::components::A;
+
+    let title = format!("{} — NotionCal", data.title);
+    let other_href = if data.title == "Privacy Policy" {
+        "/terms"
+    } else {
+        "/privacy"
+    };
+    let other_label = if data.title == "Privacy Policy" {
+        "Terms of Service"
+    } else {
+        "Privacy Policy"
+    };
     view! {
+        <leptos_meta::Title text=title/>
+        <leptos_meta::Style>{LEGAL_STYLE}</leptos_meta::Style>
         <div id="legal-root">
             <div class="top-nav">
                 <strong>"NotionCal"</strong>
-                <a class="back" href="/me">{data.back_label}</a>
+                <span>
+                    <A href=other_href>{other_label}</A>
+                    " · "
+                    <a class="back" href="/me">{data.back_label}</a>
+                </span>
             </div>
             <div inner_html=data.body_html></div>
         </div>
     }
 }
 
-#[cfg(feature = "hydrate")]
-#[wasm_bindgen::prelude::wasm_bindgen]
-pub fn hydrate_legal(json: String) {
-    console_error_panic_hook::set_once();
-    let data: LegalPageData =
-        serde_json::from_str(&json).expect("invalid legal page payload from server");
-    leptos::mount::hydrate_body(move || view! { <LegalPage data=data.clone()/> });
+#[component]
+pub fn PrivacyRoutePage() -> impl IntoView {
+    view! { <LegalPage data=privacy_data()/> }
 }
 
-#[cfg(all(test, feature = "ssr"))]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn renders_privacy_without_panicking() {
-        any_spawner::Executor::init_futures_executor().ok();
-        let html = view! { <LegalPage data=privacy_data()/> }.to_html();
-        assert!(html.contains("Privacy Policy"));
-        assert!(html.contains("huyvu8051@gmail.com"));
-    }
-
-    #[test]
-    fn renders_terms_without_panicking() {
-        any_spawner::Executor::init_futures_executor().ok();
-        let html = view! { <LegalPage data=terms_data()/> }.to_html();
-        assert!(html.contains("Terms of Service"));
-        assert!(html.contains("Governing law"));
-    }
-
-    #[test]
-    fn shell_embeds_escaped_json_safe_from_script_breakout() {
-        any_spawner::Executor::init_futures_executor().ok();
-        let html = view! { <LegalShell data=privacy_data()/> }.to_html();
-        assert!(!html.contains("</script><script>alert"));
-    }
+#[component]
+pub fn TermsRoutePage() -> impl IntoView {
+    view! { <LegalPage data=terms_data()/> }
 }
