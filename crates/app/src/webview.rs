@@ -11,6 +11,7 @@ use std::cell::RefCell;
 pub struct WebviewJsConfig {
     pub events_url: String,
     pub alert_update_date_failed: String,
+    pub locale: String,
 }
 
 #[derive(Clone, Serialize, Deserialize, PartialEq)]
@@ -119,8 +120,14 @@ pub fn WebviewShell(data: WebviewPageData) -> impl IntoView {
     let json_safe = json.replace('<', "\\u003c");
     let inline_data_script = format!("window.__WEBVIEW_DATA__ = {json_safe};");
 
+    let fc_locale_script = if data.js_config.locale == "vi" {
+        r#"<script src="https://cdn.jsdelivr.net/npm/@fullcalendar/core@6.1.15/locales/vi.global.min.js"></script>"#
+    } else {
+        ""
+    };
+
     let head_html = format!(
-        r#"<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>{title} — NotionCal</title><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.15/index.global.min.css"><script src="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.15/index.global.min.js"></script><link rel="stylesheet" href="/assets/style-auth-a.css"><link href="{fonts}" rel="stylesheet"><style>{style}</style><script>{data_script}</script><script src="/static/webview.js" defer></script><script type="module">import init, {{ hydrate_webview, webview_open_create_modal, webview_open_edit_modal }} from '/pkg/app.js'; init('/pkg/app_bg.wasm').then(() => {{ hydrate_webview(JSON.stringify(window.__WEBVIEW_DATA__)); window.webview_open_create_modal = webview_open_create_modal; window.webview_open_edit_modal = webview_open_edit_modal; }});</script>"#,
+        r#"<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>{title} — NotionCal</title><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.15/index.global.min.css"><script src="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.15/index.global.min.js"></script>{fc_locale_script}<link rel="stylesheet" href="/assets/style-auth-a.css"><link href="{fonts}" rel="stylesheet"><style>{style}</style><script>{data_script}</script><script src="/static/webview.js" defer></script><script type="module">import init, {{ hydrate_webview, webview_open_create_modal, webview_open_edit_modal }} from '/pkg/app.js'; init('/pkg/app_bg.wasm').then(() => {{ hydrate_webview(JSON.stringify(window.__WEBVIEW_DATA__)); window.webview_open_create_modal = webview_open_create_modal; window.webview_open_edit_modal = webview_open_edit_modal; }});</script>"#,
         title = data.title,
         fonts = GOOGLE_FONTS_HREF,
         style = WEBVIEW_HEAD_STYLE,
@@ -1062,6 +1069,7 @@ mod tests {
             js_config: WebviewJsConfig {
                 events_url: "/app/test-id/api/events".to_string(),
                 alert_update_date_failed: "Cập nhật ngày thất bại".to_string(),
+                locale: "vi".to_string(),
             },
         }
     }

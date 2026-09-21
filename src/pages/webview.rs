@@ -213,6 +213,7 @@ pub async fn handle_webview_page(
                 crate::i18n::Lang::Vi => "Cập nhật ngày thất bại".to_string(),
                 crate::i18n::Lang::En => "Failed to update date".to_string(),
             },
+            locale: lang.code().to_string(),
         },
     };
     let handler = leptos_axum::render_app_to_stream(move || {
