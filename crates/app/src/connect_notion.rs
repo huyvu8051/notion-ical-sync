@@ -28,16 +28,17 @@ pub struct ConnectNotionPageData {
     pub terms_link: String,
 }
 
-// Duplicated from `oauth.rs::ONBOARDING_HEAD` (kept there too — still used by
-// the not-yet-migrated `pick_databases_page`). Identical content, own copy
-// here since crates/app can't depend back on the host crate.
-const ONBOARDING_HEAD_STYLE: &str = r#"
+// Shared with `pick_databases.rs` (the other onboarding-flow page) — public
+// within the crate so that module can reuse it instead of a third copy.
+// Originally duplicated from `oauth.rs::ONBOARDING_HEAD`, which stays there
+// only as long as any not-yet-migrated page still references it.
+pub(crate) const ONBOARDING_HEAD_STYLE: &str = r#"
 body { background-color: #fbf9f9; color: #1b1c1c; -webkit-font-smoothing: antialiased; }
 .material-symbols-outlined { font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24; vertical-align: middle; }
 .custom-checkbox:checked { background-color: #000000; border-color: #000000; }
 .card-shadow { box-shadow: 0px 4px 12px rgba(0, 0, 0, 0.05); }
 "#;
-const GOOGLE_FONTS_HREF: &str = "https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Geist:wght@400;500&family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&icon_names=add,arrow_back,arrow_forward,calendar_add_on,calendar_month,calendar_today,check_circle,close,content_copy,database,error,event_available,link,login,logout,open_in_new,security,sync,sync_alt,verified,warning&display=swap";
+pub(crate) const GOOGLE_FONTS_HREF: &str = "https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Geist:wght@400;500&family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&icon_names=add,arrow_back,arrow_forward,calendar_add_on,calendar_month,calendar_today,check_circle,close,content_copy,database,error,event_available,link,login,logout,open_in_new,security,sync,sync_alt,verified,warning&display=swap";
 
 /// The whole HTML document. `<head>` (see module doc) and `<body>`'s single
 /// `ConnectNotionPage` child both come from `data`.

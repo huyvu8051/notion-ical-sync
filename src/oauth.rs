@@ -196,20 +196,6 @@ pub(crate) fn error_page(lang: crate::i18n::Lang, err: OauthError) -> axum::resp
     .into_response()
 }
 
-/// Shared Tailwind head for both onboarding screens — ports the exact
-/// design-token config from the Stitch "Kết nối Notion" / "Chọn cơ sở dữ
-/// liệu" mockups (project 7966553897766226544).
-const ONBOARDING_HEAD: &str = r##"
-<link rel="stylesheet" href="/assets/style-oauth.css">
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Geist:wght@400;500&family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&icon_names=add,arrow_back,arrow_forward,calendar_add_on,calendar_month,calendar_today,check_circle,close,content_copy,database,error,event_available,link,login,logout,open_in_new,security,sync,sync_alt,verified,warning&display=swap" rel="stylesheet">
-<style>
-body { background-color: #fbf9f9; color: #1b1c1c; -webkit-font-smoothing: antialiased; }
-.material-symbols-outlined { font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24; vertical-align: middle; }
-.custom-checkbox:checked { background-color: #000000; border-color: #000000; }
-.card-shadow { box-shadow: 0px 4px 12px rgba(0, 0, 0, 0.05); }
-</style>
-"##;
-
 fn onboarding_top_nav(email: &str, lang: crate::i18n::Lang) -> String {
     let logout = match lang {
         crate::i18n::Lang::Vi => "Đăng xuất",
@@ -581,7 +567,8 @@ pub async fn pick_databases_page(
     claims: OidcClaims<EmptyAdditionalClaims>,
     lang: crate::i18n::Lang,
     Query(params): Query<DatabasesPageParams>,
-) -> impl IntoResponse {
+    request: axum::extract::Request,
+) -> axum::response::Response {
     let sub = claims.subject().as_str();
     let email = claims.email().map(|e| e.as_str()).unwrap_or("").to_string();
     let user_id = match find_or_create_user(&state, sub, &email, lang).await {
@@ -602,113 +589,24 @@ pub async fn pick_databases_page(
         }
     };
 
-    if candidates.is_empty() {
-        return Html(format!(
-            r#"<!doctype html>
-<html lang="vi"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">{ONBOARDING_HEAD}</head>
-<body class="min-h-screen flex flex-col">
-{top_nav}
-<main class="flex-grow flex flex-col items-center justify-center pt-[56px] px-margin-mobile text-center">
-<h1 class="text-h1 text-primary mb-sm">Chọn cơ sở dữ liệu để đồng bộ</h1>
-<p class="text-on-surface-variant text-body-lg">Không tìm thấy cơ sở dữ liệu nào bạn đã cấp quyền. <a class="text-secondary underline" href="/connect/notion/start">Cấp thêm quyền truy cập trên Notion</a>.</p>
-</main>
-</body></html>"#,
-            top_nav = onboarding_top_nav(&email, lang),
-        ))
-        .into_response();
-    }
-
-    let rows: String = candidates
-        .iter()
-        .map(|c| {
-            let icon = c.icon_emoji.clone().unwrap_or_else(|| "📄".to_string());
-            match &c.date_property {
-                Some(date_prop) => format!(
-                    r#"<label class="group flex items-center gap-md p-md bg-white border border-outline-variant rounded-lg cursor-pointer hover:border-primary transition-all duration-200 card-shadow">
-<input type="checkbox" name="db_ids" value="{db_id}" checked class="w-5 h-5 border-2 border-outline-variant rounded-sm text-primary focus:ring-0 focus:ring-offset-0 custom-checkbox">
-<div class="flex items-center justify-center w-10 h-10 bg-surface-container rounded-lg text-xl">{icon}</div>
-<div class="flex-grow">
-<h3 class="text-h3 text-primary">{title}</h3>
-<p class="text-on-surface-variant text-label-md flex items-center gap-xs">
-<span class="material-symbols-outlined text-[14px]">calendar_today</span>
-Có thuộc tính ngày: {date_prop}
-</p>
-</div>
-</label>"#,
-                    db_id = html_escape(&c.database_id),
-                    icon = html_escape(&icon),
-                    title = html_escape(&c.title),
-                    date_prop = html_escape(date_prop),
-                ),
-                None => format!(
-                    r#"<div class="flex items-center gap-md p-md bg-surface-container-low border border-outline-variant opacity-60 rounded-lg grayscale cursor-not-allowed">
-<input type="checkbox" disabled class="w-5 h-5 border-2 border-outline-variant rounded-sm bg-surface-container-highest cursor-not-allowed">
-<div class="flex items-center justify-center w-10 h-10 bg-surface-container-high rounded-lg text-xl">{icon}</div>
-<div class="flex-grow">
-<div class="flex items-center gap-sm">
-<h3 class="text-h3 text-on-surface-variant">{title}</h3>
-<span class="bg-error-container text-on-error-container text-[10px] px-xs py-[2px] rounded font-bold uppercase tracking-wider">Lỗi</span>
-</div>
-<p class="text-error text-label-md flex items-center gap-xs mt-1">
-<span class="material-symbols-outlined text-[14px]">warning</span>
-Không tìm thấy thuộc tính ngày
-</p>
-</div>
-</div>"#,
-                    icon = html_escape(&icon),
-                    title = html_escape(&c.title),
-                ),
-            }
-        })
-        .collect();
-
-    Html(format!(
-        r#"<!doctype html>
-<html lang="vi"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Chọn cơ sở dữ liệu — NotionCal</title>{ONBOARDING_HEAD}</head>
-<body class="min-h-screen flex flex-col">
-{top_nav}
-<main class="flex-grow flex flex-col pt-[80px] pb-32">
-<div class="max-w-[720px] mx-auto w-full px-margin-mobile md:px-0">
-<section class="mb-xl">
-<h1 class="text-h1 text-primary mb-sm">Chọn cơ sở dữ liệu để đồng bộ</h1>
-<p class="text-on-surface-variant text-body-lg">Chúng tôi đã tìm thấy các cơ sở dữ liệu sau trong không gian làm việc Notion của bạn. Chọn (các) cơ sở dữ liệu bạn muốn biến thành lịch.</p>
-</section>
-<form method="post" action="/connect/notion/databases">
-<input type="hidden" name="connection_id" value="{connection_id}">
-<div class="space-y-md">{rows}</div>
-<div class="mt-xl text-center">
-<a class="text-on-surface-variant hover:text-primary transition-colors text-label-md" href="/connect/notion/start">Không thấy cơ sở dữ liệu bạn cần? Cấp thêm quyền truy cập trên Notion</a>
-</div>
-<div class="fixed bottom-0 left-0 right-0 bg-white/80 backdrop-blur-md border-t border-outline-variant py-md z-40">
-<div class="max-w-[1280px] mx-auto px-margin-desktop flex justify-between items-center">
-<a class="px-lg h-[40px] border border-outline-variant text-primary text-label-md rounded hover:bg-surface-container-low transition-colors flex items-center gap-sm" href="/me">
-<span class="material-symbols-outlined text-[18px]">arrow_back</span>
-Quay lại
-</a>
-<button type="submit" id="continue-btn" class="px-lg h-[40px] bg-primary text-white text-label-md rounded hover:opacity-90 transition-all flex items-center gap-sm active:scale-95 shadow-sm">
-Tiếp tục
-<span class="material-symbols-outlined text-[18px]">arrow_forward</span>
-</button>
-</div>
-</div>
-</form>
-</div>
-</main>
-<script>
-document.addEventListener('change', function () {{
-  var n = document.querySelectorAll('input[name="db_ids"]:checked').length;
-  var btn = document.getElementById('continue-btn');
-  btn.innerHTML = n > 0
-    ? 'Tiếp tục với ' + n + ' cơ sở dữ liệu <span class="material-symbols-outlined text-[18px]">arrow_forward</span>'
-    : 'Chọn ít nhất 1 cơ sở dữ liệu <span class="material-symbols-outlined text-[18px]">error</span>';
-}});
-</script>
-</body></html>"#,
-        top_nav = onboarding_top_nav(&email, lang),
-        connection_id = params.connection_id,
-    ))
-    .into_response()
+    let data = app::pick_databases::PickDatabasesPageData {
+        top_nav_html: onboarding_top_nav(&email, lang),
+        connection_id: params.connection_id,
+        candidates: candidates
+            .into_iter()
+            .map(|c| app::pick_databases::CandidateData {
+                icon: c.icon_emoji.unwrap_or_else(|| "📄".to_string()),
+                title: c.title,
+                database_id: c.database_id,
+                date_property: c.date_property,
+            })
+            .collect(),
+    };
+    let handler = leptos_axum::render_app_to_stream(move || {
+        let data = data.clone();
+        leptos::view! { <app::pick_databases::PickDatabasesShell data=data/> }
+    });
+    handler(request).await
 }
 
 struct CreateCalendarsForm {

@@ -1,3 +1,9 @@
+// Deeply nested `view!` trees (see pick_databases.rs) compose into a type
+// whose layout computation exceeds rustc's default query recursion limit —
+// a known, benign Leptos issue (not a design smell), fixed the same way
+// rustc's own diagnostic suggests.
+#![recursion_limit = "256"]
+
 //! Phase-0 retry of the full Leptos SSR+CSR migration abandoned in
 //! `~/.claude/plans/mighty-scribbling-floyd.md` (commit b2e7a26). That
 //! attempt used a hand-wired `view! {}.to_html()` on the server +
@@ -27,6 +33,7 @@
 pub mod connect_notion;
 pub mod landing;
 pub mod legal;
+pub mod pick_databases;
 pub mod sync_log;
 
 use leptos::prelude::*;
