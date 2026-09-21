@@ -122,7 +122,7 @@ pub fn top_nav_html(email: &str, lang: Lang, current_path: &str) -> String {
 </div>
 </header>"#,
         lang_toggle = lang_toggle(lang, current_path),
-        email = crate::auth::html_escape(email),
+        email = crate::session::html_escape(email),
     )
 }
 

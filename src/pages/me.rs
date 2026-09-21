@@ -1,163 +1,14 @@
+use std::collections::HashMap;
+
+use axum::extract::{Path, State};
+use axum::response::{IntoResponse, Redirect};
+use axum_oidc::{EmptyAdditionalClaims, OidcClaims};
+use tracing::error;
+
+use crate::crypto::{decrypt_password, encrypt_password, generate_token, hash_password};
+use crate::error_page::{error_page, OauthError};
+use crate::session::{find_or_create_user, html_escape, owned_calendar_or_error, AppConfig};
 use crate::AppState;
-use axum::extract::{FromRequestParts, State};
-use axum::http::request::Parts;
-use axum::response::IntoResponse;
-use axum_oidc::openidconnect::core::CoreGenderClaim;
-use axum_oidc::openidconnect::{ClientId, ClientSecret, IssuerUrl, Scope};
-use axum_oidc::{
-    EmptyAdditionalClaims, OidcClaims, OidcClient, OidcRpInitiatedLogout, OidcSession,
-};
-
-#[derive(Clone)]
-pub struct AppConfig {
-    pub base_url: String,
-}
-
-pub struct SessionWrapper(pub tower_sessions::Session);
-
-impl<S: Send + Sync> FromRequestParts<S> for SessionWrapper {
-    type Rejection = <tower_sessions::Session as FromRequestParts<S>>::Rejection;
-
-    async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
-        let session = tower_sessions::Session::from_request_parts(parts, state).await?;
-        Ok(Self(session))
-    }
-}
-
-impl axum_oidc::Session<EmptyAdditionalClaims> for SessionWrapper {
-    type Error = tower_sessions::session::Error;
-
-    async fn get(
-        &self,
-    ) -> Result<OidcSession<EmptyAdditionalClaims, CoreGenderClaim>, Self::Error> {
-        Ok(self.0.get("axum-oidc").await?.unwrap_or_default())
-    }
-
-    async fn set(
-        &mut self,
-        value: OidcSession<EmptyAdditionalClaims, CoreGenderClaim>,
-    ) -> Result<(), Self::Error> {
-        self.0.insert("axum-oidc", value).await?;
-        Ok(())
-    }
-}
-
-const OIDC_DISCOVERY_MAX_ATTEMPTS: u32 = 8;
-const OIDC_DISCOVERY_INITIAL_BACKOFF: std::time::Duration = std::time::Duration::from_secs(2);
-const OIDC_DISCOVERY_MAX_BACKOFF: std::time::Duration = std::time::Duration::from_secs(30);
-
-pub async fn build_oidc_client_with_startup_retry(
-    issuer: String,
-    client_id: String,
-    client_secret: Option<String>,
-    redirect_url: String,
-) -> OidcClient<EmptyAdditionalClaims> {
-    let mut backoff = OIDC_DISCOVERY_INITIAL_BACKOFF;
-    for attempt in 1..=OIDC_DISCOVERY_MAX_ATTEMPTS {
-        let mut builder = OidcClient::<EmptyAdditionalClaims>::builder()
-            .with_default_http_client()
-            .with_redirect_url(
-                redirect_url
-                    .parse()
-                    .unwrap_or_else(|_| panic!("invalid redirect url: {redirect_url}")),
-            )
-            .with_client_id(ClientId::new(client_id.clone()))
-            .add_scope(Scope::new("profile".to_string()))
-            .add_scope(Scope::new("email".to_string()));
-
-        if let Some(secret) = client_secret.clone() {
-            builder = builder.with_client_secret(ClientSecret::new(secret));
-        }
-
-        let issuer_url = IssuerUrl::new(issuer.clone()).expect("invalid KEYCLOAK_ISSUER_URL");
-        match builder.discover(issuer_url).await {
-            Ok(builder) => return builder.build(),
-            Err(e) if attempt < OIDC_DISCOVERY_MAX_ATTEMPTS => {
-                tracing::warn!(
-                    attempt,
-                    error = %e,
-                    ?backoff,
-                    "Keycloak OIDC discovery failed, retrying"
-                );
-                tokio::time::sleep(backoff).await;
-                backoff = (backoff * 2).min(OIDC_DISCOVERY_MAX_BACKOFF);
-            }
-            Err(e) => panic!(
-                "failed to discover Keycloak OIDC issuer after {OIDC_DISCOVERY_MAX_ATTEMPTS} attempts — is it running? {e}"
-            ),
-        }
-    }
-    unreachable!("loop always returns or panics on the last attempt")
-}
-
-pub async fn find_or_create_user(
-    state: &AppState,
-    keycloak_sub: &str,
-    email: &str,
-    lang: crate::i18n::Lang,
-) -> Result<i64, sqlx::Error> {
-    let (id, inserted): (i64, bool) = sqlx::query_as(
-        "INSERT INTO users (keycloak_sub, email, preferred_lang) VALUES ($1, $2, $3)
-         ON CONFLICT (keycloak_sub) DO UPDATE SET email = EXCLUDED.email
-         RETURNING id, (xmax = 0) AS inserted",
-    )
-    .bind(keycloak_sub)
-    .bind(email)
-    .bind(lang.code())
-    .fetch_one(&state.db)
-    .await?;
-
-    if inserted {
-        if let Some(cfg) = state.email.clone() {
-            let (subject, html) = crate::email::welcome_email(lang);
-            crate::email::spawn_send(cfg, email.to_string(), subject.to_string(), html);
-        }
-    }
-
-    Ok(id)
-}
-
-pub(crate) fn html_escape(s: &str) -> String {
-    s.replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
-        .replace('"', "&quot;")
-}
-
-pub(crate) const AUTH_STYLE: &str = r#"
-<style>
-  * { box-sizing: border-box; }
-  body { font-family: -apple-system, sans-serif; max-width: 480px; margin: 3rem auto; padding: 0 1.25rem; line-height: 1.5; }
-  .top-nav { display: flex; justify-content: space-between; align-items: center; margin-bottom: 2rem; }
-  .top-nav a.logout { font-size: 0.85rem; color: #666; text-decoration: none; }
-  .cal-list { list-style: none; padding: 0; display: flex; flex-direction: column; gap: 0.75rem; }
-  .cal-card { display: block; padding: 0.9rem 1rem; background: #f6f6f6; border-radius: 12px; }
-  .cal-card-title { font-weight: 600; margin-bottom: 0.4rem; }
-  .cal-card a { color: #2563eb; text-decoration: none; }
-  .hint { color: #666; font-size: 0.9rem; }
-  .header-row { display: flex; justify-content: space-between; align-items: center; gap: 1rem; margin-bottom: 1.5rem; }
-  .header-row h1 { margin: 0; }
-  .connect-btn, .connect-btn-secondary { display: inline-block; padding: 0.55rem 1.1rem; border-radius: 8px; text-decoration: none; font-size: 0.9rem; cursor: pointer; border: none; font-family: inherit; }
-  .connect-btn { background: #171717; color: #fff; margin-top: 1rem; }
-  .connect-btn-secondary { border: 1px solid #ddd; color: #171717; background: #fff; white-space: nowrap; }
-  .cred-row { font-size: 0.85rem; color: #444; margin: 0.15rem 0; }
-  .cred-label { color: #888; margin-right: 0.35rem; }
-  .banner-success { background: #dcfce7; color: #166534; padding: 0.75rem 1rem; border-radius: 8px; margin-bottom: 1.25rem; font-size: 0.9rem; }
-  .banner-error { background: #fee2e2; color: #991b1b; padding: 0.75rem 1rem; border-radius: 8px; margin-bottom: 1.25rem; font-size: 0.9rem; }
-  code { font-family: ui-monospace, monospace; background: #eee; padding: 0.1rem 0.35rem; border-radius: 4px; font-size: 0.85rem; }
-  .connect-card { margin-top: 2rem; }
-  .reassure-list { list-style: none; padding: 0; margin-top: 1.5rem; font-size: 0.85rem; color: #555; }
-  .reassure-list li { margin: 0.35rem 0; }
-  .reassure-list li::before { content: "✓ "; color: #16a34a; }
-  .db-list { display: flex; flex-direction: column; gap: 0.6rem; margin: 1.25rem 0; }
-  .db-card { display: flex; align-items: center; gap: 0.6rem; padding: 0.75rem 1rem; border: 1px solid #e5e5e5; border-radius: 8px; cursor: pointer; font-size: 0.95rem; }
-  .db-card-disabled { opacity: 0.5; cursor: not-allowed; }
-  .db-name { font-weight: 500; }
-  .db-meta { color: #888; font-size: 0.8rem; margin-left: auto; }
-  .db-warning { color: #ba1a1a; font-size: 0.8rem; margin-left: auto; }
-  .action-bar { display: flex; justify-content: space-between; margin-top: 1.5rem; }
-</style>
-"#;
 
 struct MeLabels {
     html_lang: &'static str,
@@ -327,7 +178,7 @@ pub async fn me(
     .await
     .unwrap_or_default();
 
-    let one_shot_plaintext_passwords = crate::oauth::take_new_calendar_credentials(&session).await;
+    let one_shot_plaintext_passwords = take_new_calendar_credentials(&session).await;
     let banner = if !one_shot_plaintext_passwords.is_empty() {
         format!(
             r#"<div class="flex items-center gap-sm p-md success-banner-gradient border border-[#DCFCE7] rounded-lg" id="success-banner">
@@ -342,7 +193,7 @@ pub async fn me(
         String::new()
     };
 
-    let connect_errors = crate::oauth::take_calendar_connect_errors(&session).await;
+    let connect_errors = take_calendar_connect_errors(&session).await;
     let error_banner = if connect_errors.is_empty() {
         String::new()
     } else {
@@ -461,30 +312,157 @@ pub async fn me(
     handler(request).await
 }
 
-pub async fn logout(
-    logout: OidcRpInitiatedLogout,
+pub async fn delete_calendar(
     State(state): State<AppState>,
-    cfg: axum::Extension<AppConfig>,
+    claims: OidcClaims<EmptyAdditionalClaims>,
+    lang: crate::i18n::Lang,
+    Path(public_id): Path<String>,
 ) -> impl IntoResponse {
-    let _ = &state;
-    let redirect_uri = cfg
-        .base_url
-        .parse()
-        .unwrap_or_else(|_| panic!("invalid APP_BASE_URL: {}", cfg.base_url));
-    logout.with_post_logout_redirect(redirect_uri)
+    let cal = match owned_calendar_or_error(&state, &claims, &public_id, lang).await {
+        Ok(cal) => cal,
+        Err(resp) => return resp,
+    };
+
+    if let Err(e) = sqlx::query("DELETE FROM calendars WHERE id = $1")
+        .bind(cal.id)
+        .execute(&state.db)
+        .await
+    {
+        error!("failed to delete calendar {}: {}", cal.id, e);
+        return error_page(lang, OauthError::FailedToDeleteCalendar);
+    }
+
+    let still_referenced: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM calendars WHERE database_id = $1")
+            .bind(&cal.database_id)
+            .fetch_one(&state.db)
+            .await
+            .unwrap_or(1);
+    if still_referenced == 0 {
+        state.cache.write().await.remove(&cal.database_id);
+    }
+
+    Redirect::to("/me").into_response()
 }
 
-pub async fn landing_page(
+pub async fn reveal_password(
+    State(state): State<AppState>,
+    claims: OidcClaims<EmptyAdditionalClaims>,
+    session: tower_sessions::Session,
     lang: crate::i18n::Lang,
-    request: axum::extract::Request,
-) -> axum::response::Response {
-    let data = match lang {
-        crate::i18n::Lang::En => app::landing::en_data(),
-        crate::i18n::Lang::Vi => app::landing::vi_data(),
+    Path(public_id): Path<String>,
+) -> impl IntoResponse {
+    let cal = match owned_calendar_or_error(&state, &claims, &public_id, lang).await {
+        Ok(cal) => cal,
+        Err(resp) => return resp,
     };
-    let handler = leptos_axum::render_app_to_stream(move || {
-        let data = data.clone();
-        leptos::view! { <app::landing::LandingShell data=data/> }
-    });
-    handler(request).await
+
+    let Some(key) = state.password_enc_key.as_ref() else {
+        return error_page(lang, OauthError::RevealPasswordNotConfigured);
+    };
+
+    let encrypted: String =
+        sqlx::query_scalar("SELECT caldav_password_encrypted FROM calendars WHERE id = $1")
+            .bind(cal.id)
+            .fetch_one(&state.db)
+            .await
+            .unwrap_or_default();
+
+    let Some(password) = (!encrypted.is_empty())
+        .then(|| decrypt_password(key, &encrypted))
+        .flatten()
+    else {
+        return error_page(lang, OauthError::PasswordPredatesReveal);
+    };
+
+    let stash = vec![(
+        cal.display_name.clone(),
+        cal.caldav_username.clone(),
+        password,
+    )];
+    if let Err(e) = session.insert("new_calendar_credentials", &stash).await {
+        error!("failed to stash revealed password in session: {}", e);
+    }
+
+    Redirect::to("/me").into_response()
+}
+
+pub async fn regenerate_password(
+    State(state): State<AppState>,
+    claims: OidcClaims<EmptyAdditionalClaims>,
+    session: tower_sessions::Session,
+    lang: crate::i18n::Lang,
+    Path(public_id): Path<String>,
+) -> impl IntoResponse {
+    let cal = match owned_calendar_or_error(&state, &claims, &public_id, lang).await {
+        Ok(cal) => cal,
+        Err(resp) => return resp,
+    };
+
+    let new_password = generate_token(24);
+    let Ok(password_hash) = hash_password(&new_password) else {
+        return error_page(lang, OauthError::Generic);
+    };
+    let password_encrypted = state
+        .password_enc_key
+        .as_ref()
+        .and_then(|key| encrypt_password(key, &new_password))
+        .unwrap_or_default();
+
+    if let Err(e) = sqlx::query("UPDATE calendars SET caldav_password_hash = $1, caldav_password_encrypted = $2 WHERE id = $3")
+        .bind(&password_hash)
+        .bind(&password_encrypted)
+        .bind(cal.id)
+        .execute(&state.db)
+        .await
+    {
+        error!("failed to regenerate caldav password for calendar {}: {}", cal.id, e);
+        return error_page(lang, OauthError::FailedToRegeneratePassword);
+    }
+
+    let stash = vec![(
+        cal.display_name.clone(),
+        cal.caldav_username.clone(),
+        new_password,
+    )];
+    if let Err(e) = session.insert("new_calendar_credentials", &stash).await {
+        error!("failed to stash regenerated password in session: {}", e);
+    }
+
+    Redirect::to("/me").into_response()
+}
+
+pub async fn take_new_calendar_credentials(
+    session: &tower_sessions::Session,
+) -> HashMap<String, String> {
+    let stashed: Vec<(String, String, String)> = session
+        .get("new_calendar_credentials")
+        .await
+        .ok()
+        .flatten()
+        .unwrap_or_default();
+    if !stashed.is_empty() {
+        let _ = session
+            .remove::<Vec<(String, String, String)>>("new_calendar_credentials")
+            .await;
+    }
+    stashed
+        .into_iter()
+        .map(|(_, username, password)| (username, password))
+        .collect()
+}
+
+pub async fn take_calendar_connect_errors(session: &tower_sessions::Session) -> Vec<String> {
+    let stashed: Vec<String> = session
+        .get("calendar_connect_errors")
+        .await
+        .ok()
+        .flatten()
+        .unwrap_or_default();
+    if !stashed.is_empty() {
+        let _ = session
+            .remove::<Vec<String>>("calendar_connect_errors")
+            .await;
+    }
+    stashed
 }

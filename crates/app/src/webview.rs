@@ -2,11 +2,30 @@ use leptos::prelude::*;
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WebviewJsConfig {
+    pub events_url: String,
+    pub modal_title_add: String,
+    pub modal_title_edit: String,
+    pub alert_enter_title: String,
+    pub alert_pick_start: String,
+    pub alert_update_failed: String,
+    pub alert_create_failed: String,
+    pub alert_delete_failed: String,
+    pub alert_update_date_failed: String,
+    pub alert_quota_exceeded: String,
+    pub repeat_display_prefix: String,
+    pub attendees_display_prefix: String,
+    pub delete_btn: String,
+    pub confirm_delete_event: String,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
 pub struct WebviewPageData {
     pub html_lang: String,
     pub title: String,
     pub body_html: String,
-    pub js: String,
+    pub js_config: WebviewJsConfig,
 }
 
 const WEBVIEW_HEAD_STYLE: &str = r#"
@@ -41,11 +60,10 @@ pub fn WebviewShell(data: WebviewPageData) -> impl IntoView {
     let inline_data_script = format!("window.__WEBVIEW_DATA__ = {json_safe};");
 
     let head_html = format!(
-        r#"<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>{title} — NotionCal</title><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.15/index.global.min.css"><script src="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.15/index.global.min.js"></script><link rel="stylesheet" href="/assets/style-auth-a.css"><link href="{fonts}" rel="stylesheet"><style>{style}</style><script>{js}</script><script>{data_script}</script><script type="module">import init, {{ hydrate_webview }} from '/pkg/app.js'; init('/pkg/app_bg.wasm').then(() => hydrate_webview(JSON.stringify(window.__WEBVIEW_DATA__)));</script>"#,
+        r#"<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>{title} — NotionCal</title><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.15/index.global.min.css"><script src="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.15/index.global.min.js"></script><link rel="stylesheet" href="/assets/style-auth-a.css"><link href="{fonts}" rel="stylesheet"><style>{style}</style><script>{data_script}</script><script src="/static/webview.js" defer></script><script type="module">import init, {{ hydrate_webview }} from '/pkg/app.js'; init('/pkg/app_bg.wasm').then(() => hydrate_webview(JSON.stringify(window.__WEBVIEW_DATA__)));</script>"#,
         title = data.title,
         fonts = GOOGLE_FONTS_HREF,
         style = WEBVIEW_HEAD_STYLE,
-        js = data.js,
         data_script = inline_data_script,
     );
 
@@ -83,7 +101,22 @@ mod tests {
             html_lang: "vi".to_string(),
             title: "Work &lt;Calendar&gt;".to_string(),
             body_html: "<header>top</header><div id=\"calendar\"></div><button id=\"modal-delete-btn\">Xoá</button>".to_string(),
-            js: "console.log('webview js');".to_string(),
+            js_config: WebviewJsConfig {
+                events_url: "/app/test-id/api/events".to_string(),
+                modal_title_add: "Thêm sự kiện".to_string(),
+                modal_title_edit: "Chỉnh sửa sự kiện".to_string(),
+                alert_enter_title: "Nhập tên sự kiện".to_string(),
+                alert_pick_start: "Chọn ngày bắt đầu".to_string(),
+                alert_update_failed: "Cập nhật thất bại".to_string(),
+                alert_create_failed: "Tạo event thất bại".to_string(),
+                alert_delete_failed: "Xoá thất bại".to_string(),
+                alert_update_date_failed: "Cập nhật ngày thất bại".to_string(),
+                alert_quota_exceeded: "Đã đạt giới hạn".to_string(),
+                repeat_display_prefix: "Lặp lại: ".to_string(),
+                attendees_display_prefix: "Người được mời: ".to_string(),
+                delete_btn: "Xoá".to_string(),
+                confirm_delete_event: "Xoá sự kiện này?".to_string(),
+            },
         }
     }
 
@@ -97,11 +130,12 @@ mod tests {
     }
 
     #[test]
-    fn shell_embeds_js_and_is_script_breakout_safe() {
+    fn shell_embeds_js_config_and_is_script_breakout_safe() {
         any_spawner::Executor::init_futures_executor().ok();
         let html = leptos::prelude::Owner::new()
             .with(|| view! { <WebviewShell data=sample_data()/> }.to_html());
-        assert!(html.contains("console.log('webview js')"));
+        assert!(html.contains("/app/test-id/api/events"));
+        assert!(html.contains("/static/webview.js"));
         assert!(html.contains("fullcalendar@6.1.15"));
         assert!(html.contains("&lt;Calendar&gt;"));
         assert!(!html.contains("</script><script>alert"));

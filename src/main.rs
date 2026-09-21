@@ -1,4 +1,5 @@
-use notion_ical_sync::{auth, billing, create_app, email, oauth, AppState, CaldavAllowWrites};
+use notion_ical_sync::pages::connect_notion;
+use notion_ical_sync::{billing, create_app, email, session, AppState, CaldavAllowWrites};
 use std::{env, time::Duration};
 use tower_sessions::cookie::time::Duration as CookieDuration;
 use tower_sessions::cookie::SameSite;
@@ -90,7 +91,7 @@ async fn main() -> anyhow::Result<()> {
 
     let app_base_url =
         env::var("APP_BASE_URL").unwrap_or_else(|_| format!("http://localhost:{port}"));
-    let notion_oauth = oauth::NotionOAuthConfig::from_env(&app_base_url);
+    let notion_oauth = connect_notion::NotionOAuthConfig::from_env(&app_base_url);
     warn_if_unconfigured(
         &notion_oauth,
         "NOTION_OAUTH_CLIENT_ID/NOTION_OAUTH_CLIENT_SECRET not set; the \"Connect Notion\" \
@@ -152,7 +153,7 @@ async fn main() -> anyhow::Result<()> {
         env::var("KEYCLOAK_CLIENT_ID").unwrap_or_else(|_| "notion-caldav-saas-app".to_string());
     let keycloak_client_secret = env::var("KEYCLOAK_CLIENT_SECRET").ok();
 
-    let oidc_client = auth::build_oidc_client_with_startup_retry(
+    let oidc_client = session::build_oidc_client_with_startup_retry(
         keycloak_issuer_url,
         keycloak_client_id,
         keycloak_client_secret,
@@ -170,7 +171,7 @@ async fn main() -> anyhow::Result<()> {
         .with_same_site(SameSite::Lax)
         .with_expiry(Expiry::OnInactivity(CookieDuration::days(7)));
 
-    let app_config = auth::AppConfig {
+    let app_config = session::AppConfig {
         base_url: app_base_url,
     };
 

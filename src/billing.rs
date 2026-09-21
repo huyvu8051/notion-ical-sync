@@ -12,7 +12,7 @@ use serde::Deserialize;
 use sha2::Sha256;
 use tracing::{error, info, warn};
 
-use crate::{auth::find_or_create_user, AppState};
+use crate::{session::find_or_create_user, AppState};
 
 type HmacSha256 = Hmac<Sha256>;
 
@@ -384,18 +384,23 @@ struct CheckoutUserRow {
 pub async fn start_checkout(
     State(state): State<AppState>,
     claims: OidcClaims<EmptyAdditionalClaims>,
-    cfg: axum::Extension<crate::auth::AppConfig>,
+    cfg: axum::Extension<crate::session::AppConfig>,
     lang: crate::i18n::Lang,
 ) -> impl IntoResponse {
     let Some(stripe) = state.stripe.as_ref() else {
-        return crate::oauth::error_page(lang, crate::oauth::OauthError::BillingNotConfigured);
+        return crate::error_page::error_page(
+            lang,
+            crate::error_page::OauthError::BillingNotConfigured,
+        );
     };
 
     let sub = claims.subject().as_str();
     let email = claims.email().map(|e| e.as_str()).unwrap_or("").to_string();
     let user_id = match find_or_create_user(&state, sub, &email, lang).await {
         Ok(id) => id,
-        Err(_) => return crate::oauth::error_page(lang, crate::oauth::OauthError::Generic),
+        Err(_) => {
+            return crate::error_page::error_page(lang, crate::error_page::OauthError::Generic)
+        }
     };
 
     let row: Option<CheckoutUserRow> =
@@ -406,7 +411,7 @@ pub async fn start_checkout(
             .ok()
             .flatten();
     let Some(row) = row else {
-        return crate::oauth::error_page(lang, crate::oauth::OauthError::Generic);
+        return crate::error_page::error_page(lang, crate::error_page::OauthError::Generic);
     };
 
     match create_checkout_session(
@@ -426,9 +431,9 @@ pub async fn start_checkout(
                 "failed to create stripe checkout session for user {}: {}",
                 user_id, e
             );
-            crate::oauth::error_page(
+            crate::error_page::error_page(
                 lang,
-                crate::oauth::OauthError::FailedToCreateCheckoutSession,
+                crate::error_page::OauthError::FailedToCreateCheckoutSession,
             )
         }
     }

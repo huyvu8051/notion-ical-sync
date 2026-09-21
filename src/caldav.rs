@@ -199,7 +199,7 @@ pub struct AppState {
     pub cache: Arc<RwLock<HashMap<String, Vec<PageInfo>>>>,
     pub caldav_allow_writes: CaldavAllowWrites,
     pub webhook_secret: Option<String>,
-    pub notion_oauth: Option<crate::oauth::NotionOAuthConfig>,
+    pub notion_oauth: Option<crate::pages::connect_notion::NotionOAuthConfig>,
     pub password_enc_key: Option<[u8; 32]>,
     pub stripe: Option<crate::billing::StripeConfig>,
     pub email: Option<crate::email::EmailConfig>,
@@ -236,7 +236,7 @@ impl AppState {
         db: PgPool,
         caldav_allow_writes: CaldavAllowWrites,
         webhook_secret: Option<String>,
-        notion_oauth: Option<crate::oauth::NotionOAuthConfig>,
+        notion_oauth: Option<crate::pages::connect_notion::NotionOAuthConfig>,
         password_enc_key: Option<[u8; 32]>,
         stripe: Option<crate::billing::StripeConfig>,
         email: Option<crate::email::EmailConfig>,
@@ -1806,7 +1806,7 @@ pub async fn handle_host_calendar(
                 .body(axum::body::Body::empty())
                 .expect("method/uri from a real incoming request are always valid");
             *synthetic_request.headers_mut() = headers.clone();
-            return crate::auth::landing_page(
+            return crate::pages::landing::landing_page(
                 crate::i18n::Lang::detect(&headers),
                 synthetic_request,
             )
@@ -2381,9 +2381,9 @@ async fn auth_middleware(
 pub fn create_app(
     state: AppState,
     oidc_client: axum_oidc::OidcClient<axum_oidc::EmptyAdditionalClaims>,
-    app_config: crate::auth::AppConfig,
+    app_config: crate::session::AppConfig,
 ) -> Router {
-    use crate::auth::SessionWrapper;
+    use crate::session::SessionWrapper;
     use axum::error_handling::HandleErrorLayer;
     use axum_oidc::{
         error::MiddlewareError, handle_oidc_redirect, EmptyAdditionalClaims, OidcAuthLayer,
@@ -2486,49 +2486,57 @@ pub fn create_app(
         ));
 
     let me_route = Router::new()
-        .route("/me", get(crate::auth::me))
-        .route("/connect/notion", get(crate::oauth::connect_notion_page))
+        .route("/me", get(crate::pages::me::me))
+        .route(
+            "/connect/notion",
+            get(crate::pages::connect_notion::connect_notion_page),
+        )
         .route(
             "/connect/notion/start",
-            get(crate::oauth::connect_notion_start),
+            get(crate::pages::connect_notion::connect_notion_start),
         )
         .route(
             "/connect/notion/databases",
-            get(crate::oauth::pick_databases_page).post(crate::oauth::create_calendars),
+            get(crate::pages::pick_databases::pick_databases_page)
+                .post(crate::pages::pick_databases::create_calendars),
         )
         .route(
             "/oauth/notion/callback",
-            get(crate::oauth::notion_oauth_callback),
+            get(crate::pages::connect_notion::notion_oauth_callback),
         )
         .route(
             "/me/calendars/{public_id}/delete",
-            post(crate::oauth::delete_calendar),
+            post(crate::pages::me::delete_calendar),
         )
         .route(
             "/me/calendars/{public_id}/reveal-password",
-            post(crate::oauth::reveal_password),
+            post(crate::pages::me::reveal_password),
         )
         .route(
             "/me/calendars/{public_id}/regenerate-password",
-            post(crate::oauth::regenerate_password),
+            post(crate::pages::me::regenerate_password),
         )
         .route(
             "/me/calendars/{public_id}/log",
-            get(crate::oauth::sync_log_page),
+            get(crate::pages::sync_log::sync_log_page),
         )
         .route(
             "/app",
             get(|| async { axum::response::Redirect::to("/me") }),
         )
-        .route("/app/{public_id}", get(crate::webview::handle_webview_page))
+        .route(
+            "/app/{public_id}",
+            get(crate::pages::webview::handle_webview_page),
+        )
         .route(
             "/app/{public_id}/api/events",
-            get(crate::webview::handle_list_events).post(crate::webview::handle_create_event),
+            get(crate::api::webview_events::handle_list_events)
+                .post(crate::api::webview_events::handle_create_event),
         )
         .route(
             "/app/{public_id}/api/events/{event_id}",
-            axum::routing::patch(crate::webview::handle_update_event)
-                .delete(crate::webview::handle_delete_event),
+            axum::routing::patch(crate::api::webview_events::handle_update_event)
+                .delete(crate::api::webview_events::handle_delete_event),
         )
         .route("/billing/checkout", get(crate::billing::start_checkout))
         .layer(oidc_login_service);
@@ -2571,12 +2579,21 @@ pub fn create_app(
                 ))
                 .service(tower_http::services::ServeDir::new("assets")),
         )
-        .route("/privacy", get(crate::legal::privacy_policy_page))
-        .route("/terms", get(crate::legal::terms_of_service_page))
-        .route("/robots.txt", get(crate::legal::robots_txt))
-        .route("/sitemap.xml", get(crate::legal::sitemap_xml))
-        .route("/favicon.ico", get(crate::legal::favicon))
-        .route("/favicon.svg", get(crate::legal::favicon))
+        .nest_service(
+            "/static",
+            tower::ServiceBuilder::new()
+                .layer(tower_http::set_header::SetResponseHeaderLayer::overriding(
+                    http::header::CACHE_CONTROL,
+                    http::HeaderValue::from_static("no-cache"),
+                ))
+                .service(tower_http::services::ServeDir::new("static")),
+        )
+        .route("/privacy", get(crate::pages::legal::privacy_policy_page))
+        .route("/terms", get(crate::pages::legal::terms_of_service_page))
+        .route("/robots.txt", get(crate::pages::legal::robots_txt))
+        .route("/sitemap.xml", get(crate::pages::legal::sitemap_xml))
+        .route("/favicon.ico", get(crate::pages::legal::favicon))
+        .route("/favicon.svg", get(crate::pages::legal::favicon))
         .route("/lang/{code}", get(crate::i18n::set_lang))
         .route("/dev/leptos-check", get(leptos_axum::render_app_to_stream(app::Shell)))
         .merge(me_route)
@@ -2584,7 +2601,7 @@ pub fn create_app(
             "/oidc",
             axum::routing::any(handle_oidc_redirect::<EmptyAdditionalClaims, SessionWrapper>),
         )
-        .route("/logout", get(crate::auth::logout))
+        .route("/logout", get(crate::session::logout))
         .merge(caldav_routes)
         .layer(oidc_auth_service)
         .layer(axum::Extension(app_config))
