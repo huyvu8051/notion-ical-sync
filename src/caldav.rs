@@ -361,32 +361,75 @@ impl AppState {
         }
     }
 
-    async fn log_diff(&self, calendar_id: i64, old_pages: &[PageInfo], new_pages: &[PageInfo]) {
-        use std::collections::HashMap;
-
-        let old_by_id: HashMap<&str, &PageInfo> =
-            old_pages.iter().map(|p| (p.id.as_str(), p)).collect();
-        let new_by_id: HashMap<&str, &PageInfo> =
-            new_pages.iter().map(|p| (p.id.as_str(), p)).collect();
+    // Diffs against `calendar_page_state` (Postgres, shared across every pod)
+    // rather than the per-process in-memory cache — with multiple replicas
+    // each running their own periodic poll, an in-memory diff logs the same
+    // change once per pod as each one's cache independently catches up. The
+    // UPSERT below is atomic, so concurrent pods observing the same change
+    // only ever produce one log row between them.
+    async fn log_diff(&self, calendar_id: i64, new_pages: &[PageInfo]) {
+        let (previously_known,): (i64,) = sqlx::query_as(
+            "SELECT count(*) FROM calendar_page_state WHERE calendar_id = $1",
+        )
+        .bind(calendar_id)
+        .fetch_one(&self.db)
+        .await
+        .unwrap_or((0,));
+        // First time this calendar has ever been diffed: seed the baseline
+        // silently instead of logging every existing event as "created".
+        let is_baseline_seed = previously_known == 0;
 
         for page in new_pages {
-            match old_by_id.get(page.id.as_str()) {
-                None => {
+            let row: Option<(bool,)> = sqlx::query_as(
+                "INSERT INTO calendar_page_state (calendar_id, notion_page_id, last_edited)
+                 VALUES ($1, $2, $3)
+                 ON CONFLICT (calendar_id, notion_page_id)
+                 DO UPDATE SET last_edited = EXCLUDED.last_edited
+                 WHERE calendar_page_state.last_edited IS DISTINCT FROM EXCLUDED.last_edited
+                 RETURNING (xmax = 0)",
+            )
+            .bind(calendar_id)
+            .bind(&page.id)
+            .bind(&page.last_edited)
+            .fetch_optional(&self.db)
+            .await
+            .unwrap_or(None);
+
+            if is_baseline_seed {
+                continue;
+            }
+            match row {
+                Some((true,)) => {
                     self.log_sync(calendar_id, "notion", "create", &page.id, &page.id, "ok", "")
                         .await;
                 }
-                Some(old) if old.last_edited != page.last_edited => {
+                Some((false,)) => {
                     self.log_sync(calendar_id, "notion", "update", &page.id, &page.id, "ok", "")
                         .await;
                 }
-                _ => {}
+                None => {}
             }
         }
-        for page in old_pages {
-            if !new_by_id.contains_key(page.id.as_str()) {
-                self.log_sync(calendar_id, "notion", "delete", &page.id, &page.id, "ok", "")
-                    .await;
-            }
+
+        if is_baseline_seed {
+            return;
+        }
+
+        let current_ids: Vec<String> = new_pages.iter().map(|p| p.id.clone()).collect();
+        let deleted_ids: Vec<String> = sqlx::query_scalar(
+            "DELETE FROM calendar_page_state
+             WHERE calendar_id = $1 AND NOT (notion_page_id = ANY($2))
+             RETURNING notion_page_id",
+        )
+        .bind(calendar_id)
+        .bind(&current_ids)
+        .fetch_all(&self.db)
+        .await
+        .unwrap_or_default();
+
+        for page_id in deleted_ids {
+            self.log_sync(calendar_id, "notion", "delete", &page_id, &page_id, "ok", "")
+                .await;
         }
     }
 
@@ -651,9 +694,7 @@ impl AppState {
             {
                 Ok(pages) => {
                     info!("DB {} synced: {} events", cal.database_id, pages.len());
-                    if let Some(old_pages) = cache.get(&cal.database_id).cloned() {
-                        self.log_diff(cal.id, &old_pages, &pages).await;
-                    }
+                    self.log_diff(cal.id, &pages).await;
                     cache.insert(cal.database_id, pages);
                 }
                 Err(e) => error!("DB {} refresh failed: {}", cal.database_id, e),
@@ -683,10 +724,7 @@ impl AppState {
                     cal.database_id,
                     pages.len()
                 );
-                let old_pages = self.cache.read().await.get(&cal.database_id).cloned();
-                if let Some(old_pages) = old_pages {
-                    self.log_diff(cal.id, &old_pages, &pages).await;
-                }
+                self.log_diff(cal.id, &pages).await;
                 self.cache.write().await.insert(cal.database_id, pages);
             }
             Err(e) => error!(
