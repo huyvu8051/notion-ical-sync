@@ -66,7 +66,7 @@ fn wrap_in_email_template(body: &str) -> String {
 <table role="presentation" width="480" cellpadding="0" cellspacing="0" style="max-width:480px;background:#ffffff;border:1px solid #e5e5e5;border-radius:8px;padding:32px;">
 <tr><td style="padding-bottom:24px;">
 <table role="presentation" cellpadding="0" cellspacing="0"><tr>
-<td style="padding-right:8px;"><img src="https://notion-caldav.opendiy.vn/favicon.svg" width="28" height="28" alt="" style="display:block;"/></td>
+<td style="padding-right:8px;"><img src="https://notion-caldav.opendiy.vn/static/logo-email.png" width="28" height="28" alt="" style="display:block;"/></td>
 <td style="font-size:20px;font-weight:700;vertical-align:middle;">NotionCal</td>
 </tr></table>
 </td></tr>

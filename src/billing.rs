@@ -589,6 +589,8 @@ pub struct GrantLifetimeRequest {
     dry_run: bool,
     #[serde(default)]
     send_promo_email: bool,
+    #[serde(default)]
+    exclude_emails: Vec<String>,
 }
 
 pub async fn grant_lifetime_to_non_paying_users(
@@ -624,6 +626,10 @@ pub async fn grant_lifetime_to_non_paying_users(
         );
         Vec::new()
     });
+    let rows: Vec<NonPayingUserRow> = rows
+        .into_iter()
+        .filter(|r| !opts.exclude_emails.iter().any(|e| e.eq_ignore_ascii_case(&r.email)))
+        .collect();
 
     if opts.dry_run {
         let preview: Vec<_> = rows
@@ -649,11 +655,11 @@ pub async fn grant_lifetime_to_non_paying_users(
         }
     }
 
-    match sqlx::query(
-        "UPDATE users SET subscription_status = 'lifetime_free' WHERE subscription_status <> 'active'",
-    )
-    .execute(&state.db)
-    .await
+    let granted_ids: Vec<i64> = rows.iter().map(|r| r.id).collect();
+    match sqlx::query("UPDATE users SET subscription_status = 'lifetime_free' WHERE id = ANY($1)")
+        .bind(&granted_ids)
+        .execute(&state.db)
+        .await
     {
         Ok(result) => {
             info!(
