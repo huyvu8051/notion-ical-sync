@@ -2716,6 +2716,10 @@ pub fn create_app(
             post(crate::billing::handle_stripe_webhook),
         )
         .route("/admin/reset-billing", post(crate::billing::reset_billing))
+        .route(
+            "/admin/grant-lifetime",
+            post(crate::billing::grant_lifetime_to_non_paying_users),
+        )
         .nest_service(
             "/pkg",
             tower::ServiceBuilder::new()

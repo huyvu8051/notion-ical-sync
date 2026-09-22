@@ -49,7 +49,10 @@ pub async fn effective_access(state: &AppState, user_id: i64) -> AccessLevel {
         return AccessLevel::Unlimited;
     };
 
-    let subscribed = matches!(row.subscription_status.as_str(), "trialing" | "active");
+    let subscribed = matches!(
+        row.subscription_status.as_str(),
+        "trialing" | "active" | "lifetime_free"
+    );
     if Utc::now() < trial_end(row.trial_started_at) || subscribed {
         return AccessLevel::Unlimited;
     }
@@ -578,4 +581,78 @@ async fn cancel_stripe_subscription(
         return Err(format!("Stripe cancel failed ({status}): {body}"));
     }
     Ok(())
+}
+
+pub async fn grant_lifetime_to_non_paying_users(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> impl IntoResponse {
+    let Some(expected_secret) = state.admin_secret.as_deref() else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    let provided = headers.get("X-Admin-Secret").and_then(|v| v.to_str().ok());
+    if provided != Some(expected_secret) {
+        return StatusCode::UNAUTHORIZED.into_response();
+    }
+
+    #[derive(sqlx::FromRow)]
+    struct NonPayingUserRow {
+        id: i64,
+        stripe_subscription_id: Option<String>,
+    }
+    let rows: Vec<NonPayingUserRow> = sqlx::query_as(
+        "SELECT id, stripe_subscription_id FROM users WHERE subscription_status <> 'active'",
+    )
+    .fetch_all(&state.db)
+    .await
+    .unwrap_or_else(|e| {
+        error!(
+            "grant_lifetime_to_non_paying_users: failed to list non-paying users: {}",
+            e
+        );
+        Vec::new()
+    });
+
+    let mut stripe_subscriptions_cancelled = 0;
+    if let Some(stripe) = state.stripe.as_ref() {
+        for row in &rows {
+            if let Some(sub_id) = row.stripe_subscription_id.as_deref() {
+                match cancel_stripe_subscription(&state, stripe, sub_id).await {
+                    Ok(()) => stripe_subscriptions_cancelled += 1,
+                    Err(e) => warn!(
+                        "grant_lifetime_to_non_paying_users: failed to cancel Stripe subscription {} for user {}: {}",
+                        sub_id, row.id, e
+                    ),
+                }
+            }
+        }
+    }
+
+    match sqlx::query(
+        "UPDATE users SET subscription_status = 'lifetime_free' WHERE subscription_status <> 'active'",
+    )
+    .execute(&state.db)
+    .await
+    {
+        Ok(result) => {
+            info!(
+                "grant_lifetime_to_non_paying_users: granted lifetime_free to {} users, cancelled {} pending Stripe subscriptions",
+                result.rows_affected(),
+                stripe_subscriptions_cancelled
+            );
+            Json(serde_json::json!({
+                "users_granted": result.rows_affected(),
+                "stripe_subscriptions_cancelled": stripe_subscriptions_cancelled,
+            }))
+            .into_response()
+        }
+        Err(e) => {
+            error!("grant_lifetime_to_non_paying_users: update failed: {}", e);
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "failed to grant lifetime access",
+            )
+                .into_response()
+        }
+    }
 }

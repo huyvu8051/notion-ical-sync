@@ -106,14 +106,25 @@ async fn load_me_data() -> Result<MePageData, ServerFnError> {
                 .flatten();
         let (trial_started_at, subscription_status) =
             row.unwrap_or((Utc::now(), "none".to_string()));
-        let subscribed = matches!(subscription_status.as_str(), "trialing" | "active");
+        let paying = matches!(subscription_status.as_str(), "trialing" | "active");
+        let lifetime_free = subscription_status == "lifetime_free";
 
-        let (status_text, show_cta) = if subscribed {
+        let (status_text, show_cta) = if paying {
             (
                 if vi {
                     "Đã đăng ký — $1/năm"
                 } else {
                     "Subscribed — $1/year"
+                }
+                .to_string(),
+                false,
+            )
+        } else if lifetime_free {
+            (
+                if vi {
+                    "Truy cập trọn đời"
+                } else {
+                    "Lifetime access"
                 }
                 .to_string(),
                 false,
