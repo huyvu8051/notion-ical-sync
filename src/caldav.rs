@@ -361,6 +361,35 @@ impl AppState {
         }
     }
 
+    async fn log_diff(&self, calendar_id: i64, old_pages: &[PageInfo], new_pages: &[PageInfo]) {
+        use std::collections::HashMap;
+
+        let old_by_id: HashMap<&str, &PageInfo> =
+            old_pages.iter().map(|p| (p.id.as_str(), p)).collect();
+        let new_by_id: HashMap<&str, &PageInfo> =
+            new_pages.iter().map(|p| (p.id.as_str(), p)).collect();
+
+        for page in new_pages {
+            match old_by_id.get(page.id.as_str()) {
+                None => {
+                    self.log_sync(calendar_id, "notion", "create", &page.id, &page.id, "ok", "")
+                        .await;
+                }
+                Some(old) if old.last_edited != page.last_edited => {
+                    self.log_sync(calendar_id, "notion", "update", &page.id, &page.id, "ok", "")
+                        .await;
+                }
+                _ => {}
+            }
+        }
+        for page in old_pages {
+            if !new_by_id.contains_key(page.id.as_str()) {
+                self.log_sync(calendar_id, "notion", "delete", &page.id, &page.id, "ok", "")
+                    .await;
+            }
+        }
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub async fn log_sync(
         &self,
@@ -622,6 +651,8 @@ impl AppState {
             {
                 Ok(pages) => {
                     info!("DB {} synced: {} events", cal.database_id, pages.len());
+                    let old_pages = cache.get(&cal.database_id).cloned().unwrap_or_default();
+                    self.log_diff(cal.id, &old_pages, &pages).await;
                     cache.insert(cal.database_id, pages);
                 }
                 Err(e) => error!("DB {} refresh failed: {}", cal.database_id, e),
@@ -651,6 +682,14 @@ impl AppState {
                     cal.database_id,
                     pages.len()
                 );
+                let old_pages = self
+                    .cache
+                    .read()
+                    .await
+                    .get(&cal.database_id)
+                    .cloned()
+                    .unwrap_or_default();
+                self.log_diff(cal.id, &old_pages, &pages).await;
                 self.cache.write().await.insert(cal.database_id, pages);
             }
             Err(e) => error!(

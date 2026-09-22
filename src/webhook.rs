@@ -65,29 +65,11 @@ pub async fn handle_notion_webhook(
         .pointer("/data/parent/data_source_id")
         .and_then(|v| v.as_str())
         .map(|s| s.to_string());
-    let affected_page_id = json
-        .pointer("/data/id")
-        .and_then(|v| v.as_str())
-        .unwrap_or("")
-        .to_string();
 
     info!(event_type = %event_type, data_source_id = data_source_id.as_deref(), "notion webhook event verified");
 
     if let Some(data_source_id) = data_source_id {
         tokio::spawn(async move {
-            if let Some(calendar) = state.calendar_by_data_source_id(&data_source_id).await {
-                state
-                    .log_sync(
-                        calendar.id,
-                        "notion",
-                        &event_type,
-                        &affected_page_id,
-                        &affected_page_id,
-                        "ok",
-                        "",
-                    )
-                    .await;
-            }
             state.refresh_by_data_source(&data_source_id).await;
         });
     }
