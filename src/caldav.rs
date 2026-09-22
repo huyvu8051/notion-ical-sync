@@ -651,8 +651,9 @@ impl AppState {
             {
                 Ok(pages) => {
                     info!("DB {} synced: {} events", cal.database_id, pages.len());
-                    let old_pages = cache.get(&cal.database_id).cloned().unwrap_or_default();
-                    self.log_diff(cal.id, &old_pages, &pages).await;
+                    if let Some(old_pages) = cache.get(&cal.database_id).cloned() {
+                        self.log_diff(cal.id, &old_pages, &pages).await;
+                    }
                     cache.insert(cal.database_id, pages);
                 }
                 Err(e) => error!("DB {} refresh failed: {}", cal.database_id, e),
@@ -682,14 +683,10 @@ impl AppState {
                     cal.database_id,
                     pages.len()
                 );
-                let old_pages = self
-                    .cache
-                    .read()
-                    .await
-                    .get(&cal.database_id)
-                    .cloned()
-                    .unwrap_or_default();
-                self.log_diff(cal.id, &old_pages, &pages).await;
+                let old_pages = self.cache.read().await.get(&cal.database_id).cloned();
+                if let Some(old_pages) = old_pages {
+                    self.log_diff(cal.id, &old_pages, &pages).await;
+                }
                 self.cache.write().await.insert(cal.database_id, pages);
             }
             Err(e) => error!(
