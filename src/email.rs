@@ -1,9 +1,12 @@
+use axum::{extract::State, http::{HeaderMap, StatusCode}, response::IntoResponse, Json};
 use lettre::message::header::ContentType;
 use lettre::transport::smtp::authentication::Credentials;
 use lettre::transport::smtp::client::{Tls, TlsParameters};
 use lettre::{AsyncSmtpTransport, AsyncTransport, Message, Tokio1Executor};
+use serde::Deserialize;
 
 use crate::i18n::Lang;
+use crate::AppState;
 
 #[derive(Clone)]
 pub struct EmailConfig {
@@ -89,6 +92,49 @@ fn wrap_in_email_template(body: &str) -> String {
 </table>
 </body></html>"#
     )
+}
+
+#[derive(Deserialize)]
+pub struct SendTestEmailRequest {
+    to: String,
+}
+
+pub async fn send_test_email(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(body): Json<SendTestEmailRequest>,
+) -> impl IntoResponse {
+    let Some(expected_secret) = state.admin_secret.as_deref() else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    let provided = headers.get("X-Admin-Secret").and_then(|v| v.to_str().ok());
+    if provided != Some(expected_secret) {
+        return StatusCode::UNAUTHORIZED.into_response();
+    }
+    let Some(cfg) = state.email.clone() else {
+        return (StatusCode::SERVICE_UNAVAILABLE, "SMTP not configured").into_response();
+    };
+
+    match send_email(
+        &cfg,
+        &body.to,
+        "NotionCal test email",
+        &wrap_in_email_template(
+            "<p>This is a test email from NotionCal's admin test endpoint — if you're reading this, SMTP delivery is working.</p>",
+        ),
+    )
+    .await
+    {
+        Ok(()) => Json(serde_json::json!({ "sent_to": body.to })).into_response(),
+        Err(e) => {
+            tracing::error!("send_test_email: failed to send to {}: {}", body.to, e);
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("failed to send: {e}"),
+            )
+                .into_response()
+        }
+    }
 }
 
 pub fn welcome_email(lang: Lang) -> (&'static str, String) {

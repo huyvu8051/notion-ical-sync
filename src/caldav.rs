@@ -2720,6 +2720,7 @@ pub fn create_app(
             "/admin/grant-lifetime",
             post(crate::billing::grant_lifetime_to_non_paying_users),
         )
+        .route("/admin/send-test-email", post(crate::email::send_test_email))
         .nest_service(
             "/pkg",
             tower::ServiceBuilder::new()
