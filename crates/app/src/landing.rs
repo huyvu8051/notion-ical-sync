@@ -450,7 +450,7 @@ fn LandingHead(data: LandingPageData) -> impl IntoView {
         <leptos_meta::Meta name="twitter:card" content="summary"/>
         <leptos_meta::Meta name="twitter:title" content=data.page_title.clone()/>
         <leptos_meta::Meta name="twitter:description" content=data.twitter_description.clone()/>
-        <leptos_meta::Link rel="stylesheet" href="/assets/style-auth-b.css"/>
+        <leptos_meta::Link rel="stylesheet" href="/assets/style-auth-a.css"/>
         <leptos_meta::Link href=GOOGLE_FONTS_HREF rel="stylesheet"/>
         <leptos_meta::Style>{LANDING_HEAD_STYLE}</leptos_meta::Style>
     }

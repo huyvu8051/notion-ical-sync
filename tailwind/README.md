@@ -6,19 +6,21 @@ Play CDN script was compiling the whole utility set in every visitor's
 browser on every page load (~7s of render-blocking on a throttled mobile
 connection).
 
-## Two configs
+## One config
 
-| Config | Used by | Output |
-|---|---|---|
-| `auth-a.config.js` | every logged-in page (`/me`, sync log, the Notion onboarding flow, the calendar webview) | `/assets/style-auth-a.css` |
-| `auth-b.config.js` | the public landing page (`/`) | `/assets/style-auth-b.css` |
+`auth-a.config.js` builds `/assets/style-auth-a.css`, used by every page —
+the public landing page included. It used to be three separate logged-in
+configs (`webview.config.js`, `oauth.config.js`, plus this one), then a
+fourth (`auth-b.config.js`) just for the landing page — same Material-3-style
+token names mapped to slightly different values per page, organic drift
+rather than an intentional per-page palette each time. All four are now
+merged into this one config.
 
-The logged-in pages used to build against three separate configs
-(`webview.config.js`, `oauth.config.js`, plus this one) with the same
-Material-3-style token names mapped to different hex values per page —
-organic drift rather than an intentional per-page palette. They were merged
-into `auth-a.config.js` so every logged-in page shares one design and one
-stylesheet.
+Serving every page from the same stylesheet file also matters for
+client-side navigation: when a route change swaps the `<link>` tag for a
+*different* CSS file, the browser can render a flash of unstyled content
+while that file downloads. Splitting pages across stylesheets should be
+a deliberate call, not a side effect of copy-pasting a config.
 
 ## Editing Tailwind classes
 

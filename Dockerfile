@@ -43,8 +43,7 @@ COPY tailwind ./tailwind
 COPY src ./src
 COPY crates ./crates
 RUN mkdir -p /assets && cd tailwind && \
-    npx tailwindcss -c auth-a.config.js -i input.css -o /assets/style-auth-a.css --minify && \
-    npx tailwindcss -c auth-b.config.js -i input.css -o /assets/style-auth-b.css --minify
+    npx tailwindcss -c auth-a.config.js -i input.css -o /assets/style-auth-a.css --minify
 
 FROM debian:bookworm-slim
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates && rm -rf /var/lib/apt/lists/*
