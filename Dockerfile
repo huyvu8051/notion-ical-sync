@@ -51,6 +51,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates
 COPY --from=builder /app/target/release/notion-ical-sync /usr/local/bin/notion-ical-sync
 COPY --from=wasm-builder /app/pkg /pkg
 COPY --from=tailwind-builder /assets /assets
+COPY static /static
 WORKDIR /
 EXPOSE 8080
 ENTRYPOINT ["notion-ical-sync"]
