@@ -583,9 +583,18 @@ async fn cancel_stripe_subscription(
     Ok(())
 }
 
+#[derive(Deserialize, Default)]
+pub struct GrantLifetimeRequest {
+    #[serde(default)]
+    dry_run: bool,
+    #[serde(default)]
+    send_promo_email: bool,
+}
+
 pub async fn grant_lifetime_to_non_paying_users(
     State(state): State<AppState>,
     headers: HeaderMap,
+    body: Option<Json<GrantLifetimeRequest>>,
 ) -> impl IntoResponse {
     let Some(expected_secret) = state.admin_secret.as_deref() else {
         return StatusCode::NOT_FOUND.into_response();
@@ -594,14 +603,17 @@ pub async fn grant_lifetime_to_non_paying_users(
     if provided != Some(expected_secret) {
         return StatusCode::UNAUTHORIZED.into_response();
     }
+    let opts = body.map(|Json(b)| b).unwrap_or_default();
 
     #[derive(sqlx::FromRow)]
     struct NonPayingUserRow {
         id: i64,
+        email: String,
+        subscription_status: String,
         stripe_subscription_id: Option<String>,
     }
     let rows: Vec<NonPayingUserRow> = sqlx::query_as(
-        "SELECT id, stripe_subscription_id FROM users WHERE subscription_status <> 'active'",
+        "SELECT id, email, subscription_status, stripe_subscription_id FROM users WHERE subscription_status <> 'active'",
     )
     .fetch_all(&state.db)
     .await
@@ -612,6 +624,15 @@ pub async fn grant_lifetime_to_non_paying_users(
         );
         Vec::new()
     });
+
+    if opts.dry_run {
+        let preview: Vec<_> = rows
+            .iter()
+            .map(|r| serde_json::json!({ "id": r.id, "email": r.email, "subscription_status": r.subscription_status }))
+            .collect();
+        return Json(serde_json::json!({ "dry_run": true, "would_affect": preview.len(), "users": preview }))
+            .into_response();
+    }
 
     let mut stripe_subscriptions_cancelled = 0;
     if let Some(stripe) = state.stripe.as_ref() {
@@ -640,9 +661,25 @@ pub async fn grant_lifetime_to_non_paying_users(
                 result.rows_affected(),
                 stripe_subscriptions_cancelled
             );
+            let mut promo_emails_sent = 0;
+            if opts.send_promo_email {
+                if let Some(cfg) = state.email.as_ref() {
+                    let (subject, html) = crate::email::lifetime_promo_email();
+                    for row in &rows {
+                        crate::email::spawn_send(
+                            cfg.clone(),
+                            row.email.clone(),
+                            subject.to_string(),
+                            html.clone(),
+                        );
+                        promo_emails_sent += 1;
+                    }
+                }
+            }
             Json(serde_json::json!({
                 "users_granted": result.rows_affected(),
                 "stripe_subscriptions_cancelled": stripe_subscriptions_cancelled,
+                "promo_emails_sent": promo_emails_sent,
             }))
             .into_response()
         }
