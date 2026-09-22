@@ -64,7 +64,12 @@ fn wrap_in_email_template(body: &str) -> String {
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="padding:32px 16px;">
 <tr><td align="center">
 <table role="presentation" width="480" cellpadding="0" cellspacing="0" style="max-width:480px;background:#ffffff;border:1px solid #e5e5e5;border-radius:8px;padding:32px;">
-<tr><td style="font-size:20px;font-weight:700;padding-bottom:24px;">NotionCal</td></tr>
+<tr><td style="padding-bottom:24px;">
+<table role="presentation" cellpadding="0" cellspacing="0"><tr>
+<td style="padding-right:8px;"><img src="https://notion-caldav.opendiy.vn/favicon.svg" width="28" height="28" alt="" style="display:block;"/></td>
+<td style="font-size:20px;font-weight:700;vertical-align:middle;">NotionCal</td>
+</tr></table>
+</td></tr>
 <tr><td style="font-size:14px;line-height:1.6;">{body}</td></tr>
 </table>
 </td></tr>
@@ -77,7 +82,6 @@ fn wrap_in_email_template(body: &str) -> String {
 pub struct SendTestEmailRequest {
     to: String,
     template: Option<String>,
-    lang: Option<String>,
 }
 
 pub async fn send_test_email(
@@ -96,9 +100,8 @@ pub async fn send_test_email(
         return (StatusCode::SERVICE_UNAVAILABLE, "SMTP not configured").into_response();
     };
 
-    let lang = Lang::from_code(body.lang.as_deref().unwrap_or("vi"));
     let (subject, html) = match body.template.as_deref() {
-        Some("lifetime_promo") => lifetime_promo_email(lang),
+        Some("lifetime_promo") => lifetime_promo_email(),
         _ => (
             "NotionCal test email",
             wrap_in_email_template(
@@ -120,29 +123,23 @@ pub async fn send_test_email(
     }
 }
 
-pub fn lifetime_promo_email(lang: Lang) -> (&'static str, String) {
-    match lang {
-        Lang::Vi => (
-            "Bạn được miễn phí sử dụng NotionCal đến hết 12/2027",
-            wrap_in_email_template(
-                r#"<p>Chào bạn,</p>
+pub fn lifetime_promo_email() -> (&'static str, String) {
+    (
+        "You're free to use NotionCal through 2027 / Miễn phí đến 12/2027",
+        wrap_in_email_template(
+            r#"<p>Hi there,</p>
+<p>Thanks for being with NotionCal since the early days. As a thank-you, we've given your account <strong>unlimited, free access through the end of December 2027</strong> — no card required, no daily event cap.</p>
+<p>Nothing to do on your end — this is already active on your account.</p>
+<p>Check your calendars <a href="https://notion-caldav.opendiy.vn/me">here</a>.</p>
+<p>— The NotionCal team</p>
+<hr style="border:none;border-top:1px solid #e5e5e5;margin:24px 0;"/>
+<p>Chào bạn,</p>
 <p>Cảm ơn bạn đã đồng hành cùng NotionCal từ những ngày đầu. Để tri ân, chúng tôi quyết định cho bạn <strong>sử dụng không giới hạn, miễn phí đến hết tháng 12/2027</strong> — không cần nhập thẻ, không giới hạn số sự kiện đồng bộ mỗi ngày.</p>
 <p>Không cần làm gì thêm — tài khoản của bạn đã được kích hoạt ưu đãi này.</p>
 <p>Xem lại calendar của bạn tại <a href="https://notion-caldav.opendiy.vn/me">đây</a>.</p>
 <p>— Đội ngũ NotionCal</p>"#,
-            ),
         ),
-        Lang::En => (
-            "You're free to use NotionCal through the end of 2027",
-            wrap_in_email_template(
-                r#"<p>Hi there,</p>
-<p>Thanks for being with NotionCal since the early days. As a thank-you, we've given your account <strong>unlimited, free access through the end of December 2027</strong> — no card required, no daily event cap.</p>
-<p>Nothing to do on your end — this is already active on your account.</p>
-<p>Check your calendars <a href="https://notion-caldav.opendiy.vn/me">here</a>.</p>
-<p>— The NotionCal team</p>"#,
-            ),
-        ),
-    }
+    )
 }
 
 pub fn welcome_email(lang: Lang) -> (&'static str, String) {
