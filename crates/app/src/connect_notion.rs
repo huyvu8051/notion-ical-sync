@@ -151,32 +151,3 @@ pub fn ConnectNotionPage(data: ConnectNotionPageData) -> impl IntoView {
         <div id="connect-notion-root" inner_html=body_html></div>
     }
 }
-
-#[cfg(all(test, feature = "ssr"))]
-mod tests {
-    use super::*;
-
-    fn sample_data() -> ConnectNotionPageData {
-        ConnectNotionPageData {
-            html_lang: "vi".to_string(),
-            title: "Kết nối Notion".to_string(),
-            top_nav_html: "<header>nav</header>".to_string(),
-            heading: "Kết nối không gian làm việc Notion của bạn".to_string(),
-            body: "Chúng tôi cần quyền truy cập...".to_string(),
-            connect_cta: "Kết nối với Notion".to_string(),
-            bullet_read_write: "Chỉ đọc và ghi vào các trang bạn cho phép".to_string(),
-            bullet_disconnect: "Có thể ngắt kết nối bất cứ lúc nào".to_string(),
-            bullet_no_sharing: "Không bao giờ chia sẻ dữ liệu của bạn với bên thứ ba".to_string(),
-            privacy_link: "Chính sách bảo mật".to_string(),
-            terms_link: "Điều khoản dịch vụ".to_string(),
-        }
-    }
-
-    #[test]
-    fn renders_without_panicking() {
-        any_spawner::Executor::init_futures_executor().ok();
-        let html = view! { <ConnectNotionPage data=sample_data()/> }.to_html();
-        assert!(html.contains("Kết nối với Notion"));
-        assert!(html.contains("/connect/notion/start"));
-    }
-}

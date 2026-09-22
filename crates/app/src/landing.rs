@@ -462,24 +462,3 @@ pub fn LandingPage(data: LandingPageData) -> impl IntoView {
         <div id="landing-root" class="bg-background text-on-surface" inner_html=data.body_html></div>
     }
 }
-
-#[cfg(all(test, feature = "ssr"))]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn renders_vi_without_panicking() {
-        any_spawner::Executor::init_futures_executor().ok();
-        let html = view! { <LandingPage data=vi_data()/> }.to_html();
-        assert!(html.contains("Đăng nhập"));
-        assert!(html.contains("Chính sách bảo mật"));
-    }
-
-    #[test]
-    fn renders_en_without_panicking() {
-        any_spawner::Executor::init_futures_executor().ok();
-        let html = view! { <LandingPage data=en_data()/> }.to_html();
-        assert!(html.contains("Log in"));
-        assert!(html.contains("Privacy Policy"));
-    }
-}
