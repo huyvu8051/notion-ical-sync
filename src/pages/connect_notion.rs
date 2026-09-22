@@ -33,16 +33,15 @@ impl NotionOAuthConfig {
 pub async fn connect_notion_start(
     State(state): State<AppState>,
     session: tower_sessions::Session,
-    lang: crate::i18n::Lang,
 ) -> impl IntoResponse {
     let Some(cfg) = state.notion_oauth.clone() else {
-        return error_page(lang, OauthError::NotionNotConfigured);
+        return error_page(OauthError::NotionNotConfigured);
     };
 
     let oauth_state = generate_token(32);
     if let Err(e) = session.insert("notion_oauth_state", &oauth_state).await {
         error!("failed to store notion oauth state: {}", e);
-        return error_page(lang, OauthError::TryAgain);
+        return error_page(OauthError::TryAgain);
     }
 
     let mut url = url::Url::parse(&format!("{}/v1/oauth/authorize", state.notion_api_base_url))
@@ -68,24 +67,23 @@ pub async fn notion_oauth_callback(
     State(state): State<AppState>,
     session: tower_sessions::Session,
     claims: OidcClaims<EmptyAdditionalClaims>,
-    lang: crate::i18n::Lang,
     Query(params): Query<CallbackParams>,
 ) -> impl IntoResponse {
     if let Some(err) = params.error {
-        return error_page(lang, OauthError::NotionDenied(err));
+        return error_page(OauthError::NotionDenied(err));
     }
     let Some(code) = params.code else {
-        return error_page(lang, OauthError::MissingAuthCode);
+        return error_page(OauthError::MissingAuthCode);
     };
 
     let expected_state: Option<String> = session.get("notion_oauth_state").await.unwrap_or(None);
     let _ = session.remove::<String>("notion_oauth_state").await;
     if expected_state.is_none() || expected_state.as_deref() != params.state.as_deref() {
-        return error_page(lang, OauthError::InvalidSession);
+        return error_page(OauthError::InvalidSession);
     }
 
     let Some(cfg) = state.notion_oauth.clone() else {
-        return error_page(lang, OauthError::NotionNotConfigured);
+        return error_page(OauthError::NotionNotConfigured);
     };
 
     let resp = match state
@@ -104,7 +102,7 @@ pub async fn notion_oauth_callback(
         Ok(r) => r,
         Err(e) => {
             error!("notion token exchange request failed: {}", e);
-            return error_page(lang, OauthError::CantReachNotion);
+            return error_page(OauthError::CantReachNotion);
         }
     };
 
@@ -112,14 +110,14 @@ pub async fn notion_oauth_callback(
         let status = resp.status();
         let txt = resp.text().await.unwrap_or_default();
         error!("notion token exchange failed {}: {}", status, txt);
-        return error_page(lang, OauthError::NotionRejectedToken);
+        return error_page(OauthError::NotionRejectedToken);
     }
 
     let body: serde_json::Value = match resp.json().await {
         Ok(b) => b,
         Err(e) => {
             error!("failed to parse notion token response: {}", e);
-            return error_page(lang, OauthError::InvalidNotionResponse);
+            return error_page(OauthError::InvalidNotionResponse);
         }
     };
 
@@ -145,16 +143,16 @@ pub async fn notion_oauth_callback(
         .to_string();
 
     if access_token.is_empty() || workspace_id.is_empty() {
-        return error_page(lang, OauthError::NotionResponseMissingFields);
+        return error_page(OauthError::NotionResponseMissingFields);
     }
 
     let sub = claims.subject().as_str();
     let email = claims.email().map(|e| e.as_str()).unwrap_or("").to_string();
-    let user_id = match find_or_create_user(&state, sub, &email, lang).await {
+    let user_id = match find_or_create_user(&state, sub, &email).await {
         Ok(id) => id,
         Err(e) => {
             error!("failed to find_or_create_user: {}", e);
-            return error_page(lang, OauthError::Generic);
+            return error_page(OauthError::Generic);
         }
     };
 
@@ -178,7 +176,7 @@ pub async fn notion_oauth_callback(
         Ok(id) => id,
         Err(e) => {
             error!("failed to upsert notion_connection: {}", e);
-            return error_page(lang, OauthError::FailedToSaveConnection);
+            return error_page(OauthError::FailedToSaveConnection);
         }
     };
 

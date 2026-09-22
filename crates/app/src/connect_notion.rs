@@ -30,19 +30,7 @@ struct ConnectNotionLabels {
     terms_link: &'static str,
 }
 
-const CONNECT_NOTION_LABELS_VI: ConnectNotionLabels = ConnectNotionLabels {
-    title: "Kết nối Notion",
-    heading: "Kết nối không gian làm việc Notion của bạn",
-    body: "Chúng tôi cần quyền truy cập vào không gian làm việc Notion của bạn để tìm và đồng bộ hóa các cơ sở dữ liệu bạn chọn. Bạn sẽ chọn chính xác trang nào cần chia sẻ ở bước tiếp theo trên Notion.",
-    connect_cta: "Kết nối với Notion",
-    bullet_read_write: "Chỉ đọc và ghi vào các trang bạn cho phép",
-    bullet_disconnect: "Có thể ngắt kết nối bất cứ lúc nào",
-    bullet_no_sharing: "Không bao giờ chia sẻ dữ liệu của bạn với bên thứ ba",
-    privacy_link: "Chính sách bảo mật",
-    terms_link: "Điều khoản dịch vụ",
-};
-
-const CONNECT_NOTION_LABELS_EN: ConnectNotionLabels = ConnectNotionLabels {
+const CONNECT_NOTION_LABELS: ConnectNotionLabels = ConnectNotionLabels {
     title: "Connect Notion",
     heading: "Connect your Notion workspace",
     body: "We need access to your Notion workspace to find and sync the databases you choose. You'll pick exactly which pages to share in the next step, on Notion.",
@@ -56,20 +44,15 @@ const CONNECT_NOTION_LABELS_EN: ConnectNotionLabels = ConnectNotionLabels {
 
 #[component]
 pub fn ConnectNotionRoutePage() -> impl IntoView {
-    let lang = crate::page_shell::detect_lang();
-    let l = if lang == "en" {
-        &CONNECT_NOTION_LABELS_EN
-    } else {
-        &CONNECT_NOTION_LABELS_VI
-    };
+    let l = &CONNECT_NOTION_LABELS;
     #[cfg(feature = "ssr")]
     let email = crate::page_shell::current_user_email();
     #[cfg(not(feature = "ssr"))]
     let email = String::new();
     let data = ConnectNotionPageData {
-        html_lang: lang.to_string(),
+        html_lang: "en".to_string(),
         title: l.title.to_string(),
-        top_nav_html: crate::page_shell::top_nav_html(&email, lang, "/connect/notion"),
+        top_nav_html: crate::page_shell::top_nav_html(&email),
         heading: l.heading.to_string(),
         body: l.body.to_string(),
         connect_cta: l.connect_cta.to_string(),

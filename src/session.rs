@@ -91,22 +91,20 @@ pub async fn find_or_create_user(
     state: &AppState,
     keycloak_sub: &str,
     email: &str,
-    lang: crate::i18n::Lang,
 ) -> Result<i64, sqlx::Error> {
     let (id, inserted): (i64, bool) = sqlx::query_as(
-        "INSERT INTO users (keycloak_sub, email, preferred_lang) VALUES ($1, $2, $3)
+        "INSERT INTO users (keycloak_sub, email) VALUES ($1, $2)
          ON CONFLICT (keycloak_sub) DO UPDATE SET email = EXCLUDED.email
          RETURNING id, (xmax = 0) AS inserted",
     )
     .bind(keycloak_sub)
     .bind(email)
-    .bind(lang.code())
     .fetch_one(&state.db)
     .await?;
 
     if inserted {
         if let Some(cfg) = state.email.clone() {
-            let (subject, html) = crate::email::welcome_email(lang);
+            let (subject, html) = crate::email::welcome_email();
             crate::email::spawn_send(cfg, email.to_string(), subject.to_string(), html);
         }
     }
@@ -117,11 +115,10 @@ pub async fn find_or_create_user(
 pub async fn current_user_id(
     state: &AppState,
     claims: &OidcClaims<EmptyAdditionalClaims>,
-    lang: crate::i18n::Lang,
 ) -> Result<i64, axum::http::StatusCode> {
     let sub = claims.subject().as_str();
     let email = claims.email().map(|e| e.as_str()).unwrap_or("");
-    find_or_create_user(state, sub, email, lang)
+    find_or_create_user(state, sub, email)
         .await
         .map_err(|_| axum::http::StatusCode::INTERNAL_SERVER_ERROR)
 }
@@ -130,9 +127,8 @@ pub async fn require_owned_calendar(
     state: &AppState,
     claims: &OidcClaims<EmptyAdditionalClaims>,
     public_id: &str,
-    lang: crate::i18n::Lang,
 ) -> Result<crate::caldav::CalendarRow, axum::http::StatusCode> {
-    let user_id = current_user_id(state, claims, lang).await?;
+    let user_id = current_user_id(state, claims).await?;
     match state.calendar_by_public_id(public_id).await {
         Some(cal) if cal.user_id == user_id => Ok(cal),
         Some(_) => Err(axum::http::StatusCode::FORBIDDEN),
@@ -144,15 +140,13 @@ pub async fn owned_calendar_or_error(
     state: &AppState,
     claims: &OidcClaims<EmptyAdditionalClaims>,
     public_id: &str,
-    lang: crate::i18n::Lang,
 ) -> Result<crate::caldav::CalendarRow, axum::response::Response> {
     let sub = claims.subject().as_str();
     let email = claims.email().map(|e| e.as_str()).unwrap_or("").to_string();
-    let user_id = match find_or_create_user(state, sub, &email, lang).await {
+    let user_id = match find_or_create_user(state, sub, &email).await {
         Ok(id) => id,
         Err(_) => {
             return Err(crate::error_page::error_page(
-                lang,
                 crate::error_page::OauthError::Generic,
             ))
         }
@@ -160,7 +154,6 @@ pub async fn owned_calendar_or_error(
     match state.calendar_by_public_id(public_id).await {
         Some(cal) if cal.user_id == user_id => Ok(cal),
         _ => Err(crate::error_page::error_page(
-            lang,
             crate::error_page::OauthError::CalendarNotFound,
         )),
     }

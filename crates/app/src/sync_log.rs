@@ -45,21 +45,7 @@ struct SyncLogLabels {
 }
 
 #[cfg(feature = "ssr")]
-const SYNC_LOG_LABELS_VI: SyncLogLabels = SyncLogLabels {
-    heading_label: "Log đồng bộ",
-    col_time: "Thời gian",
-    col_source: "Nguồn",
-    col_action: "Hành động",
-    col_event_uid: "UID sự kiện",
-    col_notion_page: "Notion page",
-    col_result: "Kết quả",
-    empty_state: "Chưa có hoạt động đồng bộ nào được ghi lại.",
-    status_ok: "OK",
-    status_error: "Lỗi",
-};
-
-#[cfg(feature = "ssr")]
-const SYNC_LOG_LABELS_EN: SyncLogLabels = SyncLogLabels {
+const SYNC_LOG_LABELS: SyncLogLabels = SyncLogLabels {
     heading_label: "Sync log",
     col_time: "Time",
     col_source: "Source",
@@ -71,15 +57,6 @@ const SYNC_LOG_LABELS_EN: SyncLogLabels = SyncLogLabels {
     status_ok: "OK",
     status_error: "Error",
 };
-
-#[cfg(feature = "ssr")]
-fn labels_for(lang: &str) -> &'static SyncLogLabels {
-    if lang == "en" {
-        &SYNC_LOG_LABELS_EN
-    } else {
-        &SYNC_LOG_LABELS_VI
-    }
-}
 
 #[cfg(feature = "ssr")]
 async fn owned_calendar_id_and_name(
@@ -119,14 +96,12 @@ async fn load_sync_log_data(public_id: String) -> Result<SyncLogPageData, Server
     .await
     .map_err(|e| ServerFnError::new(format!("failed to load sync log: {e}")))?;
 
-    let lang = crate::page_shell::detect_lang();
-    let l = labels_for(lang);
+    let l = &SYNC_LOG_LABELS;
     let email = claims.email().map(|e| e.as_str()).unwrap_or("");
-    let top_nav_html =
-        crate::page_shell::top_nav_html(email, lang, &format!("/me/calendars/{public_id}/log"));
+    let top_nav_html = crate::page_shell::top_nav_html(email);
 
     Ok(SyncLogPageData {
-        html_lang: lang.to_string(),
+        html_lang: "en".to_string(),
         top_nav_html,
         calendar_name,
         heading_label: l.heading_label.to_string(),
@@ -174,8 +149,8 @@ pub fn SyncLogRoutePage() -> impl IntoView {
                 }.into_any(),
                 Err(_) => view! {
                     <div class="flex flex-col items-center justify-center py-3xl gap-md text-center">
-                        <p class="text-on-surface-variant">"Không tìm thấy log này."</p>
-                        <a class="text-secondary underline" href="/me">"Quay lại"</a>
+                        <p class="text-on-surface-variant">"This log wasn't found."</p>
+                        <a class="text-secondary underline" href="/me">"Back"</a>
                     </div>
                 }.into_any(),
             })}

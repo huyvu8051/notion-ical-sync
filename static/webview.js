@@ -11,15 +11,12 @@ function loadScript(src) {
   });
 }
 
-function loadFullCalendarCoreThenLocalePlugin() {
+function loadFullCalendarCore() {
   if (window.FullCalendar) {
     return Promise.resolve();
   }
   if (!fullCalendarLoadPromise) {
-    fullCalendarLoadPromise = loadScript('https://cdn.jsdelivr.net/npm/fullcalendar@6.1.15/index.global.min.js')
-      .then(function() {
-        return loadScript('https://cdn.jsdelivr.net/npm/@fullcalendar/core@6.1.15/locales/vi.global.min.js');
-      });
+    fullCalendarLoadPromise = loadScript('https://cdn.jsdelivr.net/npm/fullcalendar@6.1.15/index.global.min.js');
   }
   return fullCalendarLoadPromise;
 }
@@ -39,12 +36,11 @@ function patchEventDates(cfg, info) {
 
 window.webview_init_calendar = function(configJson) {
   var cfg = JSON.parse(configJson);
-  loadFullCalendarCoreThenLocalePlugin().then(function() {
+  loadFullCalendarCore().then(function() {
     var calendarEl = document.getElementById('calendar');
     if (!calendarEl) { return; }
     calendar = new FullCalendar.Calendar(calendarEl, {
       initialView: 'dayGridMonth',
-      locale: cfg.locale,
       headerToolbar: { left: 'prev,next today', center: 'title', right: 'dayGridMonth,timeGridWeek,listWeek' },
       selectable: true,
       editable: true,

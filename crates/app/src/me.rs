@@ -79,19 +79,16 @@ async fn load_me_data() -> Result<MePageData, ServerFnError> {
         .map(|v| v.0)
         .unwrap_or(false);
 
-    let lang = crate::page_shell::detect_lang();
-    let vi = lang != "en";
     let email = claims.email().map(|e| e.as_str()).unwrap_or("").to_string();
     let sub = claims.subject().as_str();
 
     let user_id: i64 = sqlx::query_scalar(
-        "INSERT INTO users (keycloak_sub, email, preferred_lang) VALUES ($1, $2, $3)
+        "INSERT INTO users (keycloak_sub, email) VALUES ($1, $2)
          ON CONFLICT (keycloak_sub) DO UPDATE SET email = EXCLUDED.email
          RETURNING id",
     )
     .bind(sub)
     .bind(&email)
-    .bind(lang)
     .fetch_one(&pool)
     .await
     .map_err(|e| ServerFnError::new(format!("failed to upsert user: {e}")))?;
@@ -110,37 +107,16 @@ async fn load_me_data() -> Result<MePageData, ServerFnError> {
         let lifetime_free = subscription_status == "lifetime_free";
 
         let (status_text, show_cta) = if paying {
-            (
-                if vi {
-                    "Đã đăng ký — $1/năm"
-                } else {
-                    "Subscribed — $1/year"
-                }
-                .to_string(),
-                false,
-            )
+            ("Subscribed — $1/year".to_string(), false)
         } else if lifetime_free {
-            (
-                if vi {
-                    "Truy cập trọn đời"
-                } else {
-                    "Lifetime access"
-                }
-                .to_string(),
-                false,
-            )
+            ("Lifetime access".to_string(), false)
         } else {
             let trial_end = trial_started_at
                 .checked_add_months(Months::new(TRIAL_MONTHS))
                 .unwrap_or(trial_started_at);
             if Utc::now() < trial_end {
                 let free_until = trial_end.format("%Y-%m-%d").to_string();
-                let text = if vi {
-                    format!("Miễn phí đến {free_until}")
-                } else {
-                    format!("Free until {free_until}")
-                };
-                (text, true)
+                (format!("Free until {free_until}"), true)
             } else {
                 let used_today: i64 = sqlx::query_scalar(
                     "SELECT COUNT(*) FROM sync_log sl
@@ -152,19 +128,10 @@ async fn load_me_data() -> Result<MePageData, ServerFnError> {
                 .fetch_one(&pool)
                 .await
                 .unwrap_or(0);
-                let text = if vi {
-                    format!("{used_today}/{FREE_DAILY_QUOTA} sự kiện hôm nay")
-                } else {
-                    format!("{used_today}/{FREE_DAILY_QUOTA} events today")
-                };
-                (text, true)
+                (format!("{used_today}/{FREE_DAILY_QUOTA} events today"), true)
             }
         };
-        let cta_label = if vi {
-            "Nâng cấp $1/năm"
-        } else {
-            "Upgrade for $1/year"
-        };
+        let cta_label = "Upgrade for $1/year";
         let cta = if show_cta && stripe_configured {
             format!(
                 r#" <a href="/billing/checkout" class="text-secondary hover:underline font-medium">{cta_label}</a>"#
@@ -205,11 +172,8 @@ async fn load_me_data() -> Result<MePageData, ServerFnError> {
             .collect()
     };
 
-    let new_password_notice = if vi {
-        "Mật khẩu CalDAV bên dưới sẽ không tự động hiển thị lại — lưu lại hoặc copy ngay."
-    } else {
-        "The CalDAV password below won't be shown again automatically — save or copy it now."
-    };
+    let new_password_notice =
+        "The CalDAV password below won't be shown again automatically — save or copy it now.";
     let banner = if !one_shot_plaintext_passwords.is_empty() {
         format!(
             r#"<div class="flex items-center gap-sm p-md success-banner-gradient border border-[#DCFCE7] rounded-lg" id="success-banner">
@@ -237,11 +201,7 @@ async fn load_me_data() -> Result<MePageData, ServerFnError> {
         }
         stashed
     };
-    let already_connected_suffix = if vi {
-        "đã được kết nối trong tài khoản của bạn rồi — không có gì thay đổi."
-    } else {
-        "is already connected to your account — nothing changed."
-    };
+    let already_connected_suffix = "is already connected to your account — nothing changed.";
     let error_banner = if connect_errors.is_empty() {
         String::new()
     } else {
@@ -272,35 +232,19 @@ async fn load_me_data() -> Result<MePageData, ServerFnError> {
         view_log_label,
         delete_label,
         delete_confirm_label,
-    ) = if vi {
-        (
-            "Đang hoạt động",
-            "Mở lịch",
-            "Mật khẩu CalDAV",
-            "CalDAV URL",
-            "Username",
-            "Dán link này vào Apple Calendar, Google Calendar hoặc bất kỳ ứng dụng CalDAV nào",
-            "Tạo lại mật khẩu",
-            "Tạo mật khẩu mới? Mật khẩu cũ sẽ ngừng hoạt động ngay.",
-            "Xem log đồng bộ",
-            "Xoá",
-            "Xoá calendar này? Dữ liệu trên Notion không bị ảnh hưởng, nhưng lịch sẽ ngừng đồng bộ.",
-        )
-    } else {
-        (
-            "Active",
-            "Open calendar",
-            "CalDAV password",
-            "CalDAV URL",
-            "Username",
-            "Paste this link into Apple Calendar, Google Calendar, or any CalDAV app",
-            "Regenerate password",
-            "Generate a new password? The old one will stop working immediately.",
-            "View sync log",
-            "Delete",
-            "Delete this calendar? Your Notion data is untouched, but it will stop syncing.",
-        )
-    };
+    ) = (
+        "Active",
+        "Open calendar",
+        "CalDAV password",
+        "CalDAV URL",
+        "Username",
+        "Paste this link into Apple Calendar, Google Calendar, or any CalDAV app",
+        "Regenerate password",
+        "Generate a new password? The old one will stop working immediately.",
+        "View sync log",
+        "Delete",
+        "Delete this calendar? Your Notion data is untouched, but it will stop syncing.",
+    );
 
     let cards: Vec<CalendarCardData> = calendars
         .iter()
@@ -336,11 +280,7 @@ async fn load_me_data() -> Result<MePageData, ServerFnError> {
         })
         .collect();
 
-    let empty_state = if vi {
-        "Chưa có calendar nào — kết nối Notion để bắt đầu."
-    } else {
-        "No calendars yet — connect Notion to get started."
-    };
+    let empty_state = "No calendars yet — connect Notion to get started.";
     let empty_state_html = format!(
         r#"<div class="flex flex-col items-center justify-center py-xl text-center border border-dashed border-outline-variant rounded-lg">
 <span class="material-symbols-outlined !text-[48px] text-outline mb-md">calendar_add_on</span>
@@ -348,21 +288,13 @@ async fn load_me_data() -> Result<MePageData, ServerFnError> {
 </div>"#
     );
 
-    let header_html = crate::page_shell::top_nav_html(&email, lang, "/me");
+    let header_html = crate::page_shell::top_nav_html(&email);
 
-    let (heading, subheading, connect_more) = if vi {
-        (
-            "Calendar của bạn",
-            "Quản lý và đồng bộ hóa các cơ sở dữ liệu Notion với ứng dụng lịch yêu thích của bạn.",
-            "Kết nối thêm cơ sở dữ liệu",
-        )
-    } else {
-        (
-            "Your calendars",
-            "Manage and sync your Notion databases with your favorite calendar app.",
-            "Connect another database",
-        )
-    };
+    let (heading, subheading, connect_more) = (
+        "Your calendars",
+        "Manage and sync your Notion databases with your favorite calendar app.",
+        "Connect another database",
+    );
     let main_top_html = format!(
         r#"{banner}
 {error_banner}
@@ -381,14 +313,10 @@ async fn load_me_data() -> Result<MePageData, ServerFnError> {
 
     let main_bottom_html = r#"<p class="text-on-surface-variant text-[13px] pt-lg"><a class="underline hover:text-primary" href="/privacy">Privacy Policy</a> · <a class="underline hover:text-primary" href="/terms">Terms of Service</a></p>"#.to_string();
 
-    let page_title = if vi {
-        "Trang của bạn — NotionCal"
-    } else {
-        "Your calendars — NotionCal"
-    };
+    let page_title = "Your calendars — NotionCal";
 
     Ok(MePageData {
-        html_lang: lang.to_string(),
+        html_lang: "en".to_string(),
         page_title: page_title.to_string(),
         header_html,
         main_top_html,

@@ -15,10 +15,9 @@ use crate::AppState;
 pub async fn handle_list_events(
     State(state): State<AppState>,
     claims: OidcClaims<EmptyAdditionalClaims>,
-    lang: crate::i18n::Lang,
     Path(public_id): Path<String>,
 ) -> impl IntoResponse {
-    let cal = match require_owned_calendar(&state, &claims, &public_id, lang).await {
+    let cal = match require_owned_calendar(&state, &claims, &public_id).await {
         Ok(cal) => cal,
         Err(status) => return status.into_response(),
     };
@@ -71,10 +70,9 @@ pub async fn handle_create_event(
     State(state): State<AppState>,
     claims: OidcClaims<EmptyAdditionalClaims>,
     Path(public_id): Path<String>,
-    lang: crate::i18n::Lang,
     Json(body): Json<CreateEventBody>,
 ) -> impl IntoResponse {
-    let cal = match require_owned_calendar(&state, &claims, &public_id, lang).await {
+    let cal = match require_owned_calendar(&state, &claims, &public_id).await {
         Ok(cal) => cal,
         Err(status) => return status.into_response(),
     };
@@ -93,7 +91,7 @@ pub async fn handle_create_event(
                 "daily quota exceeded",
             )
             .await;
-        let l = labels_for(lang.code());
+        let l = labels_for();
         return (StatusCode::TOO_MANY_REQUESTS, l.alert_quota_exceeded).into_response();
     }
     let extra = crate::caldav::ExtraEventFields {
@@ -170,10 +168,9 @@ pub async fn handle_update_event(
     State(state): State<AppState>,
     claims: OidcClaims<EmptyAdditionalClaims>,
     Path((public_id, event_id)): Path<(String, String)>,
-    lang: crate::i18n::Lang,
     Json(body): Json<UpdateEventBody>,
 ) -> impl IntoResponse {
-    let cal = match require_owned_calendar(&state, &claims, &public_id, lang).await {
+    let cal = match require_owned_calendar(&state, &claims, &public_id).await {
         Ok(cal) => cal,
         Err(status) => return status.into_response(),
     };
@@ -192,7 +189,7 @@ pub async fn handle_update_event(
                 "daily quota exceeded",
             )
             .await;
-        let l = labels_for(lang.code());
+        let l = labels_for();
         return (StatusCode::TOO_MANY_REQUESTS, l.alert_quota_exceeded).into_response();
     }
     let extra = crate::caldav::ExtraEventFields {
@@ -238,10 +235,9 @@ pub async fn handle_update_event(
 pub async fn handle_delete_event(
     State(state): State<AppState>,
     claims: OidcClaims<EmptyAdditionalClaims>,
-    lang: crate::i18n::Lang,
     Path((public_id, event_id)): Path<(String, String)>,
 ) -> impl IntoResponse {
-    let cal = match require_owned_calendar(&state, &claims, &public_id, lang).await {
+    let cal = match require_owned_calendar(&state, &claims, &public_id).await {
         Ok(cal) => cal,
         Err(status) => return status.into_response(),
     };

@@ -2768,7 +2768,6 @@ pub fn create_app(
         .route("/sitemap.xml", get(crate::pages::legal::sitemap_xml))
         .route("/favicon.ico", get(crate::pages::legal::favicon))
         .route("/favicon.svg", get(crate::pages::legal::favicon))
-        .route("/lang/{code}", get(crate::i18n::set_lang))
         .merge(me_route)
         .route(
             "/oidc",

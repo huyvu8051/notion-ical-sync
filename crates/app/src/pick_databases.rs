@@ -145,14 +145,10 @@ pub fn PickDatabasesRoutePage() -> impl IntoView {
     let email = crate::page_shell::current_user_email();
     #[cfg(not(feature = "ssr"))]
     let email = String::new();
-    let top_nav_html = crate::page_shell::top_nav_html(
-        &email,
-        crate::page_shell::detect_lang(),
-        "/connect/notion/databases",
-    );
+    let top_nav_html = crate::page_shell::top_nav_html(&email);
     let candidates = Resource::new(move || connection_id, list_candidates);
     view! {
-        <leptos_meta::Title text="Chọn cơ sở dữ liệu — NotionCal"/>
+        <leptos_meta::Title text="Pick a database — NotionCal"/>
         <leptos_meta::Link rel="stylesheet" href="/assets/style-auth-a.css"/>
         <leptos_meta::Link href=crate::page_shell::GOOGLE_FONTS_HREF rel="stylesheet"/>
         <leptos_meta::Style>{crate::page_shell::ONBOARDING_HEAD_STYLE}</leptos_meta::Style>
@@ -183,10 +179,10 @@ pub fn PickDatabasesPage(data: PickDatabasesPageData) -> impl IntoView {
             <div id="pick-databases-root">
                 <div inner_html=top_nav_html></div>
                 <main class="flex-grow flex flex-col items-center justify-center px-margin-mobile text-center">
-                    <h1 class="text-h1 text-primary mb-sm">"Chọn cơ sở dữ liệu để đồng bộ"</h1>
+                    <h1 class="text-h1 text-primary mb-sm">"Pick a database to sync"</h1>
                     <p class="text-on-surface-variant text-body-lg">
-                        "Không tìm thấy cơ sở dữ liệu nào bạn đã cấp quyền. "
-                        <a class="text-secondary underline" href="/connect/notion/start">"Cấp thêm quyền truy cập trên Notion"</a>
+                        "No databases found that you've granted access to. "
+                        <a class="text-secondary underline" href="/connect/notion/start">"Grant more access on Notion"</a>
                         "."
                     </p>
                 </main>
@@ -233,7 +229,7 @@ pub fn PickDatabasesPage(data: PickDatabasesPageData) -> impl IntoView {
                         <h3 class="text-h3 text-primary">{c.title}</h3>
                         <p class="text-on-surface-variant text-label-md flex items-center gap-xs">
                             <span class="material-symbols-outlined text-[14px]">"calendar_today"</span>
-                            {format!("Có thuộc tính ngày: {date_prop}")}
+                            {format!("Has a date property: {date_prop}")}
                         </p>
                     </div>
                 </label>
@@ -246,11 +242,11 @@ pub fn PickDatabasesPage(data: PickDatabasesPageData) -> impl IntoView {
                     <div class="flex-grow">
                         <div class="flex items-center gap-sm">
                             <h3 class="text-h3 text-on-surface-variant">{c.title}</h3>
-                            <span class="bg-error-container text-on-error-container text-[10px] px-xs py-[2px] rounded font-bold uppercase tracking-wider">"Lỗi"</span>
+                            <span class="bg-error-container text-on-error-container text-[10px] px-xs py-[2px] rounded font-bold uppercase tracking-wider">"Error"</span>
                         </div>
                         <p class="text-error text-label-md flex items-center gap-xs mt-1">
                             <span class="material-symbols-outlined text-[14px]">"warning"</span>
-                            "Không tìm thấy thuộc tính ngày"
+                            "No date property found"
                         </p>
                     </div>
                 </div>
@@ -266,20 +262,20 @@ pub fn PickDatabasesPage(data: PickDatabasesPageData) -> impl IntoView {
             <main class="flex-grow flex flex-col pt-lg pb-32">
                 <div class="max-w-[720px] mx-auto w-full px-margin-mobile md:px-0">
                     <section class="mb-xl">
-                        <h1 class="text-h1 text-primary mb-sm">"Chọn cơ sở dữ liệu để đồng bộ"</h1>
-                        <p class="text-on-surface-variant text-body-lg">"Chúng tôi đã tìm thấy các cơ sở dữ liệu sau trong không gian làm việc Notion của bạn. Chọn (các) cơ sở dữ liệu bạn muốn biến thành lịch."</p>
+                        <h1 class="text-h1 text-primary mb-sm">"Pick a database to sync"</h1>
+                        <p class="text-on-surface-variant text-body-lg">"We found the following databases in your Notion workspace. Pick the one(s) you want to turn into a calendar."</p>
                     </section>
                     <form method="post" action="/connect/notion/databases">
                         <input type="hidden" name="connection_id" value=connection_id/>
                         <div class="space-y-md">{rows}</div>
                         <div class="mt-xl text-center">
-                            <a class="text-on-surface-variant hover:text-primary transition-colors text-label-md" href="/connect/notion/start">"Không thấy cơ sở dữ liệu bạn cần? Cấp thêm quyền truy cập trên Notion"</a>
+                            <a class="text-on-surface-variant hover:text-primary transition-colors text-label-md" href="/connect/notion/start">"Don't see the database you need? Grant more access on Notion"</a>
                         </div>
                         <div class="fixed bottom-0 left-0 right-0 bg-white/80 backdrop-blur-md border-t border-outline-variant py-md z-40">
                             <div class="max-w-[1280px] mx-auto px-margin-desktop flex justify-between items-center">
                                 <a class="px-lg h-[40px] border border-outline-variant text-primary text-label-md rounded hover:bg-surface-container-low transition-colors flex items-center gap-sm" href="/me">
                                     <span class="material-symbols-outlined text-[18px]">"arrow_back"</span>
-                                    "Quay lại"
+                                    "Back"
                                 </a>
                                 <button
                                     type="submit"
@@ -288,9 +284,9 @@ pub fn PickDatabasesPage(data: PickDatabasesPageData) -> impl IntoView {
                                     class="px-lg h-[40px] bg-primary text-white text-label-md rounded hover:opacity-90 transition-all flex items-center gap-sm active:scale-95 shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
                                 >
                                     {move || if checked_count.get() > 0 {
-                                        format!("Tiếp tục với {} cơ sở dữ liệu", checked_count.get())
+                                        format!("Continue with {} databases", checked_count.get())
                                     } else {
-                                        "Chọn ít nhất 1 cơ sở dữ liệu".to_string()
+                                        "Select at least 1 database".to_string()
                                     }}
                                     <span class="material-symbols-outlined text-[18px]">
                                         {move || if checked_count.get() > 0 { "arrow_forward" } else { "error" }}

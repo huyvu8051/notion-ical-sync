@@ -11,10 +11,9 @@ use crate::AppState;
 pub async fn delete_calendar(
     State(state): State<AppState>,
     claims: OidcClaims<EmptyAdditionalClaims>,
-    lang: crate::i18n::Lang,
     Path(public_id): Path<String>,
 ) -> impl IntoResponse {
-    let cal = match owned_calendar_or_error(&state, &claims, &public_id, lang).await {
+    let cal = match owned_calendar_or_error(&state, &claims, &public_id).await {
         Ok(cal) => cal,
         Err(resp) => return resp,
     };
@@ -25,7 +24,7 @@ pub async fn delete_calendar(
         .await
     {
         error!("failed to delete calendar {}: {}", cal.id, e);
-        return error_page(lang, OauthError::FailedToDeleteCalendar);
+        return error_page(OauthError::FailedToDeleteCalendar);
     }
 
     let still_referenced: i64 =
@@ -45,17 +44,16 @@ pub async fn regenerate_password(
     State(state): State<AppState>,
     claims: OidcClaims<EmptyAdditionalClaims>,
     session: tower_sessions::Session,
-    lang: crate::i18n::Lang,
     Path(public_id): Path<String>,
 ) -> impl IntoResponse {
-    let cal = match owned_calendar_or_error(&state, &claims, &public_id, lang).await {
+    let cal = match owned_calendar_or_error(&state, &claims, &public_id).await {
         Ok(cal) => cal,
         Err(resp) => return resp,
     };
 
     let new_password = generate_token(24);
     let Ok(password_hash) = hash_password(&new_password) else {
-        return error_page(lang, OauthError::Generic);
+        return error_page(OauthError::Generic);
     };
 
     if let Err(e) = sqlx::query("UPDATE calendars SET caldav_password_hash = $1 WHERE id = $2")
@@ -65,7 +63,7 @@ pub async fn regenerate_password(
         .await
     {
         error!("failed to regenerate caldav password for calendar {}: {}", cal.id, e);
-        return error_page(lang, OauthError::FailedToRegeneratePassword);
+        return error_page(OauthError::FailedToRegeneratePassword);
     }
 
     let stash = vec![(

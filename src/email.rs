@@ -1,7 +1,6 @@
 use axum::{extract::State, http::{HeaderMap, StatusCode}, response::IntoResponse, Json};
 use serde::Deserialize;
 
-use crate::i18n::Lang;
 use crate::AppState;
 
 const RESEND_API_URL: &str = "https://api.resend.com/emails";
@@ -142,115 +141,61 @@ pub fn lifetime_promo_email() -> (&'static str, String) {
     )
 }
 
-pub fn welcome_email(lang: Lang) -> (&'static str, String) {
-    match lang {
-        Lang::Vi => (
-            "Chào mừng đến với NotionCal",
-            wrap_in_email_template(
-                r#"<p>Chào bạn,</p>
-<p>Cảm ơn bạn đã đăng ký NotionCal. Bạn đang có <strong>6 tháng miễn phí, không giới hạn</strong> để đồng bộ Notion với lịch của mình.</p>
-<p>Bắt đầu ngay: kết nối Notion và chọn database bạn muốn đồng bộ tại <a href="https://notion-caldav.opendiy.vn/me">trang của bạn</a>.</p>
-<p>— Đội ngũ NotionCal</p>"#,
-            ),
-        ),
-        Lang::En => (
-            "Welcome to NotionCal",
-            wrap_in_email_template(
-                r#"<p>Hi there,</p>
+pub fn welcome_email() -> (&'static str, String) {
+    (
+        "Welcome to NotionCal",
+        wrap_in_email_template(
+            r#"<p>Hi there,</p>
 <p>Thanks for signing up for NotionCal. You've got <strong>6 free, unlimited months</strong> to sync Notion with your calendar.</p>
 <p>Get started: connect Notion and pick a database to sync from <a href="https://notion-caldav.opendiy.vn/me">your dashboard</a>.</p>
 <p>— The NotionCal team</p>"#,
-            ),
         ),
-    }
+    )
 }
 
-pub fn trial_ending_email(lang: Lang, free_until: &str) -> (&'static str, String) {
-    match lang {
-        Lang::Vi => (
-            "6 tháng miễn phí của bạn sắp hết hạn",
-            wrap_in_email_template(&format!(
-                r#"<p>Chào bạn,</p>
-<p>6 tháng miễn phí của bạn sẽ hết hạn vào <strong>{free_until}</strong>. Sau đó, nếu chưa đăng ký, tài khoản của bạn sẽ bị giới hạn 10 sự kiện mới/ngày.</p>
-<p>Nâng cấp $1/năm để tiếp tục không giới hạn: <a href="https://notion-caldav.opendiy.vn/billing/checkout">nâng cấp ngay</a>.</p>
-<p>— Đội ngũ NotionCal</p>"#
-            )),
-        ),
-        Lang::En => (
-            "Your free 6 months are ending soon",
-            wrap_in_email_template(&format!(
-                r#"<p>Hi there,</p>
+pub fn trial_ending_email(free_until: &str) -> (&'static str, String) {
+    (
+        "Your free 6 months are ending soon",
+        wrap_in_email_template(&format!(
+            r#"<p>Hi there,</p>
 <p>Your free 6 months end on <strong>{free_until}</strong>. After that, if you haven't subscribed, your account will be capped at 10 new events/day.</p>
 <p>Upgrade for $1/year to stay unlimited: <a href="https://notion-caldav.opendiy.vn/billing/checkout">upgrade now</a>.</p>
 <p>— The NotionCal team</p>"#
-            )),
-        ),
-    }
+        )),
+    )
 }
 
-pub fn subscribed_email(lang: Lang) -> (&'static str, String) {
-    match lang {
-        Lang::Vi => (
-            "Đăng ký thành công",
-            wrap_in_email_template(
-                r#"<p>Chào bạn,</p>
-<p>Bạn đã đăng ký gói $1/năm thành công. Nếu bạn đang trong 6 tháng miễn phí, chưa bị tính phí ngay — việc thanh toán chỉ bắt đầu sau khi hết 6 tháng.</p>
-<p>Cảm ơn bạn đã đồng hành cùng NotionCal.</p>
-<p>— Đội ngũ NotionCal</p>"#,
-            ),
-        ),
-        Lang::En => (
-            "You're subscribed",
-            wrap_in_email_template(
-                r#"<p>Hi there,</p>
+pub fn subscribed_email() -> (&'static str, String) {
+    (
+        "You're subscribed",
+        wrap_in_email_template(
+            r#"<p>Hi there,</p>
 <p>Your $1/year subscription is confirmed. If you're still inside your free 6 months, you won't be charged yet — billing only starts once that period ends.</p>
 <p>Thanks for using NotionCal.</p>
 <p>— The NotionCal team</p>"#,
-            ),
         ),
-    }
+    )
 }
 
-pub fn payment_failed_email(lang: Lang) -> (&'static str, String) {
-    match lang {
-        Lang::Vi => (
-            "Thanh toán không thành công",
-            wrap_in_email_template(
-                r#"<p>Chào bạn,</p>
-<p>Chúng tôi không thể thu phí $1/năm cho tài khoản của bạn. Vui lòng kiểm tra và cập nhật phương thức thanh toán trên Stripe để tránh gián đoạn dịch vụ.</p>
-<p>— Đội ngũ NotionCal</p>"#,
-            ),
-        ),
-        Lang::En => (
-            "Your payment failed",
-            wrap_in_email_template(
-                r#"<p>Hi there,</p>
+pub fn payment_failed_email() -> (&'static str, String) {
+    (
+        "Your payment failed",
+        wrap_in_email_template(
+            r#"<p>Hi there,</p>
 <p>We couldn't charge your $1/year subscription. Please check and update your payment method on Stripe to avoid any interruption.</p>
 <p>— The NotionCal team</p>"#,
-            ),
         ),
-    }
+    )
 }
 
-pub fn subscription_canceled_email(lang: Lang) -> (&'static str, String) {
-    match lang {
-        Lang::Vi => (
-            "Gói đăng ký của bạn đã bị huỷ",
-            wrap_in_email_template(
-                r#"<p>Chào bạn,</p>
-<p>Gói $1/năm của bạn đã bị huỷ. Nếu đã hết 6 tháng miễn phí, tài khoản của bạn sẽ bị giới hạn 10 sự kiện mới/ngày cho đến khi đăng ký lại.</p>
-<p>Đăng ký lại bất cứ lúc nào tại <a href="https://notion-caldav.opendiy.vn/billing/checkout">đây</a>.</p>
-<p>— Đội ngũ NotionCal</p>"#,
-            ),
-        ),
-        Lang::En => (
-            "Your subscription was canceled",
-            wrap_in_email_template(
-                r#"<p>Hi there,</p>
+pub fn subscription_canceled_email() -> (&'static str, String) {
+    (
+        "Your subscription was canceled",
+        wrap_in_email_template(
+            r#"<p>Hi there,</p>
 <p>Your $1/year subscription was canceled. If your free 6 months have already ended, your account is now capped at 10 new events/day until you resubscribe.</p>
 <p>Resubscribe anytime <a href="https://notion-caldav.opendiy.vn/billing/checkout">here</a>.</p>
 <p>— The NotionCal team</p>"#,
-            ),
         ),
-    }
+    )
 }

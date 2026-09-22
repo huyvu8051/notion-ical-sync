@@ -11,7 +11,6 @@ use std::cell::RefCell;
 pub struct WebviewJsConfig {
     pub events_url: String,
     pub alert_update_date_failed: String,
-    pub locale: String,
 }
 
 #[derive(Clone, Serialize, Deserialize, PartialEq)]
@@ -128,71 +127,7 @@ const WEBVIEW_JS_SYNCHRONOUS_QUEUEING_BOOTSTRAP: &str = r#"
 use crate::page_shell::GOOGLE_FONTS_HREF;
 
 #[cfg(feature = "ssr")]
-fn webview_labels_vi() -> WebviewLabels {
-    WebviewLabels {
-        modal_title_add: "Thêm sự kiện".to_string(),
-        modal_title_edit: "Chỉnh sửa sự kiện".to_string(),
-        event_name_label: "Tên sự kiện".to_string(),
-        event_name_placeholder: "Nhập tên sự kiện...".to_string(),
-        start_label: "Bắt đầu".to_string(),
-        end_label: "Kết thúc".to_string(),
-        allday_label: "Cả ngày".to_string(),
-        location_label: "Địa điểm".to_string(),
-        location_placeholder: "Nhập địa điểm...".to_string(),
-        location_no_results: "Không tìm thấy kết quả".to_string(),
-        notes_label: "Ghi chú".to_string(),
-        notes_placeholder: "Nhập ghi chú...".to_string(),
-        priority_label: "Mức độ ưu tiên".to_string(),
-        priority_none: "Không đặt".to_string(),
-        priority_high: "Cao".to_string(),
-        priority_medium: "Trung bình".to_string(),
-        priority_low: "Thấp".to_string(),
-        busy_label: "Trạng thái".to_string(),
-        busy_unset: "Không đặt".to_string(),
-        busy_busy: "Bận".to_string(),
-        busy_free: "Rảnh".to_string(),
-        reminder_label: "Nhắc nhở".to_string(),
-        reminder_none: "Không nhắc".to_string(),
-        reminder_5min: "5 phút trước".to_string(),
-        reminder_15min: "15 phút trước".to_string(),
-        reminder_30min: "30 phút trước".to_string(),
-        reminder_1hour: "1 giờ trước".to_string(),
-        reminder_1day: "1 ngày trước".to_string(),
-        reminder_2days: "2 ngày trước".to_string(),
-        reminder_1week: "1 tuần trước".to_string(),
-        reminder_custom: "Tuỳ chỉnh...".to_string(),
-        reminder_custom_minutes: "Phút".to_string(),
-        reminder_custom_hours: "Giờ".to_string(),
-        reminder_custom_days: "Ngày".to_string(),
-        travel_time_label: "Thời gian di chuyển".to_string(),
-        travel_none: "Không đặt".to_string(),
-        travel_0min: "0 phút".to_string(),
-        travel_15min: "15 phút".to_string(),
-        travel_30min: "30 phút".to_string(),
-        travel_45min: "45 phút".to_string(),
-        travel_1hour: "1 giờ".to_string(),
-        travel_90min: "1.5 giờ".to_string(),
-        travel_custom: "Tuỳ chỉnh...".to_string(),
-        open_in_notion: "Mở trong Notion".to_string(),
-        delete_btn: "Xoá".to_string(),
-        cancel_btn: "Huỷ".to_string(),
-        save_btn: "Lưu".to_string(),
-        saving_label: "Đang lưu...".to_string(),
-        confirm_delete_event: "Xoá sự kiện này?".to_string(),
-        repeat_display_prefix: "Lặp lại: ".to_string(),
-        attendees_display_prefix: "Người được mời: ".to_string(),
-        alert_enter_title: "Nhập tên sự kiện".to_string(),
-        alert_pick_start: "Chọn ngày bắt đầu".to_string(),
-        alert_update_failed: "Cập nhật thất bại".to_string(),
-        alert_create_failed: "Tạo event thất bại".to_string(),
-        alert_delete_failed: "Xoá thất bại".to_string(),
-        alert_quota_exceeded: "Đã đạt giới hạn 10 sự kiện miễn phí hôm nay. Nâng cấp $1/năm để bỏ giới hạn."
-            .to_string(),
-    }
-}
-
-#[cfg(feature = "ssr")]
-fn webview_labels_en() -> WebviewLabels {
+fn webview_labels() -> WebviewLabels {
     WebviewLabels {
         modal_title_add: "Add event".to_string(),
         modal_title_edit: "Edit event".to_string(),
@@ -256,31 +191,15 @@ fn webview_labels_en() -> WebviewLabels {
 }
 
 #[cfg(feature = "ssr")]
-pub fn labels_for(lang: &str) -> WebviewLabels {
-    if lang == "en" {
-        webview_labels_en()
-    } else {
-        webview_labels_vi()
-    }
+pub fn labels_for() -> WebviewLabels {
+    webview_labels()
 }
 
 #[cfg(feature = "ssr")]
-fn back_to_all_label(lang: &str) -> &'static str {
-    if lang == "en" {
-        "All calendars"
-    } else {
-        "Tất cả lịch"
-    }
-}
+const BACK_TO_ALL_LABEL: &str = "All calendars";
 
 #[cfg(feature = "ssr")]
-fn add_event_btn_label(lang: &str) -> &'static str {
-    if lang == "en" {
-        "Add event"
-    } else {
-        "Thêm sự kiện"
-    }
-}
+const ADD_EVENT_BTN_LABEL: &str = "Add event";
 
 #[cfg(feature = "ssr")]
 async fn owned_calendar_row(
@@ -318,9 +237,8 @@ async fn load_webview_data(public_id: String) -> Result<WebviewPageData, ServerF
     } else {
         display_name
     };
-    let lang = crate::page_shell::detect_lang();
     let email = claims.email().map(|e| e.as_str()).unwrap_or("");
-    let top_nav = crate::page_shell::top_nav_html(email, lang, &format!("/app/{public_id}"));
+    let top_nav = crate::page_shell::top_nav_html(email);
 
     let events_url = format!("/app/{public_id}/api/events");
     let escaped_title = crate::page_shell::html_escape(&calendar_name);
@@ -331,7 +249,7 @@ async fn load_webview_data(public_id: String) -> Result<WebviewPageData, ServerF
 <div class="flex items-center gap-md">
 <a class="flex items-center gap-xs text-on-surface-variant hover:text-primary transition-colors text-label-md" href="/me">
 <span class="material-symbols-outlined">arrow_back</span>
-<span class="back-label">{back_to_all}</span>
+<span class="back-label">{BACK_TO_ALL_LABEL}</span>
 </a>
 <div class="h-6 w-[1px] bg-outline-variant mx-sm"></div>
 <h1 class="text-h1 tracking-tight">{escaped_title}</h1>
@@ -339,29 +257,22 @@ async fn load_webview_data(public_id: String) -> Result<WebviewPageData, ServerF
 <div class="flex items-center gap-md">
 <button class="bg-primary text-on-primary px-md h-10 flex items-center gap-xs text-label-md rounded-lg hover:opacity-90 transition-opacity" onclick="window.webview_open_create_modal('', '', false)">
 <span class="material-symbols-outlined">add</span>
-{add_event_btn}
+{ADD_EVENT_BTN_LABEL}
 </button>
 </div>
 </header>"##,
-        back_to_all = back_to_all_label(lang),
-        add_event_btn = add_event_btn_label(lang),
     );
 
     Ok(WebviewPageData {
-        html_lang: lang.to_string(),
+        html_lang: "en".to_string(),
         title: escaped_title,
         header_html,
         events_url: events_url.clone(),
         mapbox_token: use_context::<crate::page_shell::MapboxToken>().and_then(|v| v.0),
-        labels: labels_for(lang),
+        labels: labels_for(),
         js_config: WebviewJsConfig {
             events_url,
-            alert_update_date_failed: if lang == "en" {
-                "Failed to update date".to_string()
-            } else {
-                "Cập nhật ngày thất bại".to_string()
-            },
-            locale: lang.to_string(),
+            alert_update_date_failed: "Failed to update date".to_string(),
         },
     })
 }
@@ -386,8 +297,8 @@ pub fn WebviewRoutePage() -> impl IntoView {
                 }.into_any(),
                 Err(_) => view! {
                     <div class="flex flex-col items-center justify-center py-3xl gap-md text-center">
-                        <p class="text-on-surface-variant">"Không tìm thấy lịch này."</p>
-                        <a class="text-secondary underline" href="/me">"Quay lại"</a>
+                        <p class="text-on-surface-variant">"This calendar wasn't found."</p>
+                        <a class="text-secondary underline" href="/me">"Back"</a>
                     </div>
                 }.into_any(),
             })}

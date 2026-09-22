@@ -130,24 +130,23 @@ pub async fn create_calendars(
     State(state): State<AppState>,
     claims: OidcClaims<EmptyAdditionalClaims>,
     session: tower_sessions::Session,
-    lang: crate::i18n::Lang,
     body: axum::body::Bytes,
 ) -> impl IntoResponse {
     let body = String::from_utf8_lossy(&body);
     let Some(form) = CreateCalendarsForm::parse(&body) else {
-        return error_page(lang, OauthError::InvalidRequest);
+        return error_page(OauthError::InvalidRequest);
     };
 
     let sub = claims.subject().as_str();
     let email = claims.email().map(|e| e.as_str()).unwrap_or("").to_string();
-    let user_id = match find_or_create_user(&state, sub, &email, lang).await {
+    let user_id = match find_or_create_user(&state, sub, &email).await {
         Ok(id) => id,
-        Err(_) => return error_page(lang, OauthError::Generic),
+        Err(_) => return error_page(OauthError::Generic),
     };
 
     let Some(access_token) = connection_token_for_user(&state, form.connection_id, user_id).await
     else {
-        return error_page(lang, OauthError::ConnectionNotFound);
+        return error_page(OauthError::ConnectionNotFound);
     };
 
     if form.db_ids.is_empty() {
@@ -158,7 +157,7 @@ pub async fn create_calendars(
         Ok(c) => c,
         Err(e) => {
             error!("failed to list notion databases: {}", e);
-            return error_page(lang, OauthError::FailedToListDatabases);
+            return error_page(OauthError::FailedToListDatabases);
         }
     };
 

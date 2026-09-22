@@ -58,64 +58,40 @@ pub(crate) enum OauthError {
 }
 
 impl OauthError {
-    fn message(&self, lang: crate::i18n::Lang) -> String {
-        use crate::i18n::Lang;
-        match (self, lang) {
-            (Self::NotionNotConfigured, Lang::Vi) => "Notion OAuth chưa được cấu hình trên server này.".to_string(),
-            (Self::NotionNotConfigured, Lang::En) => "Notion OAuth isn't configured on this server.".to_string(),
-            (Self::TryAgain, Lang::Vi) => "Có lỗi xảy ra, vui lòng thử lại.".to_string(),
-            (Self::TryAgain, Lang::En) => "Something went wrong, please try again.".to_string(),
-            (Self::NotionDenied(reason), Lang::Vi) => format!("Notion từ chối cấp quyền: {reason}"),
-            (Self::NotionDenied(reason), Lang::En) => format!("Notion denied the authorization request: {reason}"),
-            (Self::MissingAuthCode, Lang::Vi) => "Thiếu mã xác thực từ Notion.".to_string(),
-            (Self::MissingAuthCode, Lang::En) => "Missing authorization code from Notion.".to_string(),
-            (Self::InvalidSession, Lang::Vi) => "Phiên xác thực không hợp lệ, vui lòng thử lại.".to_string(),
-            (Self::InvalidSession, Lang::En) => "Invalid auth session, please try again.".to_string(),
-            (Self::CantReachNotion, Lang::Vi) => "Không thể kết nối tới Notion.".to_string(),
-            (Self::CantReachNotion, Lang::En) => "Couldn't connect to Notion.".to_string(),
-            (Self::NotionRejectedToken, Lang::Vi) => "Notion từ chối yêu cầu trao đổi token.".to_string(),
-            (Self::NotionRejectedToken, Lang::En) => "Notion rejected the token exchange request.".to_string(),
-            (Self::InvalidNotionResponse, Lang::Vi) => "Phản hồi từ Notion không hợp lệ.".to_string(),
-            (Self::InvalidNotionResponse, Lang::En) => "Invalid response from Notion.".to_string(),
-            (Self::NotionResponseMissingFields, Lang::Vi) => "Phản hồi từ Notion thiếu access_token hoặc workspace_id.".to_string(),
-            (Self::NotionResponseMissingFields, Lang::En) => "Notion's response is missing access_token or workspace_id.".to_string(),
-            (Self::Generic, Lang::Vi) => "Có lỗi xảy ra.".to_string(),
-            (Self::Generic, Lang::En) => "Something went wrong.".to_string(),
-            (Self::FailedToSaveConnection, Lang::Vi) => "Không thể lưu kết nối Notion.".to_string(),
-            (Self::FailedToSaveConnection, Lang::En) => "Failed to save the Notion connection.".to_string(),
-            (Self::ConnectionNotFound, Lang::Vi) => "Không tìm thấy kết nối Notion này.".to_string(),
-            (Self::ConnectionNotFound, Lang::En) => "This Notion connection wasn't found.".to_string(),
-            (Self::FailedToListDatabases, Lang::Vi) => "Không thể lấy danh sách cơ sở dữ liệu từ Notion.".to_string(),
-            (Self::FailedToListDatabases, Lang::En) => "Failed to list databases from Notion.".to_string(),
-            (Self::InvalidRequest, Lang::Vi) => "Yêu cầu không hợp lệ.".to_string(),
-            (Self::InvalidRequest, Lang::En) => "Invalid request.".to_string(),
-            (Self::CalendarNotFound, Lang::Vi) => "Không tìm thấy calendar này.".to_string(),
-            (Self::CalendarNotFound, Lang::En) => "This calendar wasn't found.".to_string(),
-            (Self::FailedToDeleteCalendar, Lang::Vi) => "Không thể xoá calendar này.".to_string(),
-            (Self::FailedToDeleteCalendar, Lang::En) => "Failed to delete this calendar.".to_string(),
-            (Self::FailedToRegeneratePassword, Lang::Vi) => "Không thể tạo lại mật khẩu.".to_string(),
-            (Self::FailedToRegeneratePassword, Lang::En) => "Failed to regenerate the password.".to_string(),
-            (Self::BillingNotConfigured, Lang::Vi) => "Tính năng thanh toán chưa được cấu hình trên server này.".to_string(),
-            (Self::BillingNotConfigured, Lang::En) => "Billing isn't configured on this server.".to_string(),
-            (Self::FailedToCreateCheckoutSession, Lang::Vi) => "Không thể tạo phiên thanh toán.".to_string(),
-            (Self::FailedToCreateCheckoutSession, Lang::En) => "Failed to create a checkout session.".to_string(),
+    fn message(&self) -> String {
+        match self {
+            Self::NotionNotConfigured => "Notion OAuth isn't configured on this server.".to_string(),
+            Self::TryAgain => "Something went wrong, please try again.".to_string(),
+            Self::NotionDenied(reason) => format!("Notion denied the authorization request: {reason}"),
+            Self::MissingAuthCode => "Missing authorization code from Notion.".to_string(),
+            Self::InvalidSession => "Invalid auth session, please try again.".to_string(),
+            Self::CantReachNotion => "Couldn't connect to Notion.".to_string(),
+            Self::NotionRejectedToken => "Notion rejected the token exchange request.".to_string(),
+            Self::InvalidNotionResponse => "Invalid response from Notion.".to_string(),
+            Self::NotionResponseMissingFields => "Notion's response is missing access_token or workspace_id.".to_string(),
+            Self::Generic => "Something went wrong.".to_string(),
+            Self::FailedToSaveConnection => "Failed to save the Notion connection.".to_string(),
+            Self::ConnectionNotFound => "This Notion connection wasn't found.".to_string(),
+            Self::FailedToListDatabases => "Failed to list databases from Notion.".to_string(),
+            Self::InvalidRequest => "Invalid request.".to_string(),
+            Self::CalendarNotFound => "This calendar wasn't found.".to_string(),
+            Self::FailedToDeleteCalendar => "Failed to delete this calendar.".to_string(),
+            Self::FailedToRegeneratePassword => "Failed to regenerate the password.".to_string(),
+            Self::BillingNotConfigured => "Billing isn't configured on this server.".to_string(),
+            Self::FailedToCreateCheckoutSession => "Failed to create a checkout session.".to_string(),
         }
     }
 }
 
-pub(crate) fn error_page(lang: crate::i18n::Lang, err: OauthError) -> axum::response::Response {
-    let (html_lang, back_label) = match lang {
-        crate::i18n::Lang::Vi => ("vi", "Quay lại"),
-        crate::i18n::Lang::En => ("en", "Back"),
-    };
+pub(crate) fn error_page(err: OauthError) -> axum::response::Response {
     Html(format!(
         r#"<!doctype html>
-<html lang="{html_lang}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">{AUTH_STYLE}</head>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">{AUTH_STYLE}</head>
 <body>
-<div class="top-nav"><strong>NotionCal</strong><a class="logout" href="/me">{back_label}</a></div>
+<div class="top-nav"><strong>NotionCal</strong><a class="logout" href="/me">Back</a></div>
 <p class="hint">{}</p>
 </body></html>"#,
-        crate::session::html_escape(&err.message(lang))
+        crate::session::html_escape(&err.message())
     ))
     .into_response()
 }

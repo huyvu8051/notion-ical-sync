@@ -344,17 +344,16 @@ async fn notify_user_by_id(
     state: &AppState,
     cfg: crate::email::EmailConfig,
     user_id: i64,
-    template: fn(crate::i18n::Lang) -> (&'static str, String),
+    template: fn() -> (&'static str, String),
 ) {
-    let row: Option<(String, String)> =
-        sqlx::query_as("SELECT email, preferred_lang FROM users WHERE id = $1")
-            .bind(user_id)
-            .fetch_optional(&state.db)
-            .await
-            .ok()
-            .flatten();
-    if let Some((email, lang_code)) = row {
-        let (subject, html) = template(crate::i18n::Lang::from_code(&lang_code));
+    let row: Option<(String,)> = sqlx::query_as("SELECT email FROM users WHERE id = $1")
+        .bind(user_id)
+        .fetch_optional(&state.db)
+        .await
+        .ok()
+        .flatten();
+    if let Some((email,)) = row {
+        let (subject, html) = template();
         crate::email::spawn_send(cfg, email, subject.to_string(), html);
     }
 }
@@ -363,17 +362,17 @@ async fn notify_user_by_customer_id(
     state: &AppState,
     cfg: crate::email::EmailConfig,
     customer_id: &str,
-    template: fn(crate::i18n::Lang) -> (&'static str, String),
+    template: fn() -> (&'static str, String),
 ) {
-    let row: Option<(String, String)> =
-        sqlx::query_as("SELECT email, preferred_lang FROM users WHERE stripe_customer_id = $1")
+    let row: Option<(String,)> =
+        sqlx::query_as("SELECT email FROM users WHERE stripe_customer_id = $1")
             .bind(customer_id)
             .fetch_optional(&state.db)
             .await
             .ok()
             .flatten();
-    if let Some((email, lang_code)) = row {
-        let (subject, html) = template(crate::i18n::Lang::from_code(&lang_code));
+    if let Some((email,)) = row {
+        let (subject, html) = template();
         crate::email::spawn_send(cfg, email, subject.to_string(), html);
     }
 }
@@ -388,22 +387,16 @@ pub async fn start_checkout(
     State(state): State<AppState>,
     claims: OidcClaims<EmptyAdditionalClaims>,
     cfg: axum::Extension<crate::session::AppConfig>,
-    lang: crate::i18n::Lang,
 ) -> impl IntoResponse {
     let Some(stripe) = state.stripe.as_ref() else {
-        return crate::error_page::error_page(
-            lang,
-            crate::error_page::OauthError::BillingNotConfigured,
-        );
+        return crate::error_page::error_page(crate::error_page::OauthError::BillingNotConfigured);
     };
 
     let sub = claims.subject().as_str();
     let email = claims.email().map(|e| e.as_str()).unwrap_or("").to_string();
-    let user_id = match find_or_create_user(&state, sub, &email, lang).await {
+    let user_id = match find_or_create_user(&state, sub, &email).await {
         Ok(id) => id,
-        Err(_) => {
-            return crate::error_page::error_page(lang, crate::error_page::OauthError::Generic)
-        }
+        Err(_) => return crate::error_page::error_page(crate::error_page::OauthError::Generic),
     };
 
     let row: Option<CheckoutUserRow> =
@@ -414,7 +407,7 @@ pub async fn start_checkout(
             .ok()
             .flatten();
     let Some(row) = row else {
-        return crate::error_page::error_page(lang, crate::error_page::OauthError::Generic);
+        return crate::error_page::error_page(crate::error_page::OauthError::Generic);
     };
 
     match create_checkout_session(
@@ -434,10 +427,7 @@ pub async fn start_checkout(
                 "failed to create stripe checkout session for user {}: {}",
                 user_id, e
             );
-            crate::error_page::error_page(
-                lang,
-                crate::error_page::OauthError::FailedToCreateCheckoutSession,
-            )
+            crate::error_page::error_page(crate::error_page::OauthError::FailedToCreateCheckoutSession)
         }
     }
 }
@@ -447,8 +437,8 @@ pub async fn send_trial_reminders(state: &AppState) {
         return;
     };
 
-    let rows: Vec<(i64, String, String, DateTime<Utc>)> = sqlx::query_as(
-        "SELECT id, email, preferred_lang, trial_started_at FROM users
+    let rows: Vec<(i64, String, DateTime<Utc>)> = sqlx::query_as(
+        "SELECT id, email, trial_started_at FROM users
          WHERE trial_reminder_sent_at IS NULL
            AND subscription_status NOT IN ('trialing', 'active')
            AND trial_started_at + interval '6 months' BETWEEN now() AND now() + interval '7 days'",
@@ -460,10 +450,9 @@ pub async fn send_trial_reminders(state: &AppState) {
         Vec::new()
     });
 
-    for (user_id, email, lang_code, trial_started_at) in rows {
+    for (user_id, email, trial_started_at) in rows {
         let free_until = trial_end(trial_started_at).format("%Y-%m-%d").to_string();
-        let (subject, html) =
-            crate::email::trial_ending_email(crate::i18n::Lang::from_code(&lang_code), &free_until);
+        let (subject, html) = crate::email::trial_ending_email(&free_until);
         crate::email::spawn_send(cfg.clone(), email, subject.to_string(), html);
 
         if let Err(e) = sqlx::query("UPDATE users SET trial_reminder_sent_at = now() WHERE id = $1")
