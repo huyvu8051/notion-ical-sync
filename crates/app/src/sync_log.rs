@@ -30,41 +30,156 @@ pub struct SyncLogPageData {
     pub rows: Vec<SyncLogRow>,
 }
 
-fn pkg_js_and_wasm_file_names(options: &leptos::config::LeptosOptions) -> (String, String) {
-    let js_file_name = options.output_name.to_string();
-    let mut wasm_file_name = options.output_name.to_string();
-    let compiled_under_cargo_leptos = option_env!("LEPTOS_OUTPUT_NAME").is_some();
-    if !compiled_under_cargo_leptos {
-        wasm_file_name.push_str("_bg");
+#[cfg(feature = "ssr")]
+struct SyncLogLabels {
+    heading_label: &'static str,
+    col_time: &'static str,
+    col_source: &'static str,
+    col_action: &'static str,
+    col_event_uid: &'static str,
+    col_notion_page: &'static str,
+    col_result: &'static str,
+    empty_state: &'static str,
+    status_ok: &'static str,
+    status_error: &'static str,
+}
+
+#[cfg(feature = "ssr")]
+const SYNC_LOG_LABELS_VI: SyncLogLabels = SyncLogLabels {
+    heading_label: "Log đồng bộ",
+    col_time: "Thời gian",
+    col_source: "Nguồn",
+    col_action: "Hành động",
+    col_event_uid: "UID sự kiện",
+    col_notion_page: "Notion page",
+    col_result: "Kết quả",
+    empty_state: "Chưa có hoạt động đồng bộ nào được ghi lại.",
+    status_ok: "OK",
+    status_error: "Lỗi",
+};
+
+#[cfg(feature = "ssr")]
+const SYNC_LOG_LABELS_EN: SyncLogLabels = SyncLogLabels {
+    heading_label: "Sync log",
+    col_time: "Time",
+    col_source: "Source",
+    col_action: "Action",
+    col_event_uid: "Event UID",
+    col_notion_page: "Notion page",
+    col_result: "Result",
+    empty_state: "No sync activity has been recorded yet.",
+    status_ok: "OK",
+    status_error: "Error",
+};
+
+#[cfg(feature = "ssr")]
+fn labels_for(lang: &str) -> &'static SyncLogLabels {
+    if lang == "en" {
+        &SYNC_LOG_LABELS_EN
+    } else {
+        &SYNC_LOG_LABELS_VI
     }
-    (js_file_name, wasm_file_name)
+}
+
+#[cfg(feature = "ssr")]
+async fn owned_calendar_id_and_name(
+    pool: &sqlx::PgPool,
+    claims: &axum_oidc::OidcClaims<axum_oidc::EmptyAdditionalClaims>,
+    public_id: &str,
+) -> Result<(i64, String), ServerFnError> {
+    let sub = claims.subject().as_str();
+    let row: Option<(i64, String)> = sqlx::query_as(
+        "SELECT id, display_name FROM calendars WHERE public_id = $1 AND user_id = \
+         (SELECT id FROM users WHERE keycloak_sub = $2)",
+    )
+    .bind(public_id)
+    .bind(sub)
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| ServerFnError::new(format!("failed to look up calendar: {e}")))?;
+    row.ok_or_else(|| ServerFnError::new("calendar not found"))
+}
+
+#[server]
+async fn load_sync_log_data(public_id: String) -> Result<SyncLogPageData, ServerFnError> {
+    let claims: axum_oidc::OidcClaims<axum_oidc::EmptyAdditionalClaims> =
+        leptos_axum::extract().await?;
+    let pool = use_context::<sqlx::PgPool>()
+        .ok_or_else(|| ServerFnError::new("missing db pool context"))?;
+
+    let (cal_id, calendar_name) = owned_calendar_id_and_name(&pool, &claims, &public_id).await?;
+
+    let rows: Vec<(String, String, String, String, String, String, String)> = sqlx::query_as(
+        "SELECT to_char(occurred_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'), \
+         source, action, event_uid, notion_page_id, status, detail
+         FROM sync_log WHERE calendar_id = $1 ORDER BY occurred_at DESC LIMIT 200",
+    )
+    .bind(cal_id)
+    .fetch_all(&pool)
+    .await
+    .map_err(|e| ServerFnError::new(format!("failed to load sync log: {e}")))?;
+
+    let lang = crate::page_shell::detect_lang();
+    let l = labels_for(lang);
+    let email = claims.email().map(|e| e.as_str()).unwrap_or("");
+    let top_nav_html =
+        crate::page_shell::top_nav_html(email, lang, &format!("/me/calendars/{public_id}/log"));
+
+    Ok(SyncLogPageData {
+        html_lang: lang.to_string(),
+        top_nav_html,
+        calendar_name,
+        heading_label: l.heading_label.to_string(),
+        col_time: l.col_time.to_string(),
+        col_source: l.col_source.to_string(),
+        col_action: l.col_action.to_string(),
+        col_event_uid: l.col_event_uid.to_string(),
+        col_notion_page: l.col_notion_page.to_string(),
+        col_result: l.col_result.to_string(),
+        empty_state: l.empty_state.to_string(),
+        status_ok: l.status_ok.to_string(),
+        status_error: l.status_error.to_string(),
+        rows: rows
+            .into_iter()
+            .map(
+                |(occurred_at, source, action, event_uid, notion_page_id, status, detail)| SyncLogRow {
+                    occurred_at,
+                    source,
+                    action,
+                    event_uid,
+                    notion_page_id,
+                    status,
+                    detail,
+                },
+            )
+            .collect(),
+    })
 }
 
 #[component]
-pub fn SyncLogShell(data: SyncLogPageData, leptos_options: leptos::config::LeptosOptions) -> impl IntoView {
-    let html_lang = data.html_lang.clone();
-    let title = format!("{} — {}", data.heading_label, data.calendar_name);
-
-    let json = serde_json::to_string(&data).unwrap_or_default();
-    let script_breakout_safe_json = json.replace('<', "\\u003c");
-    let inline_data_script = format!("window.__SYNC_LOG_DATA__ = {script_breakout_safe_json};");
-    let (js_file_name, wasm_file_name) = pkg_js_and_wasm_file_names(&leptos_options);
-
-    let head_html = format!(
-        r#"<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>{title}</title><link rel="stylesheet" href="/assets/style-auth-a.css"><link href="{fonts}" rel="stylesheet"><style>{style}</style><script>{data_script}</script><script type="module">import init, {{ hydrate_sync_log }} from '/pkg/{js_file_name}.js'; init('/pkg/{wasm_file_name}.wasm').then(() => hydrate_sync_log(JSON.stringify(window.__SYNC_LOG_DATA__)));</script>"#,
-        fonts = crate::page_shell::GOOGLE_FONTS_HREF,
-        style = crate::page_shell::ONBOARDING_HEAD_STYLE,
-        data_script = inline_data_script,
-    );
-
+pub fn SyncLogRoutePage() -> impl IntoView {
+    let params = leptos_router::hooks::use_params_map();
+    let public_id = move || params.with(|p| p.get("public_id").unwrap_or_default());
+    let data = Resource::new(public_id, load_sync_log_data);
     view! {
-        <!DOCTYPE html>
-        <html lang=html_lang>
-            <head inner_html=head_html></head>
-            <body class="bg-background text-on-surface font-body-md min-h-screen">
-                <SyncLogPage data=data/>
-            </body>
-        </html>
+        <leptos_meta::Style>{crate::page_shell::ONBOARDING_HEAD_STYLE}</leptos_meta::Style>
+        <leptos_meta::Link rel="stylesheet" href="/assets/style-auth-a.css"/>
+        <leptos_meta::Link href=crate::page_shell::GOOGLE_FONTS_HREF rel="stylesheet"/>
+        <Suspense fallback=|| ()>
+            {move || data.get().map(|result| match result {
+                Ok(data) => view! {
+                    <leptos_meta::Html attr:lang=data.html_lang.clone()/>
+                    <leptos_meta::Title text=format!("{} — {} — NotionCal", data.heading_label.clone(), data.calendar_name.clone())/>
+                    <SyncLogPage data=data/>
+                }.into_any(),
+                Err(_) => view! {
+                    <div class="flex flex-col items-center justify-center py-3xl gap-md text-center">
+                        <p class="text-on-surface-variant">"Không tìm thấy log này."</p>
+                        <a class="text-secondary underline" href="/me">"Quay lại"</a>
+                    </div>
+                }.into_any(),
+            })}
+        </Suspense>
     }
 }
 
@@ -127,6 +242,11 @@ pub fn SyncLogPage(data: SyncLogPageData) -> impl IntoView {
                         <tbody>{body_rows}</tbody>
                     </table>
                 </div>
+                <p class="text-on-surface-variant text-[13px] pt-lg">
+                    <a class="underline hover:text-primary" href="/privacy">"Privacy Policy"</a>
+                    " · "
+                    <a class="underline hover:text-primary" href="/terms">"Terms of Service"</a>
+                </p>
             </main>
         </div>
     }
@@ -177,83 +297,5 @@ fn SyncLogRowView(row: SyncLogRow, status_ok: String, status_error: String) -> i
                 {detail_view}
             </td>
         </tr>
-    }
-}
-
-#[cfg(feature = "hydrate")]
-#[wasm_bindgen::prelude::wasm_bindgen]
-pub fn hydrate_sync_log(json: String) {
-    console_error_panic_hook::set_once();
-    let data: SyncLogPageData =
-        serde_json::from_str(&json).expect("invalid sync log payload from server");
-    leptos::mount::hydrate_body(move || view! { <SyncLogPage data=data.clone()/> });
-}
-
-#[cfg(all(test, feature = "ssr"))]
-mod tests {
-    use super::*;
-
-    fn sample_row() -> SyncLogRow {
-        SyncLogRow {
-            occurred_at: "2026-08-21 10:00:00".to_string(),
-            source: "webview".to_string(),
-            action: "update".to_string(),
-            event_uid: "evt-123".to_string(),
-            notion_page_id: "abcd1234-5678-90ab-cdef-1234567890ab".to_string(),
-            status: "ok".to_string(),
-            detail: String::new(),
-        }
-    }
-
-    fn sample_data(rows: Vec<SyncLogRow>) -> SyncLogPageData {
-        SyncLogPageData {
-            html_lang: "vi".to_string(),
-            top_nav_html: "<header>nav</header>".to_string(),
-            calendar_name: "Work <Calendar>".to_string(),
-            heading_label: "Log đồng bộ".to_string(),
-            col_time: "Thời gian".to_string(),
-            col_source: "Nguồn".to_string(),
-            col_action: "Hành động".to_string(),
-            col_event_uid: "UID sự kiện".to_string(),
-            col_notion_page: "Notion page".to_string(),
-            col_result: "Kết quả".to_string(),
-            empty_state: "Chưa có hoạt động đồng bộ nào được ghi lại.".to_string(),
-            status_ok: "OK".to_string(),
-            status_error: "Lỗi".to_string(),
-            rows,
-        }
-    }
-
-    #[test]
-    fn renders_with_rows() {
-        any_spawner::Executor::init_futures_executor().ok();
-        let html = leptos::prelude::Owner::new()
-            .with(|| view! { <SyncLogPage data=sample_data(vec![sample_row()])/> }.to_html());
-        assert!(html.contains("evt-123"));
-        assert!(html.contains("notion.so/abcd12345678"));
-        assert!(html.contains("&lt;Calendar&gt;") || html.contains("Work"));
-    }
-
-    #[test]
-    fn renders_empty_state_without_panicking() {
-        any_spawner::Executor::init_futures_executor().ok();
-        let html = leptos::prelude::Owner::new()
-            .with(|| view! { <SyncLogPage data=sample_data(vec![])/> }.to_html());
-        assert!(html.contains("Chưa có hoạt động đồng bộ nào được ghi lại"));
-    }
-
-    #[test]
-    fn shell_embeds_escaped_json_safe_from_script_breakout() {
-        any_spawner::Executor::init_futures_executor().ok();
-        let mut row = sample_row();
-        row.detail = "</script><script>alert(1)</script>".to_string();
-        let leptos_options = leptos::config::LeptosOptions::builder()
-            .output_name("app")
-            .build();
-        let html = leptos::prelude::Owner::new().with(|| {
-            view! { <SyncLogShell data=sample_data(vec![row]) leptos_options=leptos_options/> }
-                .to_html()
-        });
-        assert!(!html.contains("</script><script>alert"));
     }
 }

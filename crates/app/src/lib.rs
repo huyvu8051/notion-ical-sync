@@ -72,6 +72,7 @@ pub fn App() -> impl IntoView {
                 <Route path=(StaticSegment("connect"), StaticSegment("notion"), StaticSegment("databases")) view=pick_databases::PickDatabasesRoutePage/>
                 <Route path=StaticSegment("me") view=me::MeRoutePage/>
                 <Route path=(StaticSegment("app"), leptos_router::ParamSegment("public_id")) view=webview::WebviewRoutePage/>
+                <Route path=(StaticSegment("me"), StaticSegment("calendars"), leptos_router::ParamSegment("public_id"), StaticSegment("log")) view=sync_log::SyncLogRoutePage/>
             </Routes>
         </Router>
     }
