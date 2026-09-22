@@ -124,7 +124,7 @@ async fn main() -> anyhow::Result<()> {
     let email = email::EmailConfig::from_env();
     warn_if_unconfigured(
         &email,
-        "SMTP_HOST/SMTP_PORT/SMTP_USERNAME/SMTP_PASSWORD/EMAIL_FROM not set; \
+        "RESEND_API_KEY/EMAIL_FROM not set; \
          transactional emails will not be sent until they're configured",
     );
 

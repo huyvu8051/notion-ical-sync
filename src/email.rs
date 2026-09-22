@@ -1,40 +1,24 @@
 use axum::{extract::State, http::{HeaderMap, StatusCode}, response::IntoResponse, Json};
-use lettre::message::header::ContentType;
-use lettre::transport::smtp::authentication::Credentials;
-use lettre::transport::smtp::client::{Tls, TlsParameters};
-use lettre::{AsyncSmtpTransport, AsyncTransport, Message, Tokio1Executor};
 use serde::Deserialize;
 
 use crate::i18n::Lang;
 use crate::AppState;
 
+const RESEND_API_URL: &str = "https://api.resend.com/emails";
+
 #[derive(Clone)]
 pub struct EmailConfig {
-    pub host: String,
-    pub port: u16,
-    pub username: String,
-    pub password: String,
+    pub api_key: String,
     pub from: String,
 }
 
 impl EmailConfig {
     pub fn from_env() -> Option<Self> {
         Some(Self {
-            host: std::env::var("SMTP_HOST").ok()?,
-            port: std::env::var("SMTP_PORT").ok()?.parse().ok()?,
-            username: std::env::var("SMTP_USERNAME").ok()?,
-            password: std::env::var("SMTP_PASSWORD").ok()?,
+            api_key: std::env::var("RESEND_API_KEY").ok()?,
             from: std::env::var("EMAIL_FROM").ok()?,
         })
     }
-}
-
-fn stalwart_self_signed_tls_parameters(host: &str) -> Result<TlsParameters, String> {
-    TlsParameters::builder(host.to_string())
-        .dangerous_accept_invalid_certs(true)
-        .dangerous_accept_invalid_hostnames(true)
-        .build()
-        .map_err(|e| format!("failed to configure TLS: {e}"))
 }
 
 pub async fn send_email(
@@ -43,30 +27,25 @@ pub async fn send_email(
     subject: &str,
     html: &str,
 ) -> Result<(), String> {
-    let email = Message::builder()
-        .from(
-            cfg.from
-                .parse()
-                .map_err(|e| format!("invalid from address: {e}"))?,
-        )
-        .to(to.parse().map_err(|e| format!("invalid to address: {e}"))?)
-        .subject(subject)
-        .header(ContentType::TEXT_HTML)
-        .body(html.to_string())
-        .map_err(|e| format!("failed to build message: {e}"))?;
-
-    let tls_parameters = stalwart_self_signed_tls_parameters(&cfg.host)?;
-
-    let mailer = AsyncSmtpTransport::<Tokio1Executor>::builder_dangerous(&cfg.host)
-        .port(cfg.port)
-        .tls(Tls::Wrapper(tls_parameters))
-        .credentials(Credentials::new(cfg.username.clone(), cfg.password.clone()))
-        .build();
-
-    mailer
-        .send(email)
+    let client = reqwest::Client::new();
+    let resp = client
+        .post(RESEND_API_URL)
+        .bearer_auth(&cfg.api_key)
+        .json(&serde_json::json!({
+            "from": cfg.from,
+            "to": [to],
+            "subject": subject,
+            "html": html,
+        }))
+        .send()
         .await
-        .map_err(|e| format!("failed to send email: {e}"))?;
+        .map_err(|e| format!("failed to reach Resend: {e}"))?;
+
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+        return Err(format!("Resend rejected the email ({status}): {body}"));
+    }
     Ok(())
 }
 
