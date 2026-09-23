@@ -236,6 +236,10 @@ pub struct CalendarRow {
 pub struct AuthenticatedCaldavUser {
     pub user_id: i64,
     pub username: String,
+    /// `Some(public_id)` for a per-calendar credential (access limited to that
+    /// one calendar, the original behavior). `None` for an account-level
+    /// credential, which grants access to every calendar the user owns.
+    pub scoped_public_id: Option<String>,
 }
 
 impl AppState {
@@ -499,19 +503,22 @@ impl AppState {
         })
     }
 
+    /// Returns `(user_id, scoped_public_id)` on success. `scoped_public_id` is
+    /// `Some(public_id)` for a per-calendar credential, `None` for an
+    /// account-level credential (access to every calendar the user owns).
     pub async fn verify_caldav_credentials(
         &self,
         username: &str,
         password: &str,
-    ) -> Option<(i64, String)> {
+    ) -> Option<(i64, Option<String>)> {
         #[derive(sqlx::FromRow)]
-        struct Row {
+        struct CalendarCredRow {
             user_id: i64,
             public_id: String,
             caldav_password_hash: String,
         }
 
-        let row: Row = sqlx::query_as::<_, Row>(
+        if let Some(row) = sqlx::query_as::<_, CalendarCredRow>(
             "SELECT user_id, public_id, caldav_password_hash FROM calendars WHERE caldav_username = $1",
         )
         .bind(username)
@@ -520,13 +527,36 @@ impl AppState {
         .unwrap_or_else(|e| {
             error!("caldav credential lookup failed: {}", e);
             None
+        }) {
+            let hash = argon2::PasswordHash::new(&row.caldav_password_hash).ok()?;
+            argon2::Argon2::default()
+                .verify_password(password.as_bytes(), &hash)
+                .ok()?;
+            return Some((row.user_id, Some(row.public_id)));
+        }
+
+        #[derive(sqlx::FromRow)]
+        struct AccountCredRow {
+            id: i64,
+            account_caldav_password_hash: String,
+        }
+
+        let row: AccountCredRow = sqlx::query_as::<_, AccountCredRow>(
+            "SELECT id, account_caldav_password_hash FROM users WHERE account_caldav_username = $1",
+        )
+        .bind(username)
+        .fetch_optional(&self.db)
+        .await
+        .unwrap_or_else(|e| {
+            error!("account caldav credential lookup failed: {}", e);
+            None
         })?;
 
-        let hash = argon2::PasswordHash::new(&row.caldav_password_hash).ok()?;
+        let hash = argon2::PasswordHash::new(&row.account_caldav_password_hash).ok()?;
         argon2::Argon2::default()
             .verify_password(password.as_bytes(), &hash)
             .ok()?;
-        Some((row.user_id, row.public_id))
+        Some((row.id, None))
     }
 
     pub async fn refresh_for_user(&self, user_id: i64) {
@@ -2162,13 +2192,14 @@ async fn handle_calendars_propfind(
         )
             .into_response();
     }
-    let owner_calendars = match &auth {
-        Some(a) => state
-            .calendars_for_user(a.0.user_id)
-            .await
-            .into_iter()
-            .filter(|c| c.caldav_username == a.0.username)
-            .collect(),
+    let owner_calendars: Vec<CalendarRow> = match &auth {
+        Some(a) => {
+            let cals = state.calendars_for_user(a.0.user_id).await;
+            match &a.0.scoped_public_id {
+                Some(scoped) => cals.into_iter().filter(|c| &c.public_id == scoped).collect(),
+                None => cals,
+            }
+        }
         None => Vec::new(),
     };
 
@@ -2414,7 +2445,7 @@ async fn auth_middleware(
         return response;
     };
 
-    let Some((user_id, auth_public_id)) =
+    let Some((user_id, scoped_public_id)) =
         state.verify_caldav_credentials(&username, &password).await
     else {
         info!(username = %username, "Authentication failure: invalid credentials");
@@ -2435,7 +2466,15 @@ async fn auth_middleware(
         None => get_public_id_for_host(&headers, &state).await,
     };
     if let Some(target) = &target_public_id {
-        if target != &auth_public_id {
+        // A per-calendar credential may only touch its own calendar. An
+        // account-level credential (scoped_public_id: None) may touch any
+        // calendar it actually owns — verified against the DB here since
+        // there's no single fixed public_id to compare against.
+        let authorized = match &scoped_public_id {
+            Some(scoped) => target == scoped,
+            None => matches!(state.calendar_by_public_id(target).await, Some(cal) if cal.user_id == user_id),
+        };
+        if !authorized {
             info!(username = %username, target_public_id = %target, "Authorization failure: calendar not owned by these credentials");
             let response = add_caldav_headers(
                 (
@@ -2458,9 +2497,11 @@ async fn auth_middleware(
     }
 
     info!(username = %username, "Authentication success");
-    request
-        .extensions_mut()
-        .insert(AuthenticatedCaldavUser { user_id, username });
+    request.extensions_mut().insert(AuthenticatedCaldavUser {
+        user_id,
+        username,
+        scoped_public_id,
+    });
 
     let mut response = next.run(request).await;
     response = add_caldav_headers(response);
@@ -2669,10 +2710,6 @@ pub fn create_app(
         .route(
             "/me/calendars/{public_id}/delete",
             post(crate::pages::me::delete_calendar),
-        )
-        .route(
-            "/me/calendars/{public_id}/regenerate-password",
-            post(crate::pages::me::regenerate_password),
         )
         .route(
             "/me/calendars/{public_id}/log",
