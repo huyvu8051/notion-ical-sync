@@ -21,7 +21,7 @@ body { font-family: 'Inter', sans-serif; -webkit-font-smoothing: antialiased; -m
 const BING_VALIDATE: &str = "B2ADD65C06672433A78251607DBB1250";
 const CANONICAL_URL: &str = "https://notion-caldav.opendiy.vn/";
 
-const BODY_HTML_AFTER_HEADER: &str = r##"
+const BODY_HTML: &str = r##"
 <main class="pt-[64px]">
 <section class="max-w-[1280px] mx-auto px-margin-desktop py-xl md:py-[120px]">
 <div class="grid grid-cols-1 lg:grid-cols-2 gap-xl items-center">
@@ -194,7 +194,7 @@ pub fn landing_data() -> LandingPageData {
         meta_description: "Sync your Notion database with Apple Calendar, Google Calendar, or any CalDAV app. Two-way editing, free for the first 6 months.".to_string(),
         twitter_description: "Sync your Notion database with Apple Calendar, Google Calendar, or any CalDAV app.".to_string(),
         og_locale: "en_US".to_string(),
-        body_html: format!("{}{}", crate::page_shell::HOME_HEADER_HTML, BODY_HTML_AFTER_HEADER),
+        body_html: BODY_HTML.to_string(),
     }
 }
 

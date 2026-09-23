@@ -59,6 +59,19 @@ fn NotYetMigratedFallback() -> impl IntoView {
 }
 
 #[component]
+fn HomeStyleHeader() -> impl IntoView {
+    let location = leptos_router::hooks::use_location();
+    let is_home_style_page = move || {
+        matches!(location.pathname.get().as_str(), "/" | "/privacy" | "/terms")
+    };
+    view! {
+        <Show when=is_home_style_page fallback=|| ()>
+            <div inner_html=page_shell::HOME_HEADER_HTML></div>
+        </Show>
+    }
+}
+
+#[component]
 pub fn App() -> impl IntoView {
     leptos_meta::provide_meta_context();
     view! {
@@ -68,6 +81,7 @@ pub fn App() -> impl IntoView {
         <leptos_meta::Style>{page_shell::ROOT_ICON_STYLE}</leptos_meta::Style>
         <leptos_meta::Style>{page_shell::HOME_HEADER_STYLE}</leptos_meta::Style>
         <Router>
+            <HomeStyleHeader/>
             <Routes fallback=NotYetMigratedFallback>
                 <Route path=StaticSegment("") view=landing::LandingRoutePage/>
                 <Route path=StaticSegment("privacy") view=legal::PrivacyRoutePage/>

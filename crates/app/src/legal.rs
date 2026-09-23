@@ -144,7 +144,6 @@ pub fn LegalPage(data: LegalPageData) -> impl IntoView {
         <leptos_meta::Html attr:lang="en"/>
         <leptos_meta::Title text=title/>
         <div id="legal-root" class="bg-background text-on-surface min-h-screen">
-            <div inner_html=crate::page_shell::HOME_HEADER_HTML></div>
             <main class="max-w-[720px] mx-auto px-margin-mobile md:px-margin-desktop pt-[64px] pb-lg space-y-lg">
                 <div class="flex justify-end">
                     <A href=other_href attr:class="text-label-md text-secondary hover:underline">{other_label}</A>
