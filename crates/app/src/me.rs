@@ -2,6 +2,7 @@ use leptos::prelude::*;
 use serde::{Deserialize, Serialize};
 
 use crate::confirm_button::ConfirmButton;
+use crate::page_shell::{CopyRow, HomeHeader, PageFooter};
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct NewCredential {
@@ -13,41 +14,22 @@ pub struct NewCredential {
 pub struct CalendarCardData {
     pub public_id: String,
     pub label: String,
-    pub active_badge: String,
-    pub open_calendar_label: String,
-    pub url_row_html: String,
-    pub paste_hint: String,
-    pub view_log_label: String,
-    pub view_log_href: String,
-    pub delete_label: String,
-    pub delete_confirm_label: String,
-    pub delete_action: String,
-}
-
-#[derive(Clone, Serialize, Deserialize)]
-pub struct AccountCredentialData {
-    pub heading: String,
-    pub description: String,
-    pub url_row_html: String,
-    pub username_row_html: String,
-    pub button_label: String,
-    pub confirm_label: String,
+    pub caldav_url: String,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct MePageData {
-    pub html_lang: String,
-    pub page_title: String,
-    pub header_html: String,
-    pub main_top_html: String,
-    pub main_bottom_html: String,
+    pub email: String,
+    pub billing_status_text: String,
+    pub billing_cta_href: Option<String>,
+    pub just_connected_a_calendar: bool,
+    pub already_connected_names: Vec<String>,
     pub calendars: Vec<CalendarCardData>,
-    pub empty_state_html: String,
-    pub account_credential: AccountCredentialData,
+    pub account_caldav_username: Option<String>,
+    pub app_base_url: String,
 }
 
 const DASHBOARD_HEAD_STYLE: &str = r#"
-.material-symbols-outlined { font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24; vertical-align: middle; font-size: 20px; }
 .success-banner-gradient { background: linear-gradient(90deg, rgba(220, 252, 231, 0.5) 0%, rgba(220, 252, 231, 0.2) 100%); }
 .error-banner-gradient { background: linear-gradient(90deg, rgba(254, 226, 226, 0.5) 0%, rgba(254, 226, 226, 0.2) 100%); }
 "#;
@@ -56,23 +38,6 @@ const DASHBOARD_HEAD_STYLE: &str = r#"
 const TRIAL_MONTHS: u32 = 6;
 #[cfg(feature = "ssr")]
 const FREE_DAILY_QUOTA: i64 = 10;
-
-// Not ssr-gated: also called client-side to render a freshly-regenerated
-// password's row after a server-fn round trip, with no page reload.
-fn copy_row(label: &str, value: &str) -> String {
-    let escaped_value = crate::page_shell::html_escape(value);
-    format!(
-        r#"<div class="space-y-sm mt-sm">
-<label class="font-label-md text-label-md text-on-surface-variant block uppercase tracking-wide">{label}</label>
-<div class="flex gap-sm">
-<input class="w-full h-10 px-md bg-surface-container-low border border-outline-variant font-code text-code focus:outline-none focus:ring-0 cursor-default" readonly type="text" value="{escaped_value}">
-<button class="w-10 h-10 border border-outline-variant flex items-center justify-center hover:bg-surface-container-high transition-all active:bg-surface-container-highest shrink-0" onclick="copyToClipboard('{escaped_value}', this)">
-<span class="material-symbols-outlined">content_copy</span>
-</button>
-</div>
-</div>"#
-    )
-}
 
 #[cfg(feature = "ssr")]
 fn generate_token(len: usize) -> String {
@@ -172,7 +137,7 @@ async fn load_me_data() -> Result<MePageData, ServerFnError> {
     .await
     .map_err(|e| ServerFnError::new(format!("failed to upsert user: {e}")))?;
 
-    let billing_card = {
+    let (billing_status_text, billing_cta_href) = {
         let row: Option<(DateTime<Utc>, String)> =
             sqlx::query_as("SELECT trial_started_at, subscription_status FROM users WHERE id = $1")
                 .bind(user_id)
@@ -210,19 +175,8 @@ async fn load_me_data() -> Result<MePageData, ServerFnError> {
                 (format!("{used_today}/{FREE_DAILY_QUOTA} events today"), true)
             }
         };
-        let cta_label = "Upgrade for $1/year";
-        let cta = if show_cta && stripe_configured {
-            format!(
-                r#" <a href="/billing/checkout" class="text-secondary hover:underline font-medium">{cta_label}</a>"#
-            )
-        } else {
-            String::new()
-        };
-        format!(
-            r#"<div class="flex items-center gap-sm p-md bg-surface-container-low border border-outline-variant rounded-lg">
-<p class="text-on-surface-variant text-body-md">{status_text}{cta}</p>
-</div>"#
-        )
+        let cta_href = (show_cta && stripe_configured).then(|| "/billing/checkout".to_string());
+        (status_text, cta_href)
     };
 
     let calendars: Vec<(String, String, String)> = sqlx::query_as(
@@ -266,19 +220,7 @@ async fn load_me_data() -> Result<MePageData, ServerFnError> {
         !stashed.is_empty()
     };
 
-    let banner = if just_connected_a_calendar {
-        r#"<div class="flex items-center gap-sm p-md success-banner-gradient border border-[#DCFCE7] rounded-lg" id="success-banner">
-<div class="flex items-center justify-center w-6 h-6 bg-[#DCFCE7] text-[#166534] rounded-full shrink-0">
-<span class="material-symbols-outlined !text-[16px]" style="font-variation-settings: 'FILL' 1;">check_circle</span>
-</div>
-<p class="text-[#166534] font-medium text-body-md">Calendar connected — use the account-wide CalDAV access below to subscribe.</p>
-</div>"#
-            .to_string()
-    } else {
-        String::new()
-    };
-
-    let connect_errors: Vec<String> = {
+    let already_connected_names: Vec<String> = {
         let stashed: Vec<String> = session
             .get("calendar_connect_errors")
             .await
@@ -292,147 +234,37 @@ async fn load_me_data() -> Result<MePageData, ServerFnError> {
         }
         stashed
     };
-    // See the comment above new_account_credential: this explicit save is
+    // See the comment above just_connected_a_calendar: this explicit save is
     // what actually makes the removals above stick, since they happen too
     // late in the streaming response for the session middleware's own
     // save-if-modified check to catch.
     let _ = session.save().await;
-    let already_connected_suffix = "is already connected to your account — nothing changed.";
-    let error_banner = if connect_errors.is_empty() {
-        String::new()
-    } else {
-        let names = connect_errors
-            .iter()
-            .map(|n| crate::page_shell::html_escape(n))
-            .collect::<Vec<_>>()
-            .join(", ");
-        format!(
-            r#"<div class="flex items-center gap-sm p-md error-banner-gradient border border-[#fecaca] rounded-lg">
-<div class="flex items-center justify-center w-6 h-6 bg-[#fecaca] text-error rounded-full shrink-0">
-<span class="material-symbols-outlined !text-[16px]" style="font-variation-settings: 'FILL' 1;">error</span>
-</div>
-<p class="text-error font-medium text-body-md"><strong>{names}</strong> {already_connected_suffix}</p>
-</div>"#
-        )
-    };
-
-    let (
-        active_badge,
-        open_calendar_label,
-        caldav_url_label,
-        username_label,
-        paste_hint,
-        view_log_label,
-        delete_label,
-        delete_confirm_label,
-    ) = (
-        "Active",
-        "Open calendar",
-        "CalDAV URL",
-        "Username",
-        "Paste this link into Apple Calendar, Google Calendar, or any CalDAV app",
-        "View sync log",
-        "Delete",
-        "Delete this calendar? Your Notion data is untouched, but it will stop syncing.",
-    );
 
     let cards: Vec<CalendarCardData> = calendars
         .iter()
         .map(|(public_id, name, _caldav_username)| {
             let label = if name.is_empty() {
-                public_id.as_str()
+                public_id.clone()
             } else {
-                name.as_str()
+                name.clone()
             };
-            let caldav_url = format!("{app_base_url}/cal/{public_id}");
             CalendarCardData {
                 public_id: public_id.clone(),
-                label: label.to_string(),
-                active_badge: active_badge.to_string(),
-                open_calendar_label: open_calendar_label.to_string(),
-                url_row_html: copy_row(caldav_url_label, &caldav_url),
-                paste_hint: paste_hint.to_string(),
-                view_log_label: view_log_label.to_string(),
-                view_log_href: format!("/me/calendars/{public_id}/log"),
-                delete_label: delete_label.to_string(),
-                delete_confirm_label: delete_confirm_label.to_string(),
-                delete_action: format!("/me/calendars/{public_id}/delete"),
+                label,
+                caldav_url: format!("{app_base_url}/cal/{public_id}"),
             }
         })
         .collect();
 
-    let empty_state = "No calendars yet — connect Notion to get started.";
-    let empty_state_html = format!(
-        r#"<div class="flex flex-col items-center justify-center py-xl text-center border border-dashed border-outline-variant rounded-lg">
-<span class="material-symbols-outlined !text-[48px] text-outline mb-md">calendar_add_on</span>
-<p class="text-body-lg text-on-surface-variant max-w-sm">{empty_state}</p>
-</div>"#
-    );
-
-    let header_html = crate::page_shell::top_nav_html(&email);
-
-    let (heading, subheading, connect_more) = (
-        "Your calendars",
-        "Manage and sync your Notion databases with your favorite calendar app.",
-        "Connect another database",
-    );
-    let main_top_html = format!(
-        r#"{banner}
-{error_banner}
-{billing_card}
-<div class="flex flex-col md:flex-row md:items-end justify-between gap-md border-b border-outline-variant pb-md">
-<div>
-<h1 class="text-h1 font-semibold">{heading}</h1>
-<p class="text-on-surface-variant mt-1">{subheading}</p>
-</div>
-<a class="bg-surface border border-outline-variant text-primary px-md h-10 font-label-md text-label-md flex items-center justify-center gap-sm hover:border-outline transition-all active:scale-95" href="/connect/notion">
-<span class="material-symbols-outlined">add</span>
-<span>{connect_more}</span>
-</a>
-</div>"#
-    );
-
-    let main_bottom_html = crate::page_shell::footer_html();
-
-    let page_title = "Your calendars — NotionCal";
-
-    let account_credential = {
-        let has_credential = account_caldav_username.is_some();
-        let (url_row_html, username_row_html) = match &account_caldav_username {
-            Some(username) => (
-                copy_row(caldav_url_label, &app_base_url),
-                copy_row(username_label, username),
-            ),
-            None => (String::new(), String::new()),
-        };
-        AccountCredentialData {
-            heading: "Account-wide CalDAV access".to_string(),
-            description: "One username/password that gives a CalDAV client access to every calendar above at once — your calendar app will list them all automatically. Each calendar's own credentials above still work independently.".to_string(),
-            url_row_html,
-            username_row_html,
-            button_label: if has_credential {
-                "Regenerate".to_string()
-            } else {
-                "Generate account-wide access".to_string()
-            },
-            confirm_label: if has_credential {
-                "Generate a new account-wide password? The old one will stop working immediately."
-                    .to_string()
-            } else {
-                "Create one password with access to every calendar you own?".to_string()
-            },
-        }
-    };
-
     Ok(MePageData {
-        html_lang: "en".to_string(),
-        page_title: page_title.to_string(),
-        header_html,
-        main_top_html,
-        main_bottom_html,
+        email,
+        billing_status_text,
+        billing_cta_href,
+        just_connected_a_calendar,
+        already_connected_names,
         calendars: cards,
-        empty_state_html,
-        account_credential,
+        account_caldav_username,
+        app_base_url,
     })
 }
 
@@ -441,41 +273,30 @@ pub fn MeRoutePage() -> impl IntoView {
     let data = Resource::new(|| (), |_| load_me_data());
     view! {
         <leptos_meta::Style>{DASHBOARD_HEAD_STYLE}</leptos_meta::Style>
-        <leptos_meta::Script>{COPY_TO_CLIPBOARD_JS}</leptos_meta::Script>
+        <leptos_meta::Html attr:lang="en"/>
+        <leptos_meta::Title text="Your calendars — NotionCal"/>
         <Suspense fallback=|| ()>
             {move || data.get().and_then(|r| r.ok()).map(|data| view! {
-                <leptos_meta::Html attr:lang=data.html_lang.clone()/>
-                <leptos_meta::Title text=data.page_title.clone()/>
                 <MePage data=data/>
             })}
         </Suspense>
     }
 }
 
-const COPY_TO_CLIPBOARD_JS: &str = r#"
-function copyToClipboard(text, btn) {
-  navigator.clipboard.writeText(text).then(() => {
-    const icon = btn.querySelector('.material-symbols-outlined');
-    const original = icon.innerText;
-    icon.innerText = 'check';
-    icon.classList.add('text-[#166534]');
-    setTimeout(() => { icon.innerText = original; icon.classList.remove('text-[#166534]'); }, 2000);
-  });
-}
-"#;
-
 #[component]
 pub fn MePage(data: MePageData) -> impl IntoView {
-    #[cfg(feature = "hydrate")]
-    crate::page_shell::install_client_timezone_label();
-
-    let header_html = data.header_html.clone();
-    let main_top_html = data.main_top_html.clone();
-    let main_bottom_html = data.main_bottom_html.clone();
-
     let has_calendars = !data.calendars.is_empty();
+    let already_connected_names = data.already_connected_names.join(", ");
+    let has_connect_errors = !data.already_connected_names.is_empty();
+
     let list = if data.calendars.is_empty() {
-        view! { <div inner_html=data.empty_state_html.clone()></div> }.into_any()
+        view! {
+            <div class="flex flex-col items-center justify-center py-xl text-center border border-dashed border-outline-variant rounded-lg">
+                <span class="material-symbols-outlined !text-[48px] text-outline mb-md">"calendar_add_on"</span>
+                <p class="text-body-lg text-on-surface-variant max-w-sm">"No calendars yet — connect Notion to get started."</p>
+            </div>
+        }
+        .into_any()
     } else {
         data.calendars
             .into_iter()
@@ -485,18 +306,51 @@ pub fn MePage(data: MePageData) -> impl IntoView {
     };
 
     view! {
-        <div id="me-root">
-            <div inner_html=header_html></div>
+        <div id="me-root" class="pt-[64px]">
+            <HomeHeader email=data.email/>
             <main class="max-w-[1280px] mx-auto px-margin-mobile md:px-margin-desktop py-lg space-y-lg">
-                <div inner_html=main_top_html></div>
-                <AccountCredentialSection data=data.account_credential/>
+                {data.just_connected_a_calendar.then(|| view! {
+                    <div class="flex items-center gap-sm p-md success-banner-gradient border border-[#DCFCE7] rounded-lg" id="success-banner">
+                        <div class="flex items-center justify-center w-6 h-6 bg-[#DCFCE7] text-[#166534] rounded-full shrink-0">
+                            <span class="material-symbols-outlined !text-[16px]" style="font-variation-settings: 'FILL' 1;">"check_circle"</span>
+                        </div>
+                        <p class="text-[#166534] font-medium text-body-md">"Calendar connected — use the account-wide CalDAV access below to subscribe."</p>
+                    </div>
+                })}
+                {has_connect_errors.then(|| view! {
+                    <div class="flex items-center gap-sm p-md error-banner-gradient border border-[#fecaca] rounded-lg">
+                        <div class="flex items-center justify-center w-6 h-6 bg-[#fecaca] text-error rounded-full shrink-0">
+                            <span class="material-symbols-outlined !text-[16px]" style="font-variation-settings: 'FILL' 1;">"error"</span>
+                        </div>
+                        <p class="text-error font-medium text-body-md"><strong>{already_connected_names}</strong>" is already connected to your account — nothing changed."</p>
+                    </div>
+                })}
+                <div class="flex items-center gap-sm p-md bg-surface-container-low border border-outline-variant rounded-lg">
+                    <p class="text-on-surface-variant text-body-md">
+                        {data.billing_status_text}
+                        {data.billing_cta_href.map(|href| view! {
+                            " "<a href=href class="text-secondary hover:underline font-medium">"Upgrade for $1/year"</a>
+                        })}
+                    </p>
+                </div>
+                <div class="flex flex-col md:flex-row md:items-end justify-between gap-md border-b border-outline-variant pb-md">
+                    <div>
+                        <h1 class="text-h1 font-semibold">"Your calendars"</h1>
+                        <p class="text-on-surface-variant mt-1">"Manage and sync your Notion databases with your favorite calendar app."</p>
+                    </div>
+                    <a class="bg-surface border border-outline-variant text-primary px-md h-10 font-label-md text-label-md flex items-center justify-center gap-sm hover:border-outline transition-all active:scale-95" href="/connect/notion">
+                        <span class="material-symbols-outlined !text-[20px]">"add"</span>
+                        <span>"Connect another database"</span>
+                    </a>
+                </div>
+                <AccountCredentialSection account_caldav_username=data.account_caldav_username app_base_url=data.app_base_url/>
                 {has_calendars.then(|| view! {
                     <p class="text-label-md text-on-surface-variant italic">
                         "Heads up: per-calendar CalDAV credentials below will be deprecated soon — use the account-wide access above instead."
                     </p>
                 })}
                 <div class="space-y-md">{list}</div>
-                <div inner_html=main_bottom_html></div>
+                <PageFooter/>
             </main>
         </div>
     }
@@ -552,8 +406,8 @@ where
 }
 
 #[component]
-fn AccountCredentialSection(data: AccountCredentialData) -> impl IntoView {
-    let has_existing_rows = !data.url_row_html.is_empty();
+fn AccountCredentialSection(account_caldav_username: Option<String>, app_base_url: String) -> impl IntoView {
+    let has_credential = account_caldav_username.is_some();
     let (revealed, set_revealed) = signal(None::<NewCredential>);
 
     let on_confirm = move || async move {
@@ -562,26 +416,35 @@ fn AccountCredentialSection(data: AccountCredentialData) -> impl IntoView {
         }
     };
 
+    let button_label = if has_credential { "Regenerate" } else { "Generate account-wide access" };
+    let confirm_label = if has_credential {
+        "Generate a new account-wide password? The old one will stop working immediately."
+    } else {
+        "Create one password with access to every calendar you own?"
+    };
+
     view! {
         <div class="bg-surface border border-outline-variant rounded-lg p-lg">
-            <h2 class="font-semibold text-h3">{data.heading}</h2>
-            <p class="text-on-surface-variant text-body-md mt-1">{data.description}</p>
+            <h2 class="font-semibold text-h3">"Account-wide CalDAV access"</h2>
+            <p class="text-on-surface-variant text-body-md mt-1">"One username/password that gives a CalDAV client access to every calendar above at once — your calendar app will list them all automatically. Each calendar's own credentials above still work independently."</p>
             {move || match revealed.get() {
                 Some(cred) => view! {
-                    <div inner_html=copy_row("CalDAV URL", &client_origin())></div>
-                    <div inner_html=copy_row("Username", &cred.username)></div>
-                    <div inner_html=copy_row("CalDAV password", &cred.password)></div>
+                    <CopyRow label="CalDAV URL" value=client_origin()/>
+                    <CopyRow label="Username" value=cred.username/>
+                    <CopyRow label="CalDAV password" value=cred.password/>
                 }.into_any(),
-                None if has_existing_rows => view! {
-                    <div inner_html=data.url_row_html.clone()></div>
-                    <div inner_html=data.username_row_html.clone()></div>
-                }.into_any(),
-                None => ().into_any(),
+                None => match &account_caldav_username {
+                    Some(username) => view! {
+                        <CopyRow label="CalDAV URL" value=app_base_url.clone()/>
+                        <CopyRow label="Username" value=username.clone()/>
+                    }.into_any(),
+                    None => ().into_any(),
+                },
             }}
             <div class="mt-md pt-md border-t border-outline-variant">
                 <RegenerateButton
-                    label=data.button_label
-                    confirm_label=data.confirm_label
+                    label=button_label.to_string()
+                    confirm_label=confirm_label.to_string()
                     class="text-label-md text-secondary hover:underline".to_string()
                     on_confirm=on_confirm
                 />
@@ -593,6 +456,8 @@ fn AccountCredentialSection(data: AccountCredentialData) -> impl IntoView {
 #[component]
 fn CalendarCard(data: CalendarCardData) -> impl IntoView {
     let open_href = format!("/app/{}", data.public_id);
+    let view_log_href = format!("/me/calendars/{}/log", data.public_id);
+    let delete_action = format!("/me/calendars/{}/delete", data.public_id);
 
     view! {
         <div class="bg-surface border border-outline-variant rounded-lg p-lg hover:border-outline transition-colors duration-200">
@@ -600,19 +465,19 @@ fn CalendarCard(data: CalendarCardData) -> impl IntoView {
                 <div class="flex items-center gap-sm">
                     <span class="text-h2">"🗓️"</span>
                     <h2 class="font-semibold text-h2">{data.label}</h2>
-                    <span class="bg-[#DCFCE7] text-[#166534] px-xs py-[2px] rounded font-label-md text-[10px] uppercase tracking-wider">{data.active_badge}</span>
+                    <span class="bg-[#DCFCE7] text-[#166534] px-xs py-[2px] rounded font-label-md text-[10px] uppercase tracking-wider">"Active"</span>
                 </div>
-                <a class="px-md h-8 border border-outline-variant hover:bg-surface-container-low font-label-md text-label-md transition-all flex items-center" href=open_href>{data.open_calendar_label}</a>
+                <a class="px-md h-8 border border-outline-variant hover:bg-surface-container-low font-label-md text-label-md transition-all flex items-center" href=open_href>"Open calendar"</a>
             </div>
-            <div inner_html=data.url_row_html></div>
-            <p class="text-on-surface-variant text-[13px] mt-sm">{data.paste_hint}</p>
+            <CopyRow label="CalDAV URL" value=data.caldav_url/>
+            <p class="text-on-surface-variant text-[13px] mt-sm">"Paste this link into Apple Calendar, Google Calendar, or any CalDAV app"</p>
             <div class="flex items-center gap-md mt-md pt-md border-t border-outline-variant">
-                <a href=data.view_log_href class="text-label-md text-secondary hover:underline">{data.view_log_label}</a>
+                <a href=view_log_href class="text-label-md text-secondary hover:underline">"View sync log"</a>
                 <div class="ml-auto">
                     <ConfirmButton
-                        action=data.delete_action
-                        label=data.delete_label
-                        confirm_label=data.delete_confirm_label
+                        action=delete_action
+                        label="Delete".to_string()
+                        confirm_label="Delete this calendar? Your Notion data is untouched, but it will stop syncing.".to_string()
                         class="text-label-md text-error hover:underline".to_string()
                     />
                 </div>

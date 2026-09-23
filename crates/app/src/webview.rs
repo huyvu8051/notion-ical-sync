@@ -78,7 +78,7 @@ pub struct WebviewLabels {
 pub struct WebviewPageData {
     pub html_lang: String,
     pub title: String,
-    pub header_html: String,
+    pub email: String,
     pub events_url: String,
     pub mapbox_token: Option<String>,
     pub labels: WebviewLabels,
@@ -87,7 +87,6 @@ pub struct WebviewPageData {
 
 const WEBVIEW_HEAD_STYLE: &str = r#"
 body { background-color: #fbf9f9; color: #1b1c1c; -webkit-font-smoothing: antialiased; }
-.material-symbols-outlined { font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24; vertical-align: middle; font-size: 20px; }
 .modal-shadow { box-shadow: 0px 4px 12px rgba(0, 0, 0, 0.05); }
 #calendar { max-width: 1100px; margin: 0 auto; padding: 24px; }
 .fc { --fc-border-color: #c4c7c7; --fc-button-bg-color: #fff; --fc-button-border-color: #c4c7c7; --fc-button-text-color: #1b1c1c;
@@ -193,10 +192,8 @@ pub fn labels_for() -> WebviewLabels {
     webview_labels()
 }
 
-#[cfg(feature = "ssr")]
 const BACK_TO_ALL_LABEL: &str = "All calendars";
 
-#[cfg(feature = "ssr")]
 const ADD_EVENT_BTN_LABEL: &str = "Add event";
 
 #[cfg(feature = "ssr")]
@@ -235,38 +232,13 @@ async fn load_webview_data(public_id: String) -> Result<WebviewPageData, ServerF
     } else {
         display_name
     };
-    let email = claims.email().map(|e| e.as_str()).unwrap_or("");
-    let top_nav = crate::page_shell::top_nav_html(email);
-
+    let email = claims.email().map(|e| e.as_str()).unwrap_or("").to_string();
     let events_url = format!("/app/{public_id}/api/events");
-    let escaped_title = crate::page_shell::html_escape(&calendar_name);
-
-    let header_html = format!(
-        r##"{top_nav}
-<header class="h-16 flex items-center justify-between px-lg border-b border-outline-variant bg-surface">
-<div class="flex items-center gap-md">
-<a class="flex items-center gap-xs text-on-surface-variant hover:text-primary transition-colors text-label-md" href="/me">
-<span class="material-symbols-outlined">arrow_back</span>
-<span class="back-label">{BACK_TO_ALL_LABEL}</span>
-</a>
-<div class="h-6 w-[1px] bg-outline-variant mx-sm"></div>
-<h1 class="text-h1 tracking-tight">{escaped_title}</h1>
-</div>
-<div class="flex items-center gap-md">
-<button class="bg-primary text-on-primary px-md h-10 flex items-center gap-xs text-label-md rounded-lg hover:opacity-90 transition-opacity" onclick="window.webview_open_create_modal('', '', false)">
-<span class="material-symbols-outlined">add</span>
-{ADD_EVENT_BTN_LABEL}
-</button>
-</div>
-</header>
-<div class="fixed bottom-2 right-3 z-40 pointer-events-none">{client_tz}</div>"##,
-        client_tz = crate::page_shell::CLIENT_TZ_SPAN_HTML,
-    );
 
     Ok(WebviewPageData {
         html_lang: "en".to_string(),
-        title: escaped_title,
-        header_html,
+        title: calendar_name,
+        email,
         events_url: events_url.clone(),
         mapbox_token: use_context::<crate::page_shell::MapboxToken>().and_then(|v| v.0),
         labels: labels_for(),
@@ -537,11 +509,13 @@ struct EventPayload {
 
 #[component]
 pub fn WebviewPage(data: WebviewPageData) -> impl IntoView {
-    #[cfg(feature = "hydrate")]
-    crate::page_shell::install_client_timezone_label();
-
-    let header_html = data.header_html.clone();
+    let email = data.email.clone();
+    let calendar_title = data.title.clone();
     let mapbox_token = data.mapbox_token.clone();
+    let on_add_click = move |_| {
+        #[cfg(feature = "hydrate")]
+        webview_open_create_modal(String::new(), String::new(), false);
+    };
 
     #[cfg(feature = "hydrate")]
     {
@@ -909,8 +883,30 @@ pub fn WebviewPage(data: WebviewPageData) -> impl IntoView {
     let unit_days_label = StoredValue::new(data.labels.reminder_custom_days.clone());
 
     view! {
-        <div id="webview-root">
-            <div inner_html=header_html></div>
+        <div id="webview-root" class="pt-[64px]">
+            <crate::page_shell::HomeHeader email=email/>
+            <header class="h-16 flex items-center justify-between px-lg border-b border-outline-variant bg-surface">
+                <div class="flex items-center gap-md">
+                    <a class="flex items-center gap-xs text-on-surface-variant hover:text-primary transition-colors text-label-md" href="/me">
+                        <span class="material-symbols-outlined !text-[20px]">"arrow_back"</span>
+                        <span class="back-label">{BACK_TO_ALL_LABEL}</span>
+                    </a>
+                    <div class="h-6 w-[1px] bg-outline-variant mx-sm"></div>
+                    <h1 class="text-h1 tracking-tight">{calendar_title}</h1>
+                </div>
+                <div class="flex items-center gap-md">
+                    <button
+                        class="bg-primary text-on-primary px-md h-10 flex items-center gap-xs text-label-md rounded-lg hover:opacity-90 transition-opacity"
+                        on:click=on_add_click
+                    >
+                        <span class="material-symbols-outlined !text-[20px]">"add"</span>
+                        {ADD_EVENT_BTN_LABEL}
+                    </button>
+                </div>
+            </header>
+            <div class="fixed bottom-2 right-3 z-40 pointer-events-none">
+                <crate::page_shell::ClientTimezone class="text-label-md text-on-surface-variant".to_string()/>
+            </div>
             <div id="calendar"></div>
 
             <div
@@ -924,7 +920,7 @@ pub fn WebviewPage(data: WebviewPageData) -> impl IntoView {
                             {move || if editing_id.get().is_some() { l1.modal_title_edit.clone() } else { l1.modal_title_add.clone() }}
                         </h2>
                         <button class="p-1 hover:bg-surface-container-low rounded-lg transition-colors" on:click=close_modal>
-                            <span class="material-symbols-outlined">close</span>
+                            <span class="material-symbols-outlined !text-[20px]">close</span>
                         </button>
                     </div>
                     <div class="p-lg space-y-lg">
@@ -1125,7 +1121,7 @@ pub fn WebviewPage(data: WebviewPageData) -> impl IntoView {
                         {move || notion_url.get().map(|url| view! {
                             <a class="flex items-center gap-xs text-secondary hover:underline text-label-md" href=url target="_blank" rel="noopener">
                                 {data.labels.open_in_notion.clone()}
-                                <span class="material-symbols-outlined text-[14px]">open_in_new</span>
+                                <span class="material-symbols-outlined !text-[14px]">open_in_new</span>
                             </a>
                         })}
                     </div>

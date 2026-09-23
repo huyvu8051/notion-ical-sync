@@ -70,95 +70,6 @@ pub(crate) fn current_user_email() -> String {
         .unwrap_or_default()
 }
 
-pub(crate) const CLIENT_TZ_SPAN_HTML: &str =
-    r#"<span id="client-tz" class="text-label-md text-on-surface-variant"></span>"#;
-
-#[cfg(feature = "hydrate")]
-pub(crate) fn install_client_timezone_label() {
-    leptos::prelude::Effect::new(move |_| {
-        let Some(document) = web_sys::window().and_then(|w| w.document()) else {
-            return;
-        };
-        let Some(el) = document.get_element_by_id("client-tz") else {
-            return;
-        };
-        let label = js_sys::eval(
-            r#"(function() {
-                var tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
-                var offsetMin = -new Date().getTimezoneOffset();
-                var sign = offsetMin >= 0 ? '+' : '-';
-                var abs = Math.abs(offsetMin);
-                var hours = Math.floor(abs / 60);
-                var minutes = abs % 60;
-                var utc = 'UTC' + sign + hours + (minutes ? ':' + String(minutes).padStart(2, '0') : '');
-                return tz + ' (' + utc + ')';
-            })()"#,
-        )
-        .ok()
-        .and_then(|v| v.as_string())
-        .unwrap_or_default();
-        el.set_text_content(Some(&label));
-    });
-}
-
-#[cfg(feature = "hydrate")]
-pub(crate) fn install_client_local_time_labels() {
-    leptos::prelude::Effect::new(move |_| {
-        let _ = js_sys::eval(
-            r#"(function() {
-                var pad = function(n) { return String(n).padStart(2, '0'); };
-                document.querySelectorAll('.occurred-at[data-utc]').forEach(function(el) {
-                    var d = new Date(el.getAttribute('data-utc'));
-                    if (isNaN(d.getTime())) { return; }
-                    el.textContent = d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate())
-                        + ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes()) + ':' + pad(d.getSeconds());
-                });
-            })()"#,
-        );
-    });
-}
-
-pub(crate) fn html_escape(s: &str) -> String {
-    s.replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
-        .replace('"', "&quot;")
-}
-
-pub(crate) fn top_nav_html(email: &str) -> String {
-    format!(
-        r#"<header class="bg-surface border-b border-outline-variant sticky top-0 z-50">
-<div class="flex justify-between items-center h-16 px-lg w-full max-w-[1280px] mx-auto">
-<a href="/" class="text-h1 font-semibold tracking-tighter text-primary hover:opacity-70 transition-opacity">NotionCal</a>
-<div class="flex items-center space-x-md">
-<span class="text-on-surface-variant font-label-md text-label-md">{email}</span>
-<a class="flex items-center justify-center w-8 h-8 hover:bg-surface-container-low transition-colors duration-200 rounded" href="/logout" title="Log out">
-<span class="material-symbols-outlined">logout</span>
-</a>
-</div>
-</div>
-</header>"#,
-        email = html_escape(email),
-    )
-}
-
-pub(crate) fn footer_html() -> String {
-    format!(
-        r#"<p class="text-on-surface-variant text-[13px] pt-lg">
-{client_tz}
-<span class="px-2">·</span>
-<a class="underline hover:text-primary" href="/privacy">Privacy Policy</a>
-<span class="px-2">·</span>
-<a class="underline hover:text-primary" href="/terms">Terms of Service</a>
-</p>"#,
-        client_tz = CLIENT_TZ_SPAN_HTML,
-    )
-}
-
-// --- Real Leptos components (Phase A of the inner_html/JS reduction pass) ---
-// These replace the string-builder + imperative-DOM-patch functions above at
-// call sites one at a time; both coexist until every page has migrated.
-
 #[cfg(feature = "hydrate")]
 fn compute_client_timezone_label() -> String {
     let dtf = js_sys::Intl::DateTimeFormat::new(&js_sys::Array::new(), &js_sys::Object::new());
@@ -231,53 +142,63 @@ pub fn LocalTime(utc: String) -> impl IntoView {
     view! { <span node_ref=node_ref>{utc}</span> }
 }
 
-#[component]
-pub fn TopNav(email: String) -> impl IntoView {
-    view! {
-        <header class="bg-surface border-b border-outline-variant sticky top-0 z-50">
-            <div class="flex justify-between items-center h-16 px-lg w-full max-w-[1280px] mx-auto">
-                <a href="/" class="text-h1 font-semibold tracking-tighter text-primary hover:opacity-70 transition-opacity">"NotionCal"</a>
-                <div class="flex items-center space-x-md">
-                    <span class="text-on-surface-variant font-label-md text-label-md">{email}</span>
-                    <a class="flex items-center justify-center w-8 h-8 hover:bg-surface-container-low transition-colors duration-200 rounded" href="/logout" title="Log out">
-                        <span class="material-symbols-outlined">"logout"</span>
-                    </a>
-                </div>
-            </div>
-        </header>
-    }
-}
-
+/// The shared site footer — same look everywhere (originally the landing
+/// page's footer), now with the client-local timezone label restored
+/// alongside the NotionCal wordmark.
 #[component]
 pub fn PageFooter() -> impl IntoView {
     view! {
-        <p class="text-on-surface-variant text-[13px] pt-lg">
-            <ClientTimezone class="text-label-md text-on-surface-variant".to_string()/>
-            <span class="px-2">"·"</span>
-            <a class="underline hover:text-primary" href="/privacy">"Privacy Policy"</a>
-            <span class="px-2">"·"</span>
-            <a class="underline hover:text-primary" href="/terms">"Terms of Service"</a>
-        </p>
+        <footer class="border-t border-outline-variant mt-xl">
+            <div class="w-full py-lg flex flex-col md:flex-row justify-between items-center gap-md text-center md:text-left">
+                <div class="flex flex-col md:flex-row items-center gap-md">
+                    <span class="text-h3 font-bold text-primary">"NotionCal"</span>
+                    <ClientTimezone class="text-label-md text-on-surface-variant".to_string()/>
+                </div>
+                <div class="flex items-center gap-6">
+                    <a class="text-label-md text-on-surface-variant hover:text-primary transition-colors" href="/privacy">"Privacy Policy"</a>
+                    <a class="text-label-md text-on-surface-variant hover:text-primary transition-colors" href="/terms">"Terms of Service"</a>
+                </div>
+            </div>
+        </footer>
     }
 }
 
+/// The shared site header. Logged out (`email` is `None`): marketing nav
+/// links + "Log in / Sign up", as on the landing page. Logged in
+/// (`email` is `Some`): nav links hidden, replaced by the user's email +
+/// a logout button — same header everywhere, just the identity slot swaps.
 #[component]
-pub fn HomeHeader() -> impl IntoView {
+pub fn HomeHeader(#[prop(optional)] email: Option<String>) -> impl IntoView {
+    let is_authed = email.is_some();
     view! {
         <header class="fixed top-0 left-0 right-0 z-50 glass-header border-b border-outline-variant">
             <div class="max-w-[1280px] mx-auto w-full px-margin-desktop h-[64px] flex justify-between items-center">
                 <div class="flex items-center gap-8">
                     <a class="text-h2 font-bold text-primary flex items-center gap-2" href="/">
-                        <span class="material-symbols-outlined text-primary">"calendar_month"</span>
+                        <span class="material-symbols-outlined text-primary !text-[24px]">"calendar_month"</span>
                         "NotionCal"
                     </a>
-                    <nav class="hidden md:flex items-center gap-6">
-                        <a class="text-body-md text-on-surface-variant hover:text-primary transition-colors" href="/#how-it-works">"How it works"</a>
-                        <a class="text-body-md text-on-surface-variant hover:text-primary transition-colors" href="/#pricing">"Pricing"</a>
-                    </nav>
+                    {(!is_authed).then(|| view! {
+                        <nav class="hidden md:flex items-center gap-6">
+                            <a class="text-body-md text-on-surface-variant hover:text-primary transition-colors" href="/#how-it-works">"How it works"</a>
+                            <a class="text-body-md text-on-surface-variant hover:text-primary transition-colors" href="/#pricing">"Pricing"</a>
+                        </nav>
+                    })}
                 </div>
                 <div class="flex items-center gap-4">
-                    <a class="bg-primary text-on-primary text-label-md px-4 py-2 rounded transition-transform active:scale-95 duration-100" href="/me" rel="external">"Log in / Sign up"</a>
+                    {match email {
+                        Some(email) => view! {
+                            <div class="flex items-center space-x-md">
+                                <span class="text-on-surface-variant font-label-md text-label-md">{email}</span>
+                                <a class="flex items-center justify-center w-8 h-8 hover:bg-surface-container-low transition-colors duration-200 rounded" href="/logout" title="Log out">
+                                    <span class="material-symbols-outlined !text-[20px]">"logout"</span>
+                                </a>
+                            </div>
+                        }.into_any(),
+                        None => view! {
+                            <a class="bg-primary text-on-primary text-label-md px-4 py-2 rounded transition-transform active:scale-95 duration-100" href="/me" rel="external">"Log in / Sign up"</a>
+                        }.into_any(),
+                    }}
                 </div>
             </div>
         </header>
@@ -294,7 +215,7 @@ async fn copy_to_clipboard_and_flash_icon(text: String, icon: web_sys::Element) 
         return;
     }
     let original = icon.text_content().unwrap_or_default();
-    icon.set_text_content(Some("check"));
+    icon.set_text_content(Some("check_circle"));
     let _ = icon.class_list().add_1("text-[#166534]");
     gloo_timers::future::TimeoutFuture::new(2000).await;
     icon.set_text_content(Some(&original));

@@ -18,8 +18,10 @@ fn LegalPage(
                     <A href=other_href attr:class="text-label-md text-secondary hover:underline">{other_label}</A>
                 </div>
                 {children()}
-                <crate::page_shell::PageFooter/>
             </main>
+            <div class="max-w-[1280px] mx-auto w-full px-margin-desktop">
+                <crate::page_shell::PageFooter/>
+            </div>
         </div>
     }
 }

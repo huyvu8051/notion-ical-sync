@@ -15,7 +15,7 @@ pub struct SyncLogRow {
 #[derive(Clone, Serialize, Deserialize)]
 pub struct SyncLogPageData {
     pub html_lang: String,
-    pub top_nav_html: String,
+    pub email: String,
     pub calendar_name: String,
     pub heading_label: String,
     pub col_time: String,
@@ -97,12 +97,11 @@ async fn load_sync_log_data(public_id: String) -> Result<SyncLogPageData, Server
     .map_err(|e| ServerFnError::new(format!("failed to load sync log: {e}")))?;
 
     let l = &SYNC_LOG_LABELS;
-    let email = claims.email().map(|e| e.as_str()).unwrap_or("");
-    let top_nav_html = crate::page_shell::top_nav_html(email);
+    let email = claims.email().map(|e| e.as_str()).unwrap_or("").to_string();
 
     Ok(SyncLogPageData {
         html_lang: "en".to_string(),
-        top_nav_html,
+        email,
         calendar_name,
         heading_label: l.heading_label.to_string(),
         col_time: l.col_time.to_string(),
@@ -158,13 +157,6 @@ pub fn SyncLogRoutePage() -> impl IntoView {
 
 #[component]
 pub fn SyncLogPage(data: SyncLogPageData) -> impl IntoView {
-    #[cfg(feature = "hydrate")]
-    {
-        crate::page_shell::install_client_timezone_label();
-        crate::page_shell::install_client_local_time_labels();
-    }
-
-    let top_nav_html = data.top_nav_html.clone();
     let status_ok = data.status_ok.clone();
     let status_error = data.status_error.clone();
     let heading = format!("{} — {}", data.heading_label, data.calendar_name);
@@ -191,8 +183,8 @@ pub fn SyncLogPage(data: SyncLogPageData) -> impl IntoView {
     };
 
     view! {
-        <div id="sync-log-root">
-            <div inner_html=top_nav_html></div>
+        <div id="sync-log-root" class="pt-[64px]">
+            <crate::page_shell::HomeHeader email=data.email/>
             <main class="max-w-[1280px] mx-auto px-margin-mobile md:px-margin-desktop py-lg space-y-lg">
                 <div class="flex items-center gap-md">
                     <leptos_router::components::A href="/me" attr:class="flex items-center justify-center w-8 h-8 hover:bg-surface-container-low transition-colors duration-200 rounded">
@@ -215,7 +207,7 @@ pub fn SyncLogPage(data: SyncLogPageData) -> impl IntoView {
                         <tbody>{body_rows}</tbody>
                     </table>
                 </div>
-                <div inner_html=crate::page_shell::footer_html()></div>
+                <crate::page_shell::PageFooter/>
             </main>
         </div>
     }
@@ -249,7 +241,7 @@ fn SyncLogRowView(row: SyncLogRow, status_ok: String, status_error: String) -> i
 
     view! {
         <tr class="border-t border-outline-variant align-top">
-            <td class="occurred-at px-md py-sm" data-utc=row.occurred_at.clone()>{row.occurred_at.clone()}</td>
+            <td class="px-md py-sm"><crate::page_shell::LocalTime utc=row.occurred_at.clone()/></td>
             <td class="px-md py-sm">
                 <span class="inline-block px-sm py-[2px] rounded bg-surface-container-low text-label-md">{row.source.clone()}</span>
             </td>

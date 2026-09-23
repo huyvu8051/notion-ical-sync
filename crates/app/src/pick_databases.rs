@@ -12,7 +12,7 @@ pub struct CandidateData {
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct PickDatabasesPageData {
-    pub top_nav_html: String,
+    pub email: String,
     pub connection_id: i64,
     pub candidates: Vec<CandidateData>,
 }
@@ -145,7 +145,6 @@ pub fn PickDatabasesRoutePage() -> impl IntoView {
     let email = crate::page_shell::current_user_email();
     #[cfg(not(feature = "ssr"))]
     let email = String::new();
-    let top_nav_html = crate::page_shell::top_nav_html(&email);
     let candidates = Resource::new(move || connection_id, list_candidates);
     view! {
         <leptos_meta::Title text="Pick a database — NotionCal"/>
@@ -155,7 +154,7 @@ pub fn PickDatabasesRoutePage() -> impl IntoView {
                 let candidates = result.unwrap_or_default();
                 view! {
                     <PickDatabasesPage data=PickDatabasesPageData {
-                        top_nav_html: top_nav_html.clone(),
+                        email: email.clone(),
                         connection_id,
                         candidates,
                     }/>
@@ -167,15 +166,10 @@ pub fn PickDatabasesRoutePage() -> impl IntoView {
 
 #[component]
 pub fn PickDatabasesPage(data: PickDatabasesPageData) -> impl IntoView {
-    #[cfg(feature = "hydrate")]
-    crate::page_shell::install_client_timezone_label();
-
-    let top_nav_html = data.top_nav_html.clone();
-
     if data.candidates.is_empty() {
         return view! {
-            <div id="pick-databases-root">
-                <div inner_html=top_nav_html></div>
+            <div id="pick-databases-root" class="pt-[64px]">
+                <crate::page_shell::HomeHeader email=data.email/>
                 <main class="flex-grow flex flex-col items-center justify-center px-margin-mobile text-center">
                     <h1 class="text-h1 text-primary mb-sm">"Pick a database to sync"</h1>
                     <p class="text-on-surface-variant text-body-lg">
@@ -183,8 +177,10 @@ pub fn PickDatabasesPage(data: PickDatabasesPageData) -> impl IntoView {
                         <a class="text-secondary underline" href="/connect/notion/start">"Grant more access on Notion"</a>
                         "."
                     </p>
-                    <div class="mt-md" inner_html=crate::page_shell::CLIENT_TZ_SPAN_HTML></div>
                 </main>
+                <div class="max-w-[1280px] mx-auto w-full px-margin-desktop">
+                    <crate::page_shell::PageFooter/>
+                </div>
             </div>
         }
         .into_any();
@@ -227,7 +223,7 @@ pub fn PickDatabasesPage(data: PickDatabasesPageData) -> impl IntoView {
                     <div class="flex-grow">
                         <h3 class="text-h3 text-primary">{c.title}</h3>
                         <p class="text-on-surface-variant text-label-md flex items-center gap-xs">
-                            <span class="material-symbols-outlined text-[14px]">"calendar_today"</span>
+                            <span class="material-symbols-outlined !text-[14px]">"calendar_today"</span>
                             {format!("Has a date property: {date_prop}")}
                         </p>
                     </div>
@@ -244,7 +240,7 @@ pub fn PickDatabasesPage(data: PickDatabasesPageData) -> impl IntoView {
                             <span class="bg-error-container text-on-error-container text-[10px] px-xs py-[2px] rounded font-bold uppercase tracking-wider">"Error"</span>
                         </div>
                         <p class="text-error text-label-md flex items-center gap-xs mt-1">
-                            <span class="material-symbols-outlined text-[14px]">"warning"</span>
+                            <span class="material-symbols-outlined !text-[14px]">"warning"</span>
                             "No date property found"
                         </p>
                     </div>
@@ -256,8 +252,8 @@ pub fn PickDatabasesPage(data: PickDatabasesPageData) -> impl IntoView {
         .collect_view();
 
     view! {
-        <div id="pick-databases-root">
-            <div inner_html=top_nav_html></div>
+        <div id="pick-databases-root" class="pt-[64px]">
+            <crate::page_shell::HomeHeader email=data.email/>
             <main class="flex-grow flex flex-col pt-lg pb-32">
                 <div class="max-w-[720px] mx-auto w-full px-margin-mobile md:px-0">
                     <section class="mb-xl">
@@ -267,14 +263,14 @@ pub fn PickDatabasesPage(data: PickDatabasesPageData) -> impl IntoView {
                     <form method="post" action="/connect/notion/databases">
                         <input type="hidden" name="connection_id" value=connection_id/>
                         <div class="space-y-md">{rows}</div>
-                        <div class="mt-xl text-center space-y-sm">
+                        <div class="mt-xl text-center">
                             <a class="text-on-surface-variant hover:text-primary transition-colors text-label-md" href="/connect/notion/start">"Don't see the database you need? Grant more access on Notion"</a>
-                            <div inner_html=crate::page_shell::CLIENT_TZ_SPAN_HTML></div>
                         </div>
+                        <crate::page_shell::PageFooter/>
                         <div class="fixed bottom-0 left-0 right-0 bg-white/80 backdrop-blur-md border-t border-outline-variant py-md z-40">
                             <div class="max-w-[1280px] mx-auto px-margin-desktop flex justify-between items-center">
                                 <leptos_router::components::A href="/me" attr:class="px-lg h-[40px] border border-outline-variant text-primary text-label-md rounded hover:bg-surface-container-low transition-colors flex items-center gap-sm">
-                                    <span class="material-symbols-outlined text-[18px]">"arrow_back"</span>
+                                    <span class="material-symbols-outlined !text-[18px]">"arrow_back"</span>
                                     "Back"
                                 </leptos_router::components::A>
                                 <button
@@ -288,7 +284,7 @@ pub fn PickDatabasesPage(data: PickDatabasesPageData) -> impl IntoView {
                                     } else {
                                         "Select at least 1 database".to_string()
                                     }}
-                                    <span class="material-symbols-outlined text-[18px]">
+                                    <span class="material-symbols-outlined !text-[18px]">
                                         {move || if checked_count.get() > 0 { "arrow_forward" } else { "error" }}
                                     </span>
                                 </button>
