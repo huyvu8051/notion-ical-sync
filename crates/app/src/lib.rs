@@ -66,7 +66,7 @@ fn HomeStyleHeader() -> impl IntoView {
     };
     view! {
         <Show when=is_home_style_page fallback=|| ()>
-            <div inner_html=page_shell::HOME_HEADER_HTML></div>
+            <page_shell::HomeHeader/>
         </Show>
     }
 }

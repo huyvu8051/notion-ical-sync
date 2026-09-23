@@ -34,4 +34,4 @@ wasm-bindgen-futures = "0.4"
 gloo-net = { version = "0.6", features = ["http"] }
 gloo-timers = { version = "0.3", features = ["futures"] }
 js-sys = "0.3"
-web-sys = { version = "0.3", features = ["Window", "Location", "Document", "HtmlDocument"] }
+web-sys = { version = "0.3", features = ["Window", "Location", "Document", "HtmlDocument", "Navigator", "Clipboard"] }
