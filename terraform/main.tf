@@ -49,4 +49,12 @@ resource "keycloak_oidc_google_identity_provider" "google" {
   trust_email    = true
   sync_mode      = "IMPORT"
   default_scopes = "openid email profile"
+
+  # Without this, Google silently re-authenticates whichever account still
+  # has an active browser session instead of showing the account chooser —
+  # logging out of this app (or even Keycloak) never touches Google's own
+  # session, so users could never switch Google accounts from the login page.
+  extra_config = {
+    prompt = "select_account"
+  }
 }
