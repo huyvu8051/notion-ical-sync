@@ -124,8 +124,6 @@ const WEBVIEW_JS_SYNCHRONOUS_QUEUEING_BOOTSTRAP: &str = r#"
 })();
 "#;
 
-use crate::page_shell::GOOGLE_FONTS_HREF;
-
 #[cfg(feature = "ssr")]
 fn webview_labels() -> WebviewLabels {
     WebviewLabels {
@@ -287,8 +285,6 @@ pub fn WebviewRoutePage() -> impl IntoView {
     view! {
         <leptos_meta::Style>{WEBVIEW_HEAD_STYLE}</leptos_meta::Style>
         <leptos_meta::Link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.15/index.global.min.css"/>
-        <leptos_meta::Link rel="stylesheet" href="/assets/style-auth-a.css"/>
-        <leptos_meta::Link href=GOOGLE_FONTS_HREF rel="stylesheet"/>
         <leptos_meta::Script>{WEBVIEW_JS_SYNCHRONOUS_QUEUEING_BOOTSTRAP}</leptos_meta::Script>
         <Suspense fallback=|| ()>
             {move || data.get().map(|result| match result {

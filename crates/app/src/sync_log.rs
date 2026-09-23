@@ -138,8 +138,6 @@ pub fn SyncLogRoutePage() -> impl IntoView {
     let data = Resource::new(public_id, load_sync_log_data);
     view! {
         <leptos_meta::Style>{crate::page_shell::ONBOARDING_HEAD_STYLE}</leptos_meta::Style>
-        <leptos_meta::Link rel="stylesheet" href="/assets/style-auth-a.css"/>
-        <leptos_meta::Link href=crate::page_shell::GOOGLE_FONTS_HREF rel="stylesheet"/>
         <Suspense fallback=|| ()>
             {move || data.get().map(|result| match result {
                 Ok(data) => view! {

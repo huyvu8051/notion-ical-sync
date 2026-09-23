@@ -16,7 +16,7 @@ pub struct ConnectNotionPageData {
     pub terms_link: String,
 }
 
-use crate::page_shell::{GOOGLE_FONTS_HREF, ONBOARDING_HEAD_STYLE};
+use crate::page_shell::ONBOARDING_HEAD_STYLE;
 
 struct ConnectNotionLabels {
     title: &'static str,
@@ -65,8 +65,6 @@ pub fn ConnectNotionRoutePage() -> impl IntoView {
     view! {
         <leptos_meta::Html attr:lang=data.html_lang.clone()/>
         <leptos_meta::Title text=format!("{} — NotionCal", data.title)/>
-        <leptos_meta::Link rel="stylesheet" href="/assets/style-auth-a.css"/>
-        <leptos_meta::Link href=GOOGLE_FONTS_HREF rel="stylesheet"/>
         <leptos_meta::Style>{ONBOARDING_HEAD_STYLE}</leptos_meta::Style>
         <ConnectNotionPage data=data/>
     }

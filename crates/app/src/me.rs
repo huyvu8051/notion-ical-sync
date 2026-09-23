@@ -40,8 +40,6 @@ const DASHBOARD_HEAD_STYLE: &str = r#"
 .error-banner-gradient { background: linear-gradient(90deg, rgba(254, 226, 226, 0.5) 0%, rgba(254, 226, 226, 0.2) 100%); }
 "#;
 
-use crate::page_shell::GOOGLE_FONTS_HREF;
-
 #[cfg(feature = "ssr")]
 const TRIAL_MONTHS: u32 = 6;
 #[cfg(feature = "ssr")]
@@ -331,8 +329,6 @@ pub fn MeRoutePage() -> impl IntoView {
     let data = Resource::new(|| (), |_| load_me_data());
     view! {
         <leptos_meta::Style>{DASHBOARD_HEAD_STYLE}</leptos_meta::Style>
-        <leptos_meta::Link rel="stylesheet" href="/assets/style-auth-a.css"/>
-        <leptos_meta::Link href=GOOGLE_FONTS_HREF rel="stylesheet"/>
         <leptos_meta::Script>{COPY_TO_CLIPBOARD_JS}</leptos_meta::Script>
         <Suspense fallback=|| ()>
             {move || data.get().and_then(|r| r.ok()).map(|data| view! {

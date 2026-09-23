@@ -149,8 +149,6 @@ pub fn PickDatabasesRoutePage() -> impl IntoView {
     let candidates = Resource::new(move || connection_id, list_candidates);
     view! {
         <leptos_meta::Title text="Pick a database — NotionCal"/>
-        <leptos_meta::Link rel="stylesheet" href="/assets/style-auth-a.css"/>
-        <leptos_meta::Link href=crate::page_shell::GOOGLE_FONTS_HREF rel="stylesheet"/>
         <leptos_meta::Style>{crate::page_shell::ONBOARDING_HEAD_STYLE}</leptos_meta::Style>
         <Suspense fallback=|| ()>
             {move || candidates.get().map(|result| {

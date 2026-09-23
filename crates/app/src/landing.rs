@@ -12,15 +12,12 @@ pub struct LandingPageData {
 }
 
 const LANDING_HEAD_STYLE: &str = r#"
-.material-symbols-outlined { font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24; vertical-align: middle; }
 body { font-family: 'Inter', sans-serif; -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; }
 .bento-grid { display: grid; grid-template-columns: repeat(12, 1fr); gap: 1rem; }
 .hairline-border { border: 1px solid #E5E5E5; }
 .hover-lift:hover { transform: translateY(-2px); transition: transform 0.2s ease-out; border-color: #D4D4D4; }
 .glass-header { backdrop-filter: blur(8px); background: rgba(251, 249, 249, 0.85); }
 "#;
-
-use crate::page_shell::GOOGLE_FONTS_HREF;
 
 const BING_VALIDATE: &str = "B2ADD65C06672433A78251607DBB1250";
 const CANONICAL_URL: &str = "https://notion-caldav.opendiy.vn/";
@@ -244,8 +241,6 @@ fn LandingHead(data: LandingPageData) -> impl IntoView {
         <leptos_meta::Meta name="twitter:card" content="summary"/>
         <leptos_meta::Meta name="twitter:title" content=data.page_title.clone()/>
         <leptos_meta::Meta name="twitter:description" content=data.twitter_description.clone()/>
-        <leptos_meta::Link rel="stylesheet" href="/assets/style-auth-a.css"/>
-        <leptos_meta::Link href=GOOGLE_FONTS_HREF rel="stylesheet"/>
         <leptos_meta::Style>{LANDING_HEAD_STYLE}</leptos_meta::Style>
     }
 }

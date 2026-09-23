@@ -63,6 +63,9 @@ pub fn App() -> impl IntoView {
     leptos_meta::provide_meta_context();
     view! {
         <Title text="NotionCal"/>
+        <leptos_meta::Link rel="stylesheet" href="/assets/style-auth-a.css"/>
+        <leptos_meta::Link href=page_shell::GOOGLE_FONTS_HREF rel="stylesheet"/>
+        <leptos_meta::Style>{page_shell::ROOT_ICON_STYLE}</leptos_meta::Style>
         <Router>
             <Routes fallback=NotYetMigratedFallback>
                 <Route path=StaticSegment("") view=landing::LandingRoutePage/>
