@@ -148,7 +148,7 @@ pub fn SyncLogRoutePage() -> impl IntoView {
                 Err(_) => view! {
                     <div class="flex flex-col items-center justify-center py-3xl gap-md text-center">
                         <p class="text-on-surface-variant">"This log wasn't found."</p>
-                        <a class="text-secondary underline" href="/me">"Back"</a>
+                        <leptos_router::components::A href="/me" attr:class="text-secondary underline">"Back"</leptos_router::components::A>
                     </div>
                 }.into_any(),
             })}
@@ -195,9 +195,9 @@ pub fn SyncLogPage(data: SyncLogPageData) -> impl IntoView {
             <div inner_html=top_nav_html></div>
             <main class="max-w-[1280px] mx-auto px-margin-mobile md:px-margin-desktop py-lg space-y-lg">
                 <div class="flex items-center gap-md">
-                    <a class="flex items-center justify-center w-8 h-8 hover:bg-surface-container-low transition-colors duration-200 rounded" href="/me">
+                    <leptos_router::components::A href="/me" attr:class="flex items-center justify-center w-8 h-8 hover:bg-surface-container-low transition-colors duration-200 rounded">
                         <span class="material-symbols-outlined">arrow_back</span>
-                    </a>
+                    </leptos_router::components::A>
                     <h1 class="text-h1 font-semibold">{heading}</h1>
                 </div>
                 <div class="bg-surface border border-outline-variant rounded-lg overflow-hidden overflow-x-auto">

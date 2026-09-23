@@ -296,7 +296,7 @@ pub fn WebviewRoutePage() -> impl IntoView {
                 Err(_) => view! {
                     <div class="flex flex-col items-center justify-center py-3xl gap-md text-center">
                         <p class="text-on-surface-variant">"This calendar wasn't found."</p>
-                        <a class="text-secondary underline" href="/me">"Back"</a>
+                        <leptos_router::components::A href="/me" attr:class="text-secondary underline">"Back"</leptos_router::components::A>
                     </div>
                 }.into_any(),
             })}

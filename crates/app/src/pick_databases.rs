@@ -273,10 +273,10 @@ pub fn PickDatabasesPage(data: PickDatabasesPageData) -> impl IntoView {
                         </div>
                         <div class="fixed bottom-0 left-0 right-0 bg-white/80 backdrop-blur-md border-t border-outline-variant py-md z-40">
                             <div class="max-w-[1280px] mx-auto px-margin-desktop flex justify-between items-center">
-                                <a class="px-lg h-[40px] border border-outline-variant text-primary text-label-md rounded hover:bg-surface-container-low transition-colors flex items-center gap-sm" href="/me">
+                                <leptos_router::components::A href="/me" attr:class="px-lg h-[40px] border border-outline-variant text-primary text-label-md rounded hover:bg-surface-container-low transition-colors flex items-center gap-sm">
                                     <span class="material-symbols-outlined text-[18px]">"arrow_back"</span>
                                     "Back"
-                                </a>
+                                </leptos_router::components::A>
                                 <button
                                     type="submit"
                                     id="continue-btn"
