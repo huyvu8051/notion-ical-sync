@@ -14,7 +14,7 @@ body { font-family: -apple-system, sans-serif; max-width: 720px; margin: 3rem au
 h1 { margin-bottom: 0.25rem; }
 .updated { color: #888; font-size: 0.85rem; margin-bottom: 2rem; }
 h2 { margin-top: 2rem; font-size: 1.15rem; }
-ul { padding-left: 1.25rem; }
+ul { padding-left: 1.25rem; list-style: disc; }
 li { margin: 0.35rem 0; }
 a { color: #2563eb; }
 .top-nav { display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem; }
