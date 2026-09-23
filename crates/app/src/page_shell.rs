@@ -3,6 +3,27 @@ pub(crate) const GOOGLE_FONTS_HREF: &str = "https://fonts.googleapis.com/css2?fa
 pub(crate) const ROOT_ICON_STYLE: &str =
     ".material-symbols-outlined { font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24; vertical-align: middle; }";
 
+pub(crate) const HOME_HEADER_STYLE: &str =
+    ".glass-header { backdrop-filter: blur(8px); background: rgba(251, 249, 249, 0.85); }";
+
+pub(crate) const HOME_HEADER_HTML: &str = r##"<header class="fixed top-0 left-0 right-0 z-50 glass-header border-b border-outline-variant">
+<div class="max-w-[1280px] mx-auto w-full px-margin-desktop h-[64px] flex justify-between items-center">
+<div class="flex items-center gap-8">
+<a class="text-h2 font-bold text-primary flex items-center gap-2" href="/">
+<span class="material-symbols-outlined text-primary">calendar_month</span>
+NotionCal
+</a>
+<nav class="hidden md:flex items-center gap-6">
+<a class="text-body-md text-on-surface-variant hover:text-primary transition-colors" href="/#how-it-works">How it works</a>
+<a class="text-body-md text-on-surface-variant hover:text-primary transition-colors" href="/#pricing">Pricing</a>
+</nav>
+</div>
+<div class="flex items-center gap-4">
+<a class="bg-primary text-on-primary text-label-md px-4 py-2 rounded transition-transform active:scale-95 duration-100" href="/me" rel="external">Log in / Sign up</a>
+</div>
+</div>
+</header>"##;
+
 pub(crate) const ONBOARDING_HEAD_STYLE: &str = r#"
 body { background-color: #fbf9f9; color: #1b1c1c; -webkit-font-smoothing: antialiased; }
 .custom-checkbox:checked { background-color: #000000; border-color: #000000; }

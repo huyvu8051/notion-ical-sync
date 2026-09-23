@@ -16,30 +16,12 @@ body { font-family: 'Inter', sans-serif; -webkit-font-smoothing: antialiased; -m
 .bento-grid { display: grid; grid-template-columns: repeat(12, 1fr); gap: 1rem; }
 .hairline-border { border: 1px solid #E5E5E5; }
 .hover-lift:hover { transform: translateY(-2px); transition: transform 0.2s ease-out; border-color: #D4D4D4; }
-.glass-header { backdrop-filter: blur(8px); background: rgba(251, 249, 249, 0.85); }
 "#;
 
 const BING_VALIDATE: &str = "B2ADD65C06672433A78251607DBB1250";
 const CANONICAL_URL: &str = "https://notion-caldav.opendiy.vn/";
 
-const BODY_HTML: &str = r##"
-<header class="fixed top-0 left-0 right-0 z-50 glass-header border-b border-outline-variant">
-<div class="max-w-[1280px] mx-auto w-full px-margin-desktop h-[64px] flex justify-between items-center">
-<div class="flex items-center gap-8">
-<a class="text-h2 font-bold text-primary flex items-center gap-2" href="/">
-<span class="material-symbols-outlined text-primary">calendar_month</span>
-NotionCal
-</a>
-<nav class="hidden md:flex items-center gap-6">
-<a class="text-body-md text-on-surface-variant hover:text-primary transition-colors" href="#how-it-works">How it works</a>
-<a class="text-body-md text-on-surface-variant hover:text-primary transition-colors" href="#pricing">Pricing</a>
-</nav>
-</div>
-<div class="flex items-center gap-4">
-<a class="bg-primary text-on-primary text-label-md px-4 py-2 rounded transition-transform active:scale-95 duration-100" href="/me" rel="external">Log in / Sign up</a>
-</div>
-</div>
-</header>
+const BODY_HTML_AFTER_HEADER: &str = r##"
 <main class="pt-[64px]">
 <section class="max-w-[1280px] mx-auto px-margin-desktop py-xl md:py-[120px]">
 <div class="grid grid-cols-1 lg:grid-cols-2 gap-xl items-center">
@@ -212,7 +194,7 @@ pub fn landing_data() -> LandingPageData {
         meta_description: "Sync your Notion database with Apple Calendar, Google Calendar, or any CalDAV app. Two-way editing, free for the first 6 months.".to_string(),
         twitter_description: "Sync your Notion database with Apple Calendar, Google Calendar, or any CalDAV app.".to_string(),
         og_locale: "en_US".to_string(),
-        body_html: BODY_HTML.to_string(),
+        body_html: format!("{}{}", crate::page_shell::HOME_HEADER_HTML, BODY_HTML_AFTER_HEADER),
     }
 }
 

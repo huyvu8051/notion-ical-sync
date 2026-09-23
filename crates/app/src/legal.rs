@@ -4,7 +4,6 @@ use serde::{Deserialize, Serialize};
 #[derive(Clone, Serialize, Deserialize)]
 pub struct LegalPageData {
     pub title: String,
-    pub top_nav_html: String,
     pub body_html: String,
 }
 
@@ -65,10 +64,9 @@ the infrastructure hosting our servers.</p>
 <p>Questions about this policy: <a class="text-secondary underline" href="mailto:huyvu8051@gmail.com">huyvu8051@gmail.com</a></p>
 "#;
 
-pub fn privacy_data(top_nav_html: String) -> LegalPageData {
+pub fn privacy_data() -> LegalPageData {
     LegalPageData {
         title: PRIVACY_TITLE.to_string(),
-        top_nav_html,
         body_html: PRIVACY_BODY_HTML.to_string(),
     }
 }
@@ -118,10 +116,9 @@ means you accept the updated terms.</p>
 <p><a class="text-secondary underline" href="mailto:huyvu8051@gmail.com">huyvu8051@gmail.com</a></p>
 "#;
 
-pub fn terms_data(top_nav_html: String) -> LegalPageData {
+pub fn terms_data() -> LegalPageData {
     LegalPageData {
         title: TERMS_TITLE.to_string(),
-        top_nav_html,
         body_html: TERMS_BODY_HTML.to_string(),
     }
 }
@@ -146,14 +143,10 @@ pub fn LegalPage(data: LegalPageData) -> impl IntoView {
     view! {
         <leptos_meta::Html attr:lang="en"/>
         <leptos_meta::Title text=title/>
-        <leptos_meta::Style>{crate::page_shell::ONBOARDING_HEAD_STYLE}</leptos_meta::Style>
-        <div id="legal-root">
-            <div inner_html=data.top_nav_html></div>
-            <main class="max-w-[720px] mx-auto px-margin-mobile md:px-margin-desktop py-lg space-y-lg">
-                <div class="flex items-center justify-between gap-md">
-                    <A href="/" attr:class="flex items-center justify-center w-8 h-8 hover:bg-surface-container-low transition-colors duration-200 rounded">
-                        <span class="material-symbols-outlined">arrow_back</span>
-                    </A>
+        <div id="legal-root" class="bg-background text-on-surface min-h-screen">
+            <div inner_html=crate::page_shell::HOME_HEADER_HTML></div>
+            <main class="max-w-[720px] mx-auto px-margin-mobile md:px-margin-desktop pt-[64px] pb-lg space-y-lg">
+                <div class="flex justify-end">
                     <A href=other_href attr:class="text-label-md text-secondary hover:underline">{other_label}</A>
                 </div>
                 <div inner_html=data.body_html></div>
@@ -165,18 +158,10 @@ pub fn LegalPage(data: LegalPageData) -> impl IntoView {
 
 #[component]
 pub fn PrivacyRoutePage() -> impl IntoView {
-    #[cfg(feature = "ssr")]
-    let email = crate::page_shell::current_user_email();
-    #[cfg(not(feature = "ssr"))]
-    let email = String::new();
-    view! { <LegalPage data=privacy_data(crate::page_shell::top_nav_html(&email))/> }
+    view! { <LegalPage data=privacy_data()/> }
 }
 
 #[component]
 pub fn TermsRoutePage() -> impl IntoView {
-    #[cfg(feature = "ssr")]
-    let email = crate::page_shell::current_user_email();
-    #[cfg(not(feature = "ssr"))]
-    let email = String::new();
-    view! { <LegalPage data=terms_data(crate::page_shell::top_nav_html(&email))/> }
+    view! { <LegalPage data=terms_data()/> }
 }

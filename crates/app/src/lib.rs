@@ -66,6 +66,7 @@ pub fn App() -> impl IntoView {
         <leptos_meta::Link rel="stylesheet" href="/assets/style-auth-a.css"/>
         <leptos_meta::Link href=page_shell::GOOGLE_FONTS_HREF rel="stylesheet"/>
         <leptos_meta::Style>{page_shell::ROOT_ICON_STYLE}</leptos_meta::Style>
+        <leptos_meta::Style>{page_shell::HOME_HEADER_STYLE}</leptos_meta::Style>
         <Router>
             <Routes fallback=NotYetMigratedFallback>
                 <Route path=StaticSegment("") view=landing::LandingRoutePage/>
