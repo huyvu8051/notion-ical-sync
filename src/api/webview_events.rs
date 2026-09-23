@@ -22,8 +22,7 @@ pub async fn handle_list_events(
         Err(status) => return status.into_response(),
     };
 
-    let cache = state.cache.read().await;
-    let pages = cache.get(&cal.database_id).cloned().unwrap_or_default();
+    let pages = state.pages_for_calendar(cal.id).await;
     let events: Vec<_> = pages
         .into_iter()
         .map(|p| {

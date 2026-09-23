@@ -26,15 +26,5 @@ pub async fn delete_calendar(
         return error_page(OauthError::FailedToDeleteCalendar);
     }
 
-    let still_referenced: i64 =
-        sqlx::query_scalar("SELECT count(*) FROM calendars WHERE database_id = $1")
-            .bind(&cal.database_id)
-            .fetch_one(&state.db)
-            .await
-            .unwrap_or(1);
-    if still_referenced == 0 {
-        state.cache.write().await.remove(&cal.database_id);
-    }
-
     Redirect::to("/me").into_response()
 }

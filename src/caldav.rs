@@ -9,8 +9,7 @@ use axum::{
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use sqlx::PgPool;
-use std::{collections::HashMap, sync::Arc, time::Duration};
-use tokio::sync::RwLock;
+use std::{collections::HashMap, time::Duration};
 use tower_http::cors::CorsLayer;
 use tower_http::trace::{DefaultMakeSpan, TraceLayer};
 use tracing::{error, info};
@@ -31,6 +30,48 @@ pub struct PageInfo {
     pub travel_minutes: Option<i64>,
     pub repeat_rule: Option<String>,
     pub attendees: Vec<String>,
+}
+
+/// Row shape for `calendar_page_state`, the durable copy of `PageInfo` used
+/// by `AppState::pages_for_calendar`. `priority` is SMALLINT in Postgres
+/// (no unsigned integer type), hence the i16 here and the cast in `From`.
+#[derive(sqlx::FromRow)]
+struct PageInfoRow {
+    notion_page_id: String,
+    title: String,
+    start_at: String,
+    end_at: Option<String>,
+    url: String,
+    last_edited: String,
+    location: Option<String>,
+    notes: Option<String>,
+    priority: Option<i16>,
+    busy: Option<bool>,
+    reminder_minutes: Option<i64>,
+    travel_minutes: Option<i64>,
+    repeat_rule: Option<String>,
+    attendees: Vec<String>,
+}
+
+impl From<PageInfoRow> for PageInfo {
+    fn from(r: PageInfoRow) -> Self {
+        PageInfo {
+            id: r.notion_page_id,
+            title: r.title,
+            start: r.start_at,
+            end: r.end_at,
+            url: r.url,
+            last_edited: r.last_edited,
+            location: r.location,
+            notes: r.notes,
+            priority: r.priority.map(|p| p as u8),
+            busy: r.busy,
+            reminder_minutes: r.reminder_minutes,
+            travel_minutes: r.travel_minutes,
+            repeat_rule: r.repeat_rule,
+            attendees: r.attendees,
+        }
+    }
 }
 
 fn find_property_case_insensitive<'a>(
@@ -196,7 +237,6 @@ impl CaldavAllowWrites {
 pub struct AppState {
     pub client: Client,
     pub db: PgPool,
-    pub cache: Arc<RwLock<HashMap<String, Vec<PageInfo>>>>,
     pub caldav_allow_writes: CaldavAllowWrites,
     pub webhook_secret: Option<String>,
     pub notion_oauth: Option<crate::pages::connect_notion::NotionOAuthConfig>,
@@ -262,7 +302,6 @@ impl AppState {
                 .build()
                 .unwrap(),
             db,
-            cache: Arc::new(RwLock::new(HashMap::new())),
             caldav_allow_writes,
             webhook_secret,
             notion_oauth,
@@ -410,22 +449,77 @@ impl AppState {
     // versus updated by the ON CONFLICT branch; RETURNING yields nothing at all when the
     // WHERE clause skipped the update because last_edited was already identical, so a
     // concurrent caller diffing the same unchanged page sees None instead of a duplicate.
+    // Writes the full page content (not just last_edited) so this table also serves as
+    // the durable, cross-pod read path for calendar data — see pages_for_calendar.
     async fn upsert_page_state(&self, calendar_id: i64, page: &PageInfo) -> Option<bool> {
         sqlx::query_as(
-            "INSERT INTO calendar_page_state (calendar_id, notion_page_id, last_edited)
-             VALUES ($1, $2, $3)
+            "INSERT INTO calendar_page_state
+                (calendar_id, notion_page_id, last_edited, title, start_at, end_at, url,
+                 location, notes, priority, busy, reminder_minutes, travel_minutes,
+                 repeat_rule, attendees)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
              ON CONFLICT (calendar_id, notion_page_id)
-             DO UPDATE SET last_edited = EXCLUDED.last_edited
+             DO UPDATE SET
+                last_edited = EXCLUDED.last_edited,
+                title = EXCLUDED.title,
+                start_at = EXCLUDED.start_at,
+                end_at = EXCLUDED.end_at,
+                url = EXCLUDED.url,
+                location = EXCLUDED.location,
+                notes = EXCLUDED.notes,
+                priority = EXCLUDED.priority,
+                busy = EXCLUDED.busy,
+                reminder_minutes = EXCLUDED.reminder_minutes,
+                travel_minutes = EXCLUDED.travel_minutes,
+                repeat_rule = EXCLUDED.repeat_rule,
+                attendees = EXCLUDED.attendees
              WHERE calendar_page_state.last_edited IS DISTINCT FROM EXCLUDED.last_edited
              RETURNING (xmax = 0)",
         )
         .bind(calendar_id)
         .bind(&page.id)
         .bind(&page.last_edited)
+        .bind(&page.title)
+        .bind(&page.start)
+        .bind(&page.end)
+        .bind(&page.url)
+        .bind(&page.location)
+        .bind(&page.notes)
+        .bind(page.priority.map(|p| p as i16))
+        .bind(page.busy)
+        .bind(page.reminder_minutes)
+        .bind(page.travel_minutes)
+        .bind(&page.repeat_rule)
+        .bind(&page.attendees)
         .fetch_optional(&self.db)
         .await
         .unwrap_or(None)
         .map(|(inserted,)| inserted)
+    }
+
+    /// The durable, cross-pod read path for a calendar's events: every pod
+    /// reads the same Postgres rows instead of its own private in-memory
+    /// copy, so CalDAV/webview responses stay consistent regardless of
+    /// which pod handles the request or which pod last heard from Notion.
+    pub async fn pages_for_calendar(&self, calendar_id: i64) -> Vec<PageInfo> {
+        sqlx::query_as::<_, PageInfoRow>(
+            "SELECT notion_page_id, title, start_at, end_at, url, last_edited,
+                    location, notes, priority, busy, reminder_minutes, travel_minutes,
+                    repeat_rule, attendees
+             FROM calendar_page_state
+             WHERE calendar_id = $1
+             ORDER BY start_at DESC",
+        )
+        .bind(calendar_id)
+        .fetch_all(&self.db)
+        .await
+        .unwrap_or_else(|e| {
+            error!("failed to load cached pages for calendar {}: {}", calendar_id, e);
+            Vec::new()
+        })
+        .into_iter()
+        .map(PageInfo::from)
+        .collect()
     }
 
     async fn remove_stale_page_state(&self, calendar_id: i64, current_pages: &[PageInfo]) -> Vec<String> {
@@ -571,7 +665,7 @@ impl AppState {
             {
                 Ok(pages) => {
                     info!("DB {} synced: {} events", cal.database_id, pages.len());
-                    self.cache.write().await.insert(cal.database_id, pages);
+                    self.log_diff(cal.id, &pages).await;
                 }
                 Err(e) => error!("DB {} refresh failed: {}", cal.database_id, e),
             }
@@ -714,7 +808,6 @@ impl AppState {
     pub async fn refresh_all(&self) {
         let calendars = self.all_calendars().await;
         let mut seen = std::collections::HashSet::new();
-        let mut cache = self.cache.write().await;
         for cal in calendars {
             if !seen.insert(cal.database_id.clone()) {
                 continue;
@@ -730,7 +823,6 @@ impl AppState {
                 Ok(pages) => {
                     info!("DB {} synced: {} events", cal.database_id, pages.len());
                     self.log_diff(cal.id, &pages).await;
-                    cache.insert(cal.database_id, pages);
                 }
                 Err(e) => error!("DB {} refresh failed: {}", cal.database_id, e),
             }
@@ -760,7 +852,6 @@ impl AppState {
                     pages.len()
                 );
                 self.log_diff(cal.id, &pages).await;
-                self.cache.write().await.insert(cal.database_id, pages);
             }
             Err(e) => error!(
                 "DB {} webhook-triggered refresh failed: {}",
@@ -1539,8 +1630,7 @@ pub async fn handle_calendar_impl(
         return axum::http::StatusCode::OK.into_response();
     }
     if method == axum::http::Method::GET {
-        let cache = state.cache.read().await;
-        let pages = cache.get(&cal.database_id).cloned().unwrap_or_default();
+        let pages = state.pages_for_calendar(cal.id).await;
         let body = build_ics(&public_id, &name, &pages);
         return (
             [(header::CONTENT_TYPE, "text/calendar; charset=utf-8")],
@@ -1555,8 +1645,7 @@ pub async fn handle_calendar_impl(
             .and_then(|v| v.to_str().ok())
             .unwrap_or("0");
         let body = if depth == "1" {
-            let cache = state.cache.read().await;
-            let pages = cache.get(&cal.database_id).cloned().unwrap_or_default();
+            let pages = state.pages_for_calendar(cal.id).await;
             build_propfind_calendar_with_events(&prefix, &name, &pages)
         } else {
             build_propfind_calendar(&prefix, &name)
@@ -1596,8 +1685,7 @@ pub async fn handle_calendar_impl(
     }
 
     if method.as_str() == "REPORT" {
-        let cache = state.cache.read().await;
-        let pages = cache.get(&cal.database_id).cloned().unwrap_or_default();
+        let pages = state.pages_for_calendar(cal.id).await;
         let body = build_report_response(&public_id, &prefix, &name, &pages);
         return (
             axum::http::StatusCode::MULTI_STATUS,
@@ -1652,8 +1740,7 @@ pub async fn handle_calendar_event_impl(
         return axum::http::StatusCode::OK.into_response();
     }
     if method == axum::http::Method::GET {
-        let cache = state.cache.read().await;
-        let pages = cache.get(&cal.database_id).cloned().unwrap_or_default();
+        let pages = state.pages_for_calendar(cal.id).await;
         if let Some(page) = pages.iter().find(|p| matches_id(&p.id, &event_id_clean)) {
             let body = build_ics(&public_id, &name, std::slice::from_ref(page));
             info!(status = 200, found = true, "CalDAV event GET");
@@ -1669,8 +1756,7 @@ pub async fn handle_calendar_event_impl(
     }
 
     if method.as_str() == "PROPFIND" {
-        let cache = state.cache.read().await;
-        let pages = cache.get(&cal.database_id).cloned().unwrap_or_default();
+        let pages = state.pages_for_calendar(cal.id).await;
         if let Some(page) = pages.iter().find(|p| matches_id(&p.id, &event_id_clean)) {
             let body = build_propfind_event(&prefix, &event_id_clean, page);
             return (
@@ -1686,15 +1772,12 @@ pub async fn handle_calendar_event_impl(
 
     if method == axum::http::Method::PUT {
         let new_page = parse_ics_to_page_info(&body, &event_id_clean);
-        let existing_id = {
-            let cache = state.cache.read().await;
-            cache.get(&cal.database_id).and_then(|pages| {
-                pages
-                    .iter()
-                    .find(|p| matches_id(&p.id, &event_id_clean))
-                    .map(|p| p.id.clone())
-            })
-        };
+        let existing_id = state
+            .pages_for_calendar(cal.id)
+            .await
+            .iter()
+            .find(|p| matches_id(&p.id, &event_id_clean))
+            .map(|p| p.id.clone());
         let existing_id = match existing_id {
             Some(id) => Some(id),
             None => state.lookup_caldav_uid(cal.id, &event_id_clean).await,
@@ -1792,15 +1875,12 @@ pub async fn handle_calendar_event_impl(
     }
 
     if method == axum::http::Method::DELETE {
-        let existing_id = {
-            let cache = state.cache.read().await;
-            cache.get(&cal.database_id).and_then(|pages| {
-                pages
-                    .iter()
-                    .find(|p| matches_id(&p.id, &event_id_clean))
-                    .map(|p| p.id.clone())
-            })
-        };
+        let existing_id = state
+            .pages_for_calendar(cal.id)
+            .await
+            .iter()
+            .find(|p| matches_id(&p.id, &event_id_clean))
+            .map(|p| p.id.clone());
         let existing_id = match existing_id {
             Some(id) => Some(id),
             None => state.lookup_caldav_uid(cal.id, &event_id_clean).await,
@@ -2299,7 +2379,6 @@ async fn handle_calendars_propfind(
 <D:multistatus xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:caldav">"#,
         );
 
-        let cache = state.cache.read().await;
         for cal in cals_to_return {
             let name = if cal.display_name.is_empty() {
                 state
@@ -2313,7 +2392,7 @@ async fn handle_calendars_propfind(
             } else {
                 format!("/cal/{}/", cal.public_id)
             };
-            let pages = cache.get(&cal.database_id).cloned().unwrap_or_default();
+            let pages = state.pages_for_calendar(cal.id).await;
             for page in pages {
                 let clean_id = page.id.replace("-", "");
                 let etag = &page.last_edited;
@@ -2622,13 +2701,10 @@ pub fn create_app(
                 move |axum::Extension(auth): axum::Extension<AuthenticatedCaldavUser>,
                       State(state): State<AppState>| async move {
                     let my_cals = state.calendars_for_user(auth.user_id).await;
-                    let cache = state.cache.read().await;
                     let mut all_pages: Vec<PageInfo> = Vec::new();
                     let mut names: Vec<String> = Vec::new();
                     for cal in &my_cals {
-                        if let Some(pages) = cache.get(&cal.database_id) {
-                            all_pages.extend(pages.clone());
-                        }
+                        all_pages.extend(state.pages_for_calendar(cal.id).await);
                         names.push(if cal.display_name.is_empty() {
                             format!("Notion {}", &cal.database_id[..8])
                         } else {
