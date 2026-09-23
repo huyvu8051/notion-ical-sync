@@ -3,8 +3,9 @@ logs/
 .env
 backups/
 node_modules/
+.DS_Store
 
-# wasm-bindgen output for the islands crate (crates/islands) — built by the
+# wasm-bindgen output for the app crate's hydrate build — built by the
 # Dockerfile's wasm-builder stage, not committed.
 pkg/
 

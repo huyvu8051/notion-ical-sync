@@ -19,9 +19,7 @@ resource "keycloak_openid_client" "app" {
   name      = "Notion CalDAV SaaS app"
   enabled   = true
 
-  # Confidential: the axum backend holds the client secret and does the
-  # authorization-code exchange server-side — nothing OIDC-related runs in
-  # the browser/wasm (this app has no wasm build at all, see webview.rs).
+  # Confidential: the axum backend holds the client secret and does the code exchange server-side.
   access_type = "CONFIDENTIAL"
 
   standard_flow_enabled        = true

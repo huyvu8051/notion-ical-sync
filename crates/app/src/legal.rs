@@ -4,34 +4,20 @@ use serde::{Deserialize, Serialize};
 #[derive(Clone, Serialize, Deserialize)]
 pub struct LegalPageData {
     pub title: String,
-    pub back_label: String,
+    pub top_nav_html: String,
     pub body_html: String,
 }
 
-const LEGAL_STYLE: &str = r#"
-* { box-sizing: border-box; }
-body { font-family: -apple-system, sans-serif; max-width: 720px; margin: 3rem auto; padding: 0 1.25rem; line-height: 1.6; color: #1a1a1a; }
-h1 { margin-bottom: 0.25rem; }
-.updated { color: #888; font-size: 0.85rem; margin-bottom: 2rem; }
-h2 { margin-top: 2rem; font-size: 1.15rem; }
-ul { padding-left: 1.25rem; list-style: disc; }
-li { margin: 0.35rem 0; }
-a { color: #2563eb; }
-.top-nav { display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem; }
-.top-nav a.back { font-size: 0.85rem; color: #666; text-decoration: none; }
-"#;
-
 const PRIVACY_TITLE: &str = "Privacy Policy";
-const PRIVACY_BACK_LABEL: &str = "← Back";
 const PRIVACY_BODY_HTML: &str = r#"
-<h1>Privacy Policy</h1>
-<p class="updated">Last updated: 2026-08-02</p>
+<h1 class="text-h1 font-semibold text-primary mb-1">Privacy Policy</h1>
+<p class="text-label-md text-on-surface-variant mb-xl">Last updated: 2026-08-02</p>
 
-<p>NotionCal ("the Service") turns a Notion database into a CalDAV feed and
+<p class="mb-lg">NotionCal ("the Service") turns a Notion database into a CalDAV feed and
 a browser calendar view. This page explains what data we collect and how we use it.</p>
 
-<h2>What we collect</h2>
-<ul>
+<h2 class="text-h2 text-primary mt-xl mb-sm">What we collect</h2>
+<ul class="list-disc pl-lg space-y-xs mb-lg">
   <li><strong>Account:</strong> the email address from your login (via our
   self-hosted Keycloak identity provider) — used only to identify your account.</li>
   <li><strong>Notion access:</strong> when you connect your Notion workspace, we
@@ -47,27 +33,27 @@ a browser calendar view. This page explains what data we collect and how we use 
   shown to you once, at creation time, and never again.</li>
 </ul>
 
-<h2>What we don't collect</h2>
-<ul>
+<h2 class="text-h2 text-primary mt-xl mb-sm">What we don't collect</h2>
+<ul class="list-disc pl-lg space-y-xs mb-lg">
   <li>No payment or billing information — the Service is free.</li>
   <li>No analytics or advertising trackers.</li>
   <li>No data is sold or shared with third parties for marketing.</li>
 </ul>
 
-<h2>How we use it</h2>
-<p>Solely to operate the Service: fetching events from your Notion database,
+<h2 class="text-h2 text-primary mt-xl mb-sm">How we use it</h2>
+<p class="mb-lg">Solely to operate the Service: fetching events from your Notion database,
 converting them to CalDAV/iCalendar format, keeping them in sync (via periodic
 polling and Notion's webhook events), and rendering the calendar webview so you
 can view and edit events yourself.</p>
 
-<h2>Where it's stored</h2>
-<p>All data lives in a private PostgreSQL database we operate, not exposed to the
+<h2 class="text-h2 text-primary mt-xl mb-sm">Where it's stored</h2>
+<p class="mb-lg">All data lives in a private PostgreSQL database we operate, not exposed to the
 public internet, reachable only by the Service itself. We do not use third-party
 data processors beyond Notion's own API (needed to read/write your workspace) and
 the infrastructure hosting our servers.</p>
 
-<h2>Your controls</h2>
-<ul>
+<h2 class="text-h2 text-primary mt-xl mb-sm">Your controls</h2>
+<ul class="list-disc pl-lg space-y-xs mb-lg">
   <li>You can revoke the Service's access at any time from Notion's own
   "Connections" settings in your workspace — this immediately invalidates the
   access token we hold.</li>
@@ -75,33 +61,32 @@ the infrastructure hosting our servers.</p>
   credentials), email us at the address below.</li>
 </ul>
 
-<h2>Contact</h2>
-<p>Questions about this policy: <a href="mailto:huyvu8051@gmail.com">huyvu8051@gmail.com</a></p>
+<h2 class="text-h2 text-primary mt-xl mb-sm">Contact</h2>
+<p>Questions about this policy: <a class="text-secondary underline" href="mailto:huyvu8051@gmail.com">huyvu8051@gmail.com</a></p>
 "#;
 
-pub fn privacy_data() -> LegalPageData {
+pub fn privacy_data(top_nav_html: String) -> LegalPageData {
     LegalPageData {
         title: PRIVACY_TITLE.to_string(),
-        back_label: PRIVACY_BACK_LABEL.to_string(),
+        top_nav_html,
         body_html: PRIVACY_BODY_HTML.to_string(),
     }
 }
 
 const TERMS_TITLE: &str = "Terms of Service";
-const TERMS_BACK_LABEL: &str = "← Back";
 const TERMS_BODY_HTML: &str = r#"
-<h1>Terms of Service</h1>
-<p class="updated">Last updated: 2026-08-02</p>
+<h1 class="text-h1 font-semibold text-primary mb-1">Terms of Service</h1>
+<p class="text-label-md text-on-surface-variant mb-xl">Last updated: 2026-08-02</p>
 
-<p>By using NotionCal ("the Service"), you agree to these terms.</p>
+<p class="mb-lg">By using NotionCal ("the Service"), you agree to these terms.</p>
 
-<h2>The Service</h2>
-<p>The Service connects to a Notion workspace you authorize, and exposes the
+<h2 class="text-h2 text-primary mt-xl mb-sm">The Service</h2>
+<p class="mb-lg">The Service connects to a Notion workspace you authorize, and exposes the
 database(s) you choose as a CalDAV feed and a browser-based calendar view. It is
 provided free of charge, with no guaranteed uptime or support response time.</p>
 
-<h2>Your responsibilities</h2>
-<ul>
+<h2 class="text-h2 text-primary mt-xl mb-sm">Your responsibilities</h2>
+<ul class="list-disc pl-lg space-y-xs mb-lg">
   <li>You're responsible for the content of the Notion pages you connect, and for
   keeping your CalDAV credentials confidential.</li>
   <li>Don't use the Service to store or distribute illegal content, or in a way
@@ -111,32 +96,32 @@ provided free of charge, with no guaranteed uptime or support response time.</p>
   you connect.</li>
 </ul>
 
-<h2>No warranty</h2>
-<p>The Service is provided "as is," without warranty of any kind. We don't
+<h2 class="text-h2 text-primary mt-xl mb-sm">No warranty</h2>
+<p class="mb-lg">The Service is provided "as is," without warranty of any kind. We don't
 guarantee it will be uninterrupted, error-free, or that data will never be lost —
 Notion remains the source of truth for your data, and we recommend not relying on
 the Service as your only backup of important events.</p>
 
-<h2>Termination</h2>
-<p>We may suspend or terminate access to the Service for any account found abusing
+<h2 class="text-h2 text-primary mt-xl mb-sm">Termination</h2>
+<p class="mb-lg">We may suspend or terminate access to the Service for any account found abusing
 it (as described above), or discontinue the Service entirely. You may stop using
 the Service and revoke its Notion access at any time.</p>
 
-<h2>Changes</h2>
-<p>We may update these terms as the Service evolves; continued use after a change
+<h2 class="text-h2 text-primary mt-xl mb-sm">Changes</h2>
+<p class="mb-lg">We may update these terms as the Service evolves; continued use after a change
 means you accept the updated terms.</p>
 
-<h2>Governing law</h2>
-<p>These terms are governed by the laws of Vietnam.</p>
+<h2 class="text-h2 text-primary mt-xl mb-sm">Governing law</h2>
+<p class="mb-lg">These terms are governed by the laws of Vietnam.</p>
 
-<h2>Contact</h2>
-<p><a href="mailto:huyvu8051@gmail.com">huyvu8051@gmail.com</a></p>
+<h2 class="text-h2 text-primary mt-xl mb-sm">Contact</h2>
+<p><a class="text-secondary underline" href="mailto:huyvu8051@gmail.com">huyvu8051@gmail.com</a></p>
 "#;
 
-pub fn terms_data() -> LegalPageData {
+pub fn terms_data(top_nav_html: String) -> LegalPageData {
     LegalPageData {
         title: TERMS_TITLE.to_string(),
-        back_label: TERMS_BACK_LABEL.to_string(),
+        top_nav_html,
         body_html: TERMS_BODY_HTML.to_string(),
     }
 }
@@ -144,6 +129,8 @@ pub fn terms_data() -> LegalPageData {
 #[component]
 pub fn LegalPage(data: LegalPageData) -> impl IntoView {
     use leptos_router::components::A;
+    #[cfg(feature = "hydrate")]
+    crate::page_shell::install_client_timezone_label();
 
     let title = format!("{} — NotionCal", data.title);
     let other_href = if data.title == "Privacy Policy" {
@@ -159,27 +146,37 @@ pub fn LegalPage(data: LegalPageData) -> impl IntoView {
     view! {
         <leptos_meta::Html attr:lang="en"/>
         <leptos_meta::Title text=title/>
-        <leptos_meta::Style>{LEGAL_STYLE}</leptos_meta::Style>
+        <leptos_meta::Style>{crate::page_shell::ONBOARDING_HEAD_STYLE}</leptos_meta::Style>
         <div id="legal-root">
-            <div class="top-nav">
-                <strong>"NotionCal"</strong>
-                <span>
-                    <A href=other_href>{other_label}</A>
-                    " · "
-                    <a class="back" href="/me" rel="external">{data.back_label}</a>
-                </span>
-            </div>
-            <div inner_html=data.body_html></div>
+            <div inner_html=data.top_nav_html></div>
+            <main class="max-w-[720px] mx-auto px-margin-mobile md:px-margin-desktop py-lg space-y-lg">
+                <div class="flex items-center justify-between gap-md">
+                    <a class="flex items-center justify-center w-8 h-8 hover:bg-surface-container-low transition-colors duration-200 rounded" href="/" rel="external">
+                        <span class="material-symbols-outlined">arrow_back</span>
+                    </a>
+                    <A href=other_href attr:class="text-label-md text-secondary hover:underline">{other_label}</A>
+                </div>
+                <div inner_html=data.body_html></div>
+                <div inner_html=crate::page_shell::footer_html()></div>
+            </main>
         </div>
     }
 }
 
 #[component]
 pub fn PrivacyRoutePage() -> impl IntoView {
-    view! { <LegalPage data=privacy_data()/> }
+    #[cfg(feature = "ssr")]
+    let email = crate::page_shell::current_user_email();
+    #[cfg(not(feature = "ssr"))]
+    let email = String::new();
+    view! { <LegalPage data=privacy_data(crate::page_shell::top_nav_html(&email))/> }
 }
 
 #[component]
 pub fn TermsRoutePage() -> impl IntoView {
-    view! { <LegalPage data=terms_data()/> }
+    #[cfg(feature = "ssr")]
+    let email = crate::page_shell::current_user_email();
+    #[cfg(not(feature = "ssr"))]
+    let email = String::new();
+    view! { <LegalPage data=terms_data(crate::page_shell::top_nav_html(&email))/> }
 }
