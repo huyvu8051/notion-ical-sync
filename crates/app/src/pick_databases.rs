@@ -185,6 +185,7 @@ pub fn PickDatabasesPage(data: PickDatabasesPageData) -> impl IntoView {
                         <a class="text-secondary underline" href="/connect/notion/start">"Grant more access on Notion"</a>
                         "."
                     </p>
+                    <div class="mt-md" inner_html=crate::page_shell::CLIENT_TZ_SPAN_HTML></div>
                 </main>
             </div>
         }
@@ -268,8 +269,9 @@ pub fn PickDatabasesPage(data: PickDatabasesPageData) -> impl IntoView {
                     <form method="post" action="/connect/notion/databases">
                         <input type="hidden" name="connection_id" value=connection_id/>
                         <div class="space-y-md">{rows}</div>
-                        <div class="mt-xl text-center">
+                        <div class="mt-xl text-center space-y-sm">
                             <a class="text-on-surface-variant hover:text-primary transition-colors text-label-md" href="/connect/notion/start">"Don't see the database you need? Grant more access on Notion"</a>
+                            <div inner_html=crate::page_shell::CLIENT_TZ_SPAN_HTML></div>
                         </div>
                         <div class="fixed bottom-0 left-0 right-0 bg-white/80 backdrop-blur-md border-t border-outline-variant py-md z-40">
                             <div class="max-w-[1280px] mx-auto px-margin-desktop flex justify-between items-center">

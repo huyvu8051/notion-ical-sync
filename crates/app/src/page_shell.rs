@@ -62,7 +62,7 @@ pub(crate) fn current_user_email() -> String {
         .unwrap_or_default()
 }
 
-const CLIENT_TZ_SPAN_HTML: &str =
+pub(crate) const CLIENT_TZ_SPAN_HTML: &str =
     r#"<span id="client-tz" class="text-label-md text-on-surface-variant"></span>"#;
 
 #[cfg(feature = "hydrate")]
@@ -123,7 +123,6 @@ pub(crate) fn top_nav_html(email: &str) -> String {
 <div class="flex justify-between items-center h-16 px-lg w-full max-w-[1280px] mx-auto">
 <a href="/" class="text-h1 font-semibold tracking-tighter text-primary hover:opacity-70 transition-opacity">NotionCal</a>
 <div class="flex items-center space-x-md">
-{client_tz}
 <span class="text-on-surface-variant font-label-md text-label-md">{email}</span>
 <a class="flex items-center justify-center w-8 h-8 hover:bg-surface-container-low transition-colors duration-200 rounded" href="/logout" title="Log out">
 <span class="material-symbols-outlined">logout</span>
@@ -131,7 +130,19 @@ pub(crate) fn top_nav_html(email: &str) -> String {
 </div>
 </div>
 </header>"#,
-        client_tz = CLIENT_TZ_SPAN_HTML,
         email = html_escape(email),
+    )
+}
+
+pub(crate) fn footer_html() -> String {
+    format!(
+        r#"<p class="text-on-surface-variant text-[13px] pt-lg">
+{client_tz}
+<span class="px-2">·</span>
+<a class="underline hover:text-primary" href="/privacy">Privacy Policy</a>
+<span class="px-2">·</span>
+<a class="underline hover:text-primary" href="/terms">Terms of Service</a>
+</p>"#,
+        client_tz = CLIENT_TZ_SPAN_HTML,
     )
 }

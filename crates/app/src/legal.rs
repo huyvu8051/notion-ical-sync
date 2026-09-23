@@ -166,7 +166,7 @@ pub fn LegalPage(data: LegalPageData) -> impl IntoView {
                 <span>
                     <A href=other_href>{other_label}</A>
                     " · "
-                    <a class="back" href="/me">{data.back_label}</a>
+                    <a class="back" href="/me" rel="external">{data.back_label}</a>
                 </span>
             </div>
             <div inner_html=data.body_html></div>

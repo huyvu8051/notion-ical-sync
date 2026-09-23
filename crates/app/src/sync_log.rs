@@ -217,11 +217,7 @@ pub fn SyncLogPage(data: SyncLogPageData) -> impl IntoView {
                         <tbody>{body_rows}</tbody>
                     </table>
                 </div>
-                <p class="text-on-surface-variant text-[13px] pt-lg">
-                    <a class="underline hover:text-primary" href="/privacy">"Privacy Policy"</a>
-                    " · "
-                    <a class="underline hover:text-primary" href="/terms">"Terms of Service"</a>
-                </p>
+                <div inner_html=crate::page_shell::footer_html()></div>
             </main>
         </div>
     }

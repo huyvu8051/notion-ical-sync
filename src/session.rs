@@ -170,8 +170,12 @@ pub async fn logout(
     logout: axum_oidc::OidcRpInitiatedLogout,
     State(state): State<AppState>,
     cfg: axum::Extension<AppConfig>,
+    session: tower_sessions::Session,
 ) -> impl axum::response::IntoResponse {
     let _ = &state;
+    if let Err(e) = session.flush().await {
+        tracing::warn!("logout: failed to flush session: {}", e);
+    }
     let redirect_uri = cfg
         .base_url
         .parse()

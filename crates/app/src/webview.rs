@@ -260,7 +260,9 @@ async fn load_webview_data(public_id: String) -> Result<WebviewPageData, ServerF
 {ADD_EVENT_BTN_LABEL}
 </button>
 </div>
-</header>"##,
+</header>
+<div class="fixed bottom-2 right-3 z-40 pointer-events-none">{client_tz}</div>"##,
+        client_tz = crate::page_shell::CLIENT_TZ_SPAN_HTML,
     );
 
     Ok(WebviewPageData {

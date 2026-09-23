@@ -113,6 +113,8 @@ pub fn ConnectNotionPage(data: ConnectNotionPageData) -> impl IntoView {
 </div>
 </div>
 <div class="mt-xl text-center">
+{client_tz}
+<span class="text-outline-variant mx-2">·</span>
 <a class="text-label-md text-on-surface-variant hover:text-primary transition-colors underline underline-offset-4" href="/privacy">{privacy_link}</a>
 <span class="text-outline-variant mx-2">·</span>
 <a class="text-label-md text-on-surface-variant hover:text-primary transition-colors underline underline-offset-4" href="/terms">{terms_link}</a>
@@ -128,6 +130,7 @@ pub fn ConnectNotionPage(data: ConnectNotionPageData) -> impl IntoView {
         bullet_no_sharing = data.bullet_no_sharing,
         privacy_link = data.privacy_link,
         terms_link = data.terms_link,
+        client_tz = crate::page_shell::CLIENT_TZ_SPAN_HTML,
     );
 
     view! {

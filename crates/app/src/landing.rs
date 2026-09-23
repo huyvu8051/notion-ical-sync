@@ -39,7 +39,7 @@ NotionCal
 </nav>
 </div>
 <div class="flex items-center gap-4">
-<a class="bg-primary text-on-primary text-label-md px-4 py-2 rounded transition-transform active:scale-95 duration-100" href="/me">Log in / Sign up</a>
+<a class="bg-primary text-on-primary text-label-md px-4 py-2 rounded transition-transform active:scale-95 duration-100" href="/me" rel="external">Log in / Sign up</a>
 </div>
 </div>
 </header>
@@ -58,7 +58,7 @@ Turn your Notion database into an online calendar
 Sync your Notion workspace with Apple Calendar, Google Calendar, or any CalDAV app. Edit freely from either side.
 </p>
 <div class="pt-sm">
-<a class="bg-primary text-on-primary h-[48px] px-8 rounded-lg text-h3 inline-flex items-center gap-3 hover:opacity-90 transition-all active:scale-[0.98]" href="/me">
+<a class="bg-primary text-on-primary h-[48px] px-8 rounded-lg text-h3 inline-flex items-center gap-3 hover:opacity-90 transition-all active:scale-[0.98]" href="/me" rel="external">
 <span class="material-symbols-outlined" style="font-variation-settings: 'FILL' 1;">login</span>
 Log in / Sign up
 </a>

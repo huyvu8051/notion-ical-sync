@@ -311,7 +311,7 @@ async fn load_me_data() -> Result<MePageData, ServerFnError> {
 </div>"#
     );
 
-    let main_bottom_html = r#"<p class="text-on-surface-variant text-[13px] pt-lg"><a class="underline hover:text-primary" href="/privacy">Privacy Policy</a> · <a class="underline hover:text-primary" href="/terms">Terms of Service</a></p>"#.to_string();
+    let main_bottom_html = crate::page_shell::footer_html();
 
     let page_title = "Your calendars — NotionCal";
 
