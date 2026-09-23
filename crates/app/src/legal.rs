@@ -151,9 +151,9 @@ pub fn LegalPage(data: LegalPageData) -> impl IntoView {
             <div inner_html=data.top_nav_html></div>
             <main class="max-w-[720px] mx-auto px-margin-mobile md:px-margin-desktop py-lg space-y-lg">
                 <div class="flex items-center justify-between gap-md">
-                    <a class="flex items-center justify-center w-8 h-8 hover:bg-surface-container-low transition-colors duration-200 rounded" href="/" rel="external">
+                    <A href="/" attr:class="flex items-center justify-center w-8 h-8 hover:bg-surface-container-low transition-colors duration-200 rounded">
                         <span class="material-symbols-outlined">arrow_back</span>
-                    </a>
+                    </A>
                     <A href=other_href attr:class="text-label-md text-secondary hover:underline">{other_label}</A>
                 </div>
                 <div inner_html=data.body_html></div>
