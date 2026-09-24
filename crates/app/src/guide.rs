@@ -19,6 +19,13 @@ pub fn GuideRoutePage() -> impl IntoView {
     view! {
         <leptos_meta::Html attr:lang="en"/>
         <leptos_meta::Title text="Setup Guide — NotionCal"/>
+        <leptos_meta::Meta name="description" content="Step-by-step guide to connecting a Notion database to NotionCal and syncing it to Apple Calendar, Google Calendar, DAVx5 on Android, or any CalDAV app."/>
+        <leptos_meta::Link rel="canonical" href="https://notion-caldav.opendiy.vn/guide"/>
+        <leptos_meta::Meta property="og:site_name" content="NotionCal"/>
+        <leptos_meta::Meta property="og:type" content="website"/>
+        <leptos_meta::Meta property="og:title" content="Setup Guide — NotionCal"/>
+        <leptos_meta::Meta property="og:description" content="Step-by-step guide to connecting a Notion database to NotionCal and syncing it to Apple Calendar, Google Calendar, DAVx5 on Android, or any CalDAV app."/>
+        <leptos_meta::Meta property="og:url" content="https://notion-caldav.opendiy.vn/guide"/>
         <div id="guide-root" class="bg-background text-on-surface min-h-screen">
             <main class="max-w-[720px] mx-auto px-margin-mobile md:px-margin-desktop pt-[64px] pb-lg space-y-xl">
                 <div>

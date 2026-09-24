@@ -35,6 +35,11 @@ pub async fn sitemap_xml() -> impl IntoResponse {
     <priority>1.0</priority>
   </url>
   <url>
+    <loc>https://notion-caldav.opendiy.vn/guide</loc>
+    <changefreq>monthly</changefreq>
+    <priority>0.8</priority>
+  </url>
+  <url>
     <loc>https://notion-caldav.opendiy.vn/privacy</loc>
     <changefreq>monthly</changefreq>
     <priority>0.5</priority>

@@ -19,6 +19,22 @@ body { font-family: 'Inter', sans-serif; -webkit-font-smoothing: antialiased; -m
 
 const BING_VALIDATE: &str = "B2ADD65C06672433A78251607DBB1250";
 const CANONICAL_URL: &str = "https://notion-caldav.opendiy.vn/";
+const OG_IMAGE_URL: &str = "https://notion-caldav.opendiy.vn/static/og-image.jpg";
+
+const JSON_LD: &str = r#"{
+  "@context": "https://schema.org",
+  "@type": "SoftwareApplication",
+  "name": "NotionCal",
+  "url": "https://notion-caldav.opendiy.vn/",
+  "applicationCategory": "BusinessApplication",
+  "operatingSystem": "Web, iOS, Android",
+  "description": "Sync your Notion database with Apple Calendar, Google Calendar, or any CalDAV app. Two-way editing, free for the first 6 months.",
+  "offers": {
+    "@type": "Offer",
+    "price": "0",
+    "priceCurrency": "USD"
+  }
+}"#;
 
 pub fn landing_data() -> LandingPageData {
     LandingPageData {
@@ -52,9 +68,14 @@ fn LandingHead(data: LandingPageData) -> impl IntoView {
         <leptos_meta::Meta property="og:description" content=data.meta_description.clone()/>
         <leptos_meta::Meta property="og:url" content=CANONICAL_URL/>
         <leptos_meta::Meta property="og:locale" content=data.og_locale.clone()/>
-        <leptos_meta::Meta name="twitter:card" content="summary"/>
+        <leptos_meta::Meta property="og:image" content=OG_IMAGE_URL/>
+        <leptos_meta::Meta property="og:image:width" content="1200"/>
+        <leptos_meta::Meta property="og:image:height" content="630"/>
+        <leptos_meta::Meta name="twitter:card" content="summary_large_image"/>
         <leptos_meta::Meta name="twitter:title" content=data.page_title.clone()/>
         <leptos_meta::Meta name="twitter:description" content=data.twitter_description.clone()/>
+        <leptos_meta::Meta name="twitter:image" content=OG_IMAGE_URL/>
+        <leptos_meta::Script type_="application/ld+json">{JSON_LD}</leptos_meta::Script>
         <leptos_meta::Style>{LANDING_HEAD_STYLE}</leptos_meta::Style>
     }
 }

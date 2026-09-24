@@ -4,14 +4,24 @@ use leptos_router::components::A;
 #[component]
 fn LegalPage(
     title: &'static str,
+    description: &'static str,
+    path: &'static str,
     other_href: &'static str,
     other_label: &'static str,
     children: Children,
 ) -> impl IntoView {
     let page_title = format!("{title} — NotionCal");
+    let canonical_url = format!("https://notion-caldav.opendiy.vn{path}");
     view! {
         <leptos_meta::Html attr:lang="en"/>
-        <leptos_meta::Title text=page_title/>
+        <leptos_meta::Title text=page_title.clone()/>
+        <leptos_meta::Meta name="description" content=description/>
+        <leptos_meta::Link rel="canonical" href=canonical_url.clone()/>
+        <leptos_meta::Meta property="og:site_name" content="NotionCal"/>
+        <leptos_meta::Meta property="og:type" content="website"/>
+        <leptos_meta::Meta property="og:title" content=page_title.clone()/>
+        <leptos_meta::Meta property="og:description" content=description/>
+        <leptos_meta::Meta property="og:url" content=canonical_url/>
         <div id="legal-root" class="bg-background text-on-surface min-h-screen">
             <main class="max-w-[720px] mx-auto px-margin-mobile md:px-margin-desktop pt-[64px] pb-lg space-y-lg">
                 <div class="flex justify-end">
@@ -29,7 +39,13 @@ fn LegalPage(
 #[component]
 pub fn PrivacyRoutePage() -> impl IntoView {
     view! {
-        <LegalPage title="Privacy Policy" other_href="/terms" other_label="Terms of Service">
+        <LegalPage
+            title="Privacy Policy"
+            description="How NotionCal collects, stores, and uses your data when you sync a Notion database to a CalDAV calendar."
+            path="/privacy"
+            other_href="/terms"
+            other_label="Terms of Service"
+        >
             <h1 class="text-h1 font-semibold text-primary mb-1">"Privacy Policy"</h1>
             <p class="text-label-md text-on-surface-variant mb-xl">"Last updated: 2026-08-02"</p>
 
@@ -71,7 +87,13 @@ pub fn PrivacyRoutePage() -> impl IntoView {
 #[component]
 pub fn TermsRoutePage() -> impl IntoView {
     view! {
-        <LegalPage title="Terms of Service" other_href="/privacy" other_label="Privacy Policy">
+        <LegalPage
+            title="Terms of Service"
+            description="The terms that apply when you use NotionCal to sync a Notion database with a CalDAV calendar app."
+            path="/terms"
+            other_href="/privacy"
+            other_label="Privacy Policy"
+        >
             <h1 class="text-h1 font-semibold text-primary mb-1">"Terms of Service"</h1>
             <p class="text-label-md text-on-surface-variant mb-xl">"Last updated: 2026-08-02"</p>
 
