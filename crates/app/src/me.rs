@@ -8,6 +8,7 @@ use crate::page_shell::{CopyRow, HomeHeader, PageFooter};
 pub struct NewCredential {
     pub username: String,
     pub password: String,
+    pub mobileconfig_token: String,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -27,6 +28,7 @@ pub struct MePageData {
     pub calendars: Vec<CalendarCardData>,
     pub account_caldav_username: String,
     pub account_caldav_password: Option<String>,
+    pub mobileconfig_token: Option<String>,
     pub app_base_url: String,
 }
 
@@ -81,14 +83,16 @@ async fn resolve_user_id(
     if !has_account_credential {
         let username = format!("acct_{}", generate_token(12));
         let password = generate_token(24);
+        let token = generate_token(32);
         if let Ok(hash) = hash_password(&password) {
             let _ = sqlx::query(
-                "UPDATE users SET account_caldav_username = $1, account_caldav_password_hash = $2, account_caldav_password = $3
-                 WHERE id = $4 AND account_caldav_username IS NULL",
+                "UPDATE users SET account_caldav_username = $1, account_caldav_password_hash = $2, account_caldav_password = $3, mobileconfig_token = $4
+                 WHERE id = $5 AND account_caldav_username IS NULL",
             )
             .bind(&username)
             .bind(&hash)
             .bind(&password)
+            .bind(&token)
             .bind(user_id)
             .execute(pool)
             .await;
@@ -108,15 +112,17 @@ async fn regenerate_account_credential() -> Result<NewCredential, ServerFnError>
 
     let new_username = format!("acct_{}", generate_token(12));
     let new_password = generate_token(24);
+    let new_token = generate_token(32);
     let new_password_hash = hash_password(&new_password)
         .map_err(|e| ServerFnError::new(format!("failed to hash password: {e}")))?;
 
     sqlx::query(
-        "UPDATE users SET account_caldav_username = $1, account_caldav_password_hash = $2, account_caldav_password = $3 WHERE id = $4",
+        "UPDATE users SET account_caldav_username = $1, account_caldav_password_hash = $2, account_caldav_password = $3, mobileconfig_token = $4 WHERE id = $5",
     )
     .bind(&new_username)
     .bind(&new_password_hash)
     .bind(&new_password)
+    .bind(&new_token)
     .bind(user_id)
     .execute(&pool)
     .await
@@ -125,6 +131,7 @@ async fn regenerate_account_credential() -> Result<NewCredential, ServerFnError>
     Ok(NewCredential {
         username: new_username,
         password: new_password,
+        mobileconfig_token: new_token,
     })
 }
 
@@ -197,8 +204,12 @@ async fn load_me_data() -> Result<MePageData, ServerFnError> {
     .await
     .unwrap_or_default();
 
-    let (account_caldav_username, account_caldav_password): (String, Option<String>) = sqlx::query_as(
-        "SELECT account_caldav_username, account_caldav_password FROM users WHERE id = $1",
+    let (account_caldav_username, account_caldav_password, mobileconfig_token): (
+        String,
+        Option<String>,
+        Option<String>,
+    ) = sqlx::query_as(
+        "SELECT account_caldav_username, account_caldav_password, mobileconfig_token FROM users WHERE id = $1",
     )
     .bind(user_id)
     .fetch_one(&pool)
@@ -261,6 +272,7 @@ async fn load_me_data() -> Result<MePageData, ServerFnError> {
         calendars: cards,
         account_caldav_username,
         account_caldav_password,
+        mobileconfig_token,
         app_base_url,
     })
 }
@@ -343,6 +355,7 @@ pub fn MePage(data: MePageData) -> impl IntoView {
                 <AccountCredentialSection
                     account_caldav_username=data.account_caldav_username
                     account_caldav_password=data.account_caldav_password
+                    mobileconfig_token=data.mobileconfig_token
                     app_base_url=data.app_base_url
                 />
                 {has_calendars.then(|| view! {
@@ -394,14 +407,17 @@ where
 fn AccountCredentialSection(
     account_caldav_username: String,
     account_caldav_password: Option<String>,
+    mobileconfig_token: Option<String>,
     app_base_url: String,
 ) -> impl IntoView {
-    let (credential, set_credential) =
-        signal((account_caldav_username, account_caldav_password));
+    let (credential, set_credential) = signal((
+        account_caldav_username,
+        account_caldav_password.zip(mobileconfig_token),
+    ));
 
     let on_confirm = move || async move {
         if let Ok(cred) = regenerate_account_credential().await {
-            set_credential.set((cred.username, Some(cred.password)));
+            set_credential.set((cred.username, Some((cred.password, cred.mobileconfig_token))));
         }
     };
 
@@ -411,14 +427,14 @@ fn AccountCredentialSection(
             <p class="text-on-surface-variant text-body-md mt-1">"One username/password that gives a CalDAV client access to every calendar above at once — your calendar app will list them all automatically. Each calendar's own credentials above still work independently."</p>
             <CopyRow label="CalDAV URL" value=app_base_url/>
             {move || {
-                let (username, password) = credential.get();
-                match password {
-                    Some(password) => view! {
+                let (username, password_and_token) = credential.get();
+                match password_and_token {
+                    Some((password, token)) => view! {
                         <CopyRow label="Username" value=username/>
                         <CopyRow label="CalDAV password" value=password/>
                         <a
                             class="inline-block mt-sm text-label-md text-secondary hover:underline"
-                            href="/me/account-caldav.mobileconfig"
+                            href=format!("/me/account-caldav.mobileconfig?token={token}")
                         >"Download for iOS (2-way sync)"</a>
                     }.into_any(),
                     None => view! {

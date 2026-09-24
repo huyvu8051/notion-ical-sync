@@ -2767,10 +2767,6 @@ pub fn create_app(
             post(crate::pages::me::delete_calendar),
         )
         .route(
-            "/me/account-caldav.mobileconfig",
-            get(crate::pages::me::download_account_mobileconfig),
-        )
-        .route(
             "/me/calendars/{public_id}/log",
             get(leptos_login_required_page()),
         )
@@ -2817,6 +2813,10 @@ pub fn create_app(
             post(crate::billing::grant_lifetime_to_non_paying_users),
         )
         .route("/admin/send-test-email", post(crate::email::send_test_email))
+        .route(
+            "/me/account-caldav.mobileconfig",
+            get(crate::pages::me::download_account_mobileconfig),
+        )
         .nest_service(
             "/pkg",
             tower::ServiceBuilder::new()

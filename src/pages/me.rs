@@ -1,12 +1,13 @@
-use axum::extract::{Path, State};
+use axum::extract::{Path, Query, State};
 use axum::http::header::{CONTENT_DISPOSITION, CONTENT_TYPE, HOST};
 use axum::http::HeaderMap;
-use axum::response::{IntoResponse, Redirect};
+use axum::response::{Html, IntoResponse, Redirect};
 use axum_oidc::{EmptyAdditionalClaims, OidcClaims};
+use serde::Deserialize;
 use tracing::error;
 
-use crate::error_page::{error_page, OauthError};
-use crate::session::{find_or_create_user, owned_calendar_or_error};
+use crate::error_page::{error_page, OauthError, AUTH_STYLE};
+use crate::session::owned_calendar_or_error;
 use crate::AppState;
 
 pub async fn delete_calendar(
@@ -84,9 +85,26 @@ fn build_caldav_mobileconfig(host: &str, username: &str, password: &str) -> Stri
     )
 }
 
+#[derive(Deserialize)]
+pub struct MobileconfigQuery {
+    token: String,
+}
+
+fn invalid_mobileconfig_link_page() -> axum::response::Response {
+    Html(format!(
+        r#"<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">{AUTH_STYLE}</head>
+<body>
+<div class="top-nav"><strong>NotionCal</strong><a class="logout" href="/">Home</a></div>
+<p class="hint">This download link is invalid or has expired — the password may have been regenerated since. Log in and click "Regenerate" to get a new one.</p>
+</body></html>"#
+    ))
+    .into_response()
+}
+
 pub async fn download_account_mobileconfig(
     State(state): State<AppState>,
-    claims: OidcClaims<EmptyAdditionalClaims>,
+    Query(query): Query<MobileconfigQuery>,
     headers: HeaderMap,
 ) -> impl IntoResponse {
     let host = headers
@@ -95,23 +113,16 @@ pub async fn download_account_mobileconfig(
         .unwrap_or("")
         .to_string();
 
-    let sub = claims.subject().as_str();
-    let email = claims.email().map(|e| e.as_str()).unwrap_or("").to_string();
-    let user_id = match find_or_create_user(&state, sub, &email).await {
-        Ok(id) => id,
-        Err(_) => return error_page(OauthError::Generic).into_response(),
-    };
-
     let row: Option<(String, String)> = sqlx::query_as(
-        "SELECT account_caldav_username, account_caldav_password FROM users WHERE id = $1",
+        "SELECT account_caldav_username, account_caldav_password FROM users WHERE mobileconfig_token = $1",
     )
-    .bind(user_id)
+    .bind(&query.token)
     .fetch_optional(&state.db)
     .await
     .ok()
     .flatten();
     let Some((username, password)) = row else {
-        return Redirect::to("/me").into_response();
+        return invalid_mobileconfig_link_page();
     };
 
     let plist = build_caldav_mobileconfig(&host, &username, &password);

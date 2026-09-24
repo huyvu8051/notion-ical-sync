@@ -119,16 +119,18 @@ pub async fn find_or_create_user(
 async fn ensure_account_caldav_credential(pool: &sqlx::PgPool, user_id: i64) {
     let username = format!("acct_{}", crate::crypto::generate_token(12));
     let password = crate::crypto::generate_token(24);
+    let token = crate::crypto::generate_token(32);
     let Ok(hash) = crate::crypto::hash_password(&password) else {
         return;
     };
     let _ = sqlx::query(
-        "UPDATE users SET account_caldav_username = $1, account_caldav_password_hash = $2, account_caldav_password = $3
-         WHERE id = $4 AND account_caldav_username IS NULL",
+        "UPDATE users SET account_caldav_username = $1, account_caldav_password_hash = $2, account_caldav_password = $3, mobileconfig_token = $4
+         WHERE id = $5 AND account_caldav_username IS NULL",
     )
     .bind(&username)
     .bind(&hash)
     .bind(&password)
+    .bind(&token)
     .bind(user_id)
     .execute(pool)
     .await;
