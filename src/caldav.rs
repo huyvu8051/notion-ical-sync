@@ -2817,6 +2817,10 @@ pub fn create_app(
             "/me/account-caldav.mobileconfig",
             get(crate::pages::me::download_account_mobileconfig),
         )
+        .route(
+            "/me/account-caldav-qr.svg",
+            get(crate::pages::me::account_caldav_qr),
+        )
         .nest_service(
             "/pkg",
             tower::ServiceBuilder::new()

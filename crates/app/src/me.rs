@@ -421,6 +421,11 @@ fn AccountCredentialSection(
         }
     };
 
+    let app_base_host = app_base_url
+        .trim_start_matches("https://")
+        .trim_start_matches("http://")
+        .to_string();
+
     view! {
         <div class="bg-surface border border-outline-variant rounded-lg p-lg">
             <h2 class="font-semibold text-h3">"Account-wide CalDAV access"</h2>
@@ -428,6 +433,7 @@ fn AccountCredentialSection(
             <CopyRow label="CalDAV URL" value=app_base_url/>
             {move || {
                 let (username, password_and_token) = credential.get();
+                let qr_src = format!("/me/account-caldav-qr.svg?u={}&h={}", username, app_base_host);
                 match password_and_token {
                     Some((password, token)) => view! {
                         <CopyRow label="Username" value=username/>
@@ -437,6 +443,11 @@ fn AccountCredentialSection(
                             href=format!("/me/account-caldav.mobileconfig?token={token}")
                             target="_blank"
                         >"Download for iOS (2-way sync)"</a>
+                        <div class="mt-md">
+                            <p class="text-label-md text-on-surface-variant uppercase tracking-wide mb-sm">"Android (DAVx5)"</p>
+                            <img src=qr_src alt="QR code to prefill server and username in DAVx5" class="w-36 h-36 border border-outline-variant rounded"/>
+                            <p class="text-on-surface-variant text-body-md mt-1">"Scan from DAVx5's login screen to prefill the server and username — you'll still type the password yourself."</p>
+                        </div>
                     }.into_any(),
                     None => view! {
                         <CopyRow label="Username" value=username/>

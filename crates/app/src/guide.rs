@@ -55,15 +55,24 @@ pub fn GuideRoutePage() -> impl IntoView {
                     <img src="/static/guide/08-ios-profile-installed.jpg" alt="Profile Installed confirmation screen" class="w-full rounded-lg border border-outline-variant"/>
                 </GuideStep>
 
-                <GuideStep number=5 title="Other apps: Google Calendar, DAVx5, or any CalDAV client">
+                <GuideStep number=5 title="Android: DAVx5">
+                    <p class="mb-md">"Android has no OS-level equivalent to the iOS profile above — the standard way to get two-way CalDAV sync is the "<a class="text-secondary underline" href="https://f-droid.org/packages/at.bitfire.davdroid/" target="_blank">"DAVx5"</a>" app. Install it, then on its login screen either:"</p>
+                    <ul class="list-disc pl-lg space-y-xs mb-md">
+                        <li>"Tap the QR icon and scan the "<strong>"Android (DAVx5)"</strong>" code from step 3 — it prefills the server and username; you still type the password yourself."</li>
+                        <li>"Or choose \"Login with URL and username\" and paste the three fields from step 3 in by hand."</li>
+                    </ul>
+                    <p class="text-on-surface-variant text-body-md">"Same result as iOS: every calendar you own shows up, fully two-way."</p>
+                </GuideStep>
+
+                <GuideStep number=6 title="Other apps: Google Calendar, Thunderbird, or any CalDAV client">
                     <p class="mb-md">"Copy the three fields from step 3 — CalDAV URL, username, password — into your app's own \"Add CalDAV account\" or \"Subscribe to calendar\" screen:"</p>
                     <ul class="list-disc pl-lg space-y-xs">
-                        <li><strong>"Two-way sync "</strong>"(create/edit/delete from your calendar app): use an app that supports adding a full CalDAV account, e.g. DAVx5 on Android or Thunderbird."</li>
+                        <li><strong>"Two-way sync "</strong>"(create/edit/delete from your calendar app): use an app that supports adding a full CalDAV account, e.g. Thunderbird."</li>
                         <li><strong>"Read-only: "</strong>"most calendar apps also let you \"subscribe\" to a calendar by URL — paste a single calendar's URL there for a live, view-only feed."</li>
                     </ul>
                 </GuideStep>
 
-                <GuideStep number=6 title="Or just use the built-in calendar">
+                <GuideStep number=7 title="Or just use the built-in calendar">
                     <p class="mb-md">"No calendar app needed — click \"Open calendar\" on any calendar in your dashboard to view, create, and edit events directly in your browser."</p>
                     <img src="/static/guide/04-webview-calendar.jpg" alt="Built-in browser calendar view" class="w-full rounded-lg border border-outline-variant"/>
                 </GuideStep>

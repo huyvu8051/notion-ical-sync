@@ -138,3 +138,21 @@ pub async fn download_account_mobileconfig(
     )
         .into_response()
 }
+
+#[derive(Deserialize)]
+pub struct QrQuery {
+    u: String,
+    h: String,
+}
+
+pub async fn account_caldav_qr(Query(query): Query<QrQuery>) -> impl IntoResponse {
+    let uri = format!("caldavs://{}@{}/", query.u, query.h);
+    let Ok(code) = qrcode::QrCode::new(&uri) else {
+        return (axum::http::StatusCode::BAD_REQUEST, "invalid QR content").into_response();
+    };
+    let svg = code
+        .render::<qrcode::render::svg::Color>()
+        .min_dimensions(220, 220)
+        .build();
+    ([(CONTENT_TYPE, "image/svg+xml")], svg).into_response()
+}
