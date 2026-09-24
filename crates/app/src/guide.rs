@@ -42,13 +42,17 @@ pub fn GuideRoutePage() -> impl IntoView {
                 </GuideStep>
 
                 <GuideStep number=4 title="iPhone or iPad: one-tap setup">
-                    <p class="mb-md">"Tap \"Download for iOS (2-way sync)\" right after generating your password. This downloads a small configuration file:"</p>
-                    <ol class="list-decimal pl-lg space-y-xs mb-md">
-                        <li>"Open the downloaded "<code class="font-code text-code bg-surface-container-low px-1 rounded">"notioncal.mobileconfig"</code>" file (from the Files app or your Downloads)."</li>
-                        <li>"iOS switches to Settings and shows \"Profile Downloaded\" — tap it."</li>
-                        <li>"Tap "<strong>"Install"</strong>" in the top-right corner, enter your passcode if asked, then tap "<strong>"Install"</strong>" once more to confirm."</li>
-                    </ol>
-                    <p class="text-on-surface-variant text-body-md">"That's it — every calendar you own now appears in Apple Calendar, fully two-way: events you create or edit there sync back to Notion, and vice versa."</p>
+                    <p class="mb-md">"Tap \"Download for iOS (2-way sync)\" right after generating your password. Safari asks to download a configuration profile — tap \"Allow\"."</p>
+                    <img src="/static/guide/05-ios-download-prompt.jpg" alt="Safari asking to allow the configuration profile download" class="w-full rounded-lg border border-outline-variant mb-md"/>
+
+                    <p class="mb-md">"iOS switches to Settings and shows \"Profile Downloaded\" — tap it, then tap the profile again to review it."</p>
+                    <img src="/static/guide/06-ios-profile-downloaded.jpg" alt="Settings showing the Profile Downloaded row" class="w-full rounded-lg border border-outline-variant mb-md"/>
+
+                    <p class="mb-md">"Tap \"Install\" in the top-right corner. You'll see an \"Unsigned Profile\" warning — that's expected, not an error. NotionCal doesn't pay for a code-signing certificate, and neither do most small CalDAV services; the warning doesn't stop the account from working. Tap \"Install\" again to confirm."</p>
+                    <img src="/static/guide/07-ios-unsigned-warning.jpg" alt="iOS unsigned profile warning, safe to install anyway" class="w-full rounded-lg border border-outline-variant mb-md"/>
+
+                    <p class="mb-md">"Done — the profile installs and every calendar you own now appears in Apple Calendar, fully two-way: events you create or edit there sync back to Notion, and vice versa."</p>
+                    <img src="/static/guide/08-ios-profile-installed.jpg" alt="Profile Installed confirmation screen" class="w-full rounded-lg border border-outline-variant"/>
                 </GuideStep>
 
                 <GuideStep number=5 title="Other apps: Google Calendar, DAVx5, or any CalDAV client">
