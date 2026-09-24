@@ -1,5 +1,3 @@
-// Shared design tokens for every page, including the public landing page —
-// see tailwind/README.md.
 module.exports = {
   content: ["../src/**/*.rs", "../crates/**/*.rs"],
   theme: {

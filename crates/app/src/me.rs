@@ -195,16 +195,6 @@ async fn load_me_data() -> Result<MePageData, ServerFnError> {
             .ok()
             .flatten();
 
-    // This one-shot value must be removed *and persisted* here, synchronously,
-    // rather than relying on the outer SessionManagerLayer's post-response
-    // modified-check: this page renders through Leptos's streaming SSR, so the
-    // response (and therefore that check) completes before this `#[server]` fn
-    // — invoked lazily while the body streams — actually runs. Without an
-    // explicit save() the removal never reaches the store and this flag would
-    // keep tripping on every later page load. The stashed per-calendar
-    // username/password themselves are no longer surfaced in the UI (backend
-    // still generates and stores them, for existing calendar-app setups),
-    // only whether a calendar was *just* connected, for the success banner.
     let just_connected_a_calendar: bool = {
         let stashed: Vec<(String, String, String)> = session
             .get("new_calendar_credentials")
@@ -234,10 +224,6 @@ async fn load_me_data() -> Result<MePageData, ServerFnError> {
         }
         stashed
     };
-    // See the comment above just_connected_a_calendar: this explicit save is
-    // what actually makes the removals above stick, since they happen too
-    // late in the streaming response for the session middleware's own
-    // save-if-modified check to catch.
     let _ = session.save().await;
 
     let cards: Vec<CalendarCardData> = calendars
@@ -374,11 +360,6 @@ fn client_origin() -> String {
     String::new()
 }
 
-/// Same click-to-arm, click-again-to-confirm UX as `ConfirmButton`, but
-/// calling a Rust closure (typically a `#[server]` fn round trip) instead of
-/// submitting an HTML form — so the caller can update a signal with the
-/// result in place, with no page reload and no session stashing needed to
-/// carry the result across a redirect.
 #[component]
 fn RegenerateButton<F, Fut>(label: String, confirm_label: String, class: String, on_confirm: F) -> impl IntoView
 where

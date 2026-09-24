@@ -32,9 +32,6 @@ pub struct PageInfo {
     pub attendees: Vec<String>,
 }
 
-/// Row shape for `calendar_page_state`, the durable copy of `PageInfo` used
-/// by `AppState::pages_for_calendar`. `priority` is SMALLINT in Postgres
-/// (no unsigned integer type), hence the i16 here and the cast in `From`.
 #[derive(sqlx::FromRow)]
 struct PageInfoRow {
     notion_page_id: String,
@@ -276,9 +273,6 @@ pub struct CalendarRow {
 pub struct AuthenticatedCaldavUser {
     pub user_id: i64,
     pub username: String,
-    /// `Some(public_id)` for a per-calendar credential (access limited to that
-    /// one calendar, the original behavior). `None` for an account-level
-    /// credential, which grants access to every calendar the user owns.
     pub scoped_public_id: Option<String>,
 }
 
@@ -445,12 +439,6 @@ impl AppState {
         count > 0
     }
 
-    // (xmax = 0) is Postgres-idiom for "this row was just inserted by this statement"
-    // versus updated by the ON CONFLICT branch; RETURNING yields nothing at all when the
-    // WHERE clause skipped the update because last_edited was already identical, so a
-    // concurrent caller diffing the same unchanged page sees None instead of a duplicate.
-    // Writes the full page content (not just last_edited) so this table also serves as
-    // the durable, cross-pod read path for calendar data — see pages_for_calendar.
     async fn upsert_page_state(&self, calendar_id: i64, page: &PageInfo) -> Option<bool> {
         sqlx::query_as(
             "INSERT INTO calendar_page_state
@@ -497,18 +485,16 @@ impl AppState {
         .map(|(inserted,)| inserted)
     }
 
-    /// The durable, cross-pod read path for a calendar's events: every pod
-    /// reads the same Postgres rows instead of its own private in-memory
-    /// copy, so CalDAV/webview responses stay consistent regardless of
-    /// which pod handles the request or which pod last heard from Notion.
     pub async fn pages_for_calendar(&self, calendar_id: i64) -> Vec<PageInfo> {
         sqlx::query_as::<_, PageInfoRow>(
-            "SELECT notion_page_id, title, start_at, end_at, url, last_edited,
-                    location, notes, priority, busy, reminder_minutes, travel_minutes,
-                    repeat_rule, attendees
-             FROM calendar_page_state
-             WHERE calendar_id = $1
-             ORDER BY start_at DESC",
+            "SELECT cps.notion_page_id, cps.title, cps.start_at, cps.end_at, cps.url, cps.last_edited,
+                    cps.location, cps.notes, cps.priority, cps.busy, cps.reminder_minutes, cps.travel_minutes,
+                    cps.repeat_rule, cps.attendees
+             FROM calendar_page_state cps
+             JOIN calendars synced_calendar ON synced_calendar.id = cps.calendar_id
+             JOIN calendars requested_calendar ON requested_calendar.database_id = synced_calendar.database_id
+             WHERE requested_calendar.id = $1
+             ORDER BY cps.start_at DESC",
         )
         .bind(calendar_id)
         .fetch_all(&self.db)
@@ -597,9 +583,6 @@ impl AppState {
         })
     }
 
-    /// Returns `(user_id, scoped_public_id)` on success. `scoped_public_id` is
-    /// `Some(public_id)` for a per-calendar credential, `None` for an
-    /// account-level credential (access to every calendar the user owns).
     pub async fn verify_caldav_credentials(
         &self,
         username: &str,
@@ -2545,10 +2528,6 @@ async fn auth_middleware(
         None => get_public_id_for_host(&headers, &state).await,
     };
     if let Some(target) = &target_public_id {
-        // A per-calendar credential may only touch its own calendar. An
-        // account-level credential (scoped_public_id: None) may touch any
-        // calendar it actually owns — verified against the DB here since
-        // there's no single fixed public_id to compare against.
         let authorized = match &scoped_public_id {
             Some(scoped) => target == scoped,
             None => matches!(state.calendar_by_public_id(target).await, Some(cal) if cal.user_id == user_id),

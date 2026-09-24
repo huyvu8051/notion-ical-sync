@@ -92,10 +92,6 @@ fn compute_client_timezone_label() -> String {
     format!("{tz} ({utc})")
 }
 
-/// Client-only: the server has no way to know the visitor's browser
-/// timezone. Uses a `NodeRef` (populated only after real mount) instead of
-/// `document.get_element_by_id`, so there's no race with `inner_html`
-/// insertion timing — the bug that motivated this whole pass.
 #[component]
 pub fn ClientTimezone(#[prop(optional, into)] class: String) -> impl IntoView {
     let node_ref: NodeRef<html::Span> = NodeRef::new();
@@ -125,8 +121,6 @@ fn format_local_time(utc: &str) -> Option<String> {
     ))
 }
 
-/// Renders `utc` (an ISO-8601 UTC timestamp) as-is on first paint, then
-/// swaps in the visitor's local wall-clock time client-side.
 #[component]
 pub fn LocalTime(utc: String) -> impl IntoView {
     let node_ref: NodeRef<html::Span> = NodeRef::new();
@@ -142,9 +136,6 @@ pub fn LocalTime(utc: String) -> impl IntoView {
     view! { <span node_ref=node_ref>{utc}</span> }
 }
 
-/// The shared site footer — same look everywhere (originally the landing
-/// page's footer), now with the client-local timezone label restored
-/// alongside the NotionCal wordmark.
 #[component]
 pub fn PageFooter() -> impl IntoView {
     view! {
@@ -163,10 +154,6 @@ pub fn PageFooter() -> impl IntoView {
     }
 }
 
-/// The shared site header. Logged out (`email` is `None`): marketing nav
-/// links + "Log in / Sign up", as on the landing page. Logged in
-/// (`email` is `Some`): nav links hidden, replaced by the user's email +
-/// a logout button — same header everywhere, just the identity slot swaps.
 #[component]
 pub fn HomeHeader(#[prop(optional)] email: Option<String>) -> impl IntoView {
     let is_authed = email.is_some();
@@ -222,9 +209,6 @@ async fn copy_to_clipboard_and_flash_icon(text: String, icon: web_sys::Element) 
     let _ = icon.class_list().remove_1("text-[#166534]");
 }
 
-/// A labeled, read-only, copy-to-clipboard input row. Replaces the
-/// `copy_row()` string helper (formerly duplicated per page) plus the global
-/// `copyToClipboard` `<script>` + inline `onclick="…"` it relied on.
 #[component]
 pub fn CopyRow(label: &'static str, value: String) -> impl IntoView {
     let icon_ref: NodeRef<html::Span> = NodeRef::new();
