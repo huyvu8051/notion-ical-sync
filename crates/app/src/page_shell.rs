@@ -146,6 +146,7 @@ pub fn PageFooter() -> impl IntoView {
                     <ClientTimezone class="text-label-md text-on-surface-variant".to_string()/>
                 </div>
                 <div class="flex items-center gap-6">
+                    <a class="text-label-md text-on-surface-variant hover:text-primary transition-colors" href="/guide">"Setup Guide"</a>
                     <a class="text-label-md text-on-surface-variant hover:text-primary transition-colors" href="/privacy">"Privacy Policy"</a>
                     <a class="text-label-md text-on-surface-variant hover:text-primary transition-colors" href="/terms">"Terms of Service"</a>
                 </div>

@@ -2,6 +2,7 @@
 
 pub mod confirm_button;
 pub mod connect_notion;
+pub mod guide;
 pub mod landing;
 pub mod legal;
 pub mod me;
@@ -62,7 +63,7 @@ fn NotYetMigratedFallback() -> impl IntoView {
 fn HomeStyleHeader() -> impl IntoView {
     let location = leptos_router::hooks::use_location();
     let is_home_style_page = move || {
-        matches!(location.pathname.get().as_str(), "/" | "/privacy" | "/terms")
+        matches!(location.pathname.get().as_str(), "/" | "/privacy" | "/terms" | "/guide")
     };
     view! {
         <Show when=is_home_style_page fallback=|| ()>
@@ -86,6 +87,7 @@ pub fn App() -> impl IntoView {
                 <Route path=StaticSegment("") view=landing::LandingRoutePage/>
                 <Route path=StaticSegment("privacy") view=legal::PrivacyRoutePage/>
                 <Route path=StaticSegment("terms") view=legal::TermsRoutePage/>
+                <Route path=StaticSegment("guide") view=guide::GuideRoutePage/>
                 <Route path=(StaticSegment("connect"), StaticSegment("notion")) view=connect_notion::ConnectNotionRoutePage/>
                 <Route path=(StaticSegment("connect"), StaticSegment("notion"), StaticSegment("databases")) view=pick_databases::PickDatabasesRoutePage/>
                 <Route path=StaticSegment("me") view=me::MeRoutePage/>
