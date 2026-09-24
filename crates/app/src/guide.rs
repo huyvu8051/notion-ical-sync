@@ -61,6 +61,7 @@ pub fn GuideRoutePage() -> impl IntoView {
                         <li>"Open your phone's Camera app (or any QR scanner) and point it at the "<strong>"Android (DAVx5)"</strong>" code from step 3 — it'll offer to open DAVx5 with the server and username already filled in; you still type the password yourself."</li>
                         <li>"Or in DAVx5 choose \"Login with URL and user name\" and type the three fields from step 3 in by hand."</li>
                     </ul>
+                    <img src="/static/guide/09-android-davx5-prefilled.jpg" alt="DAVx5 login screen with server and username pre-filled after scanning the QR code" class="w-full rounded-lg border border-outline-variant mb-md"/>
                     <p class="text-on-surface-variant text-body-md">"Same result as iOS: every calendar you own shows up, fully two-way."</p>
                 </GuideStep>
 
