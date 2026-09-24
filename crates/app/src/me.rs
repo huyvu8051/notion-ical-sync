@@ -360,6 +360,89 @@ fn client_origin() -> String {
     String::new()
 }
 
+#[cfg(feature = "hydrate")]
+fn client_host() -> String {
+    web_sys::window()
+        .and_then(|w| w.location().host().ok())
+        .unwrap_or_default()
+}
+#[cfg(not(feature = "hydrate"))]
+fn client_host() -> String {
+    String::new()
+}
+
+#[cfg(feature = "hydrate")]
+fn random_uuid() -> String {
+    fn hex(n: usize) -> String {
+        (0..n)
+            .map(|_| std::char::from_digit((js_sys::Math::random() * 16.0) as u32, 16).unwrap())
+            .collect()
+    }
+    format!("{}-{}-{}-{}-{}", hex(8), hex(4), hex(4), hex(4), hex(12))
+}
+
+#[cfg(feature = "hydrate")]
+fn caldav_mobileconfig_data_uri(host: &str, username: &str, password: &str) -> String {
+    let plist = format!(
+        r#"<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>PayloadContent</key>
+    <array>
+        <dict>
+            <key>CalDAVAccountDescription</key>
+            <string>NotionCal</string>
+            <key>CalDAVHostName</key>
+            <string>{host}</string>
+            <key>CalDAVPassword</key>
+            <string>{password}</string>
+            <key>CalDAVPort</key>
+            <integer>443</integer>
+            <key>CalDAVUseSSL</key>
+            <true/>
+            <key>CalDAVUsername</key>
+            <string>{username}</string>
+            <key>PayloadDescription</key>
+            <string>Adds a two-way CalDAV account for NotionCal.</string>
+            <key>PayloadDisplayName</key>
+            <string>NotionCal CalDAV Account</string>
+            <key>PayloadIdentifier</key>
+            <string>vn.opendiy.notion-caldav.caldav.{username}</string>
+            <key>PayloadType</key>
+            <string>com.apple.caldav.account</string>
+            <key>PayloadUUID</key>
+            <string>{account_uuid}</string>
+            <key>PayloadVersion</key>
+            <integer>1</integer>
+        </dict>
+    </array>
+    <key>PayloadDisplayName</key>
+    <string>NotionCal</string>
+    <key>PayloadIdentifier</key>
+    <string>vn.opendiy.notion-caldav.profile.{username}</string>
+    <key>PayloadType</key>
+    <string>Configuration</string>
+    <key>PayloadUUID</key>
+    <string>{profile_uuid}</string>
+    <key>PayloadVersion</key>
+    <integer>1</integer>
+</dict>
+</plist>
+"#,
+        account_uuid = random_uuid(),
+        profile_uuid = random_uuid(),
+    );
+    let encoded = web_sys::window()
+        .and_then(|w| w.btoa(&plist).ok())
+        .unwrap_or_default();
+    format!("data:application/x-apple-aspen-config;base64,{encoded}")
+}
+#[cfg(not(feature = "hydrate"))]
+fn caldav_mobileconfig_data_uri(_host: &str, _username: &str, _password: &str) -> String {
+    String::new()
+}
+
 #[component]
 fn RegenerateButton<F, Fut>(label: String, confirm_label: String, class: String, on_confirm: F) -> impl IntoView
 where
@@ -409,11 +492,20 @@ fn AccountCredentialSection(account_caldav_username: Option<String>, app_base_ur
             <h2 class="font-semibold text-h3">"Account-wide CalDAV access"</h2>
             <p class="text-on-surface-variant text-body-md mt-1">"One username/password that gives a CalDAV client access to every calendar above at once — your calendar app will list them all automatically. Each calendar's own credentials above still work independently."</p>
             {move || match revealed.get() {
-                Some(cred) => view! {
-                    <CopyRow label="CalDAV URL" value=client_origin()/>
-                    <CopyRow label="Username" value=cred.username/>
-                    <CopyRow label="CalDAV password" value=cred.password/>
-                }.into_any(),
+                Some(cred) => {
+                    let mobileconfig_href =
+                        caldav_mobileconfig_data_uri(&client_host(), &cred.username, &cred.password);
+                    view! {
+                        <CopyRow label="CalDAV URL" value=client_origin()/>
+                        <CopyRow label="Username" value=cred.username.clone()/>
+                        <CopyRow label="CalDAV password" value=cred.password.clone()/>
+                        <a
+                            class="inline-block mt-sm text-label-md text-secondary hover:underline"
+                            href=mobileconfig_href
+                            download="notioncal.mobileconfig"
+                        >"Download for iOS (2-way sync)"</a>
+                    }.into_any()
+                },
                 None => match &account_caldav_username {
                     Some(username) => view! {
                         <CopyRow label="CalDAV URL" value=app_base_url.clone()/>
