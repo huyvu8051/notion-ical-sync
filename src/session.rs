@@ -92,10 +92,10 @@ pub async fn find_or_create_user(
     keycloak_sub: &str,
     email: &str,
 ) -> Result<i64, sqlx::Error> {
-    let (id, inserted): (i64, bool) = sqlx::query_as(
+    let (id, inserted, has_account_credential): (i64, bool, bool) = sqlx::query_as(
         "INSERT INTO users (keycloak_sub, email) VALUES ($1, $2)
          ON CONFLICT (keycloak_sub) DO UPDATE SET email = EXCLUDED.email
-         RETURNING id, (xmax = 0) AS inserted",
+         RETURNING id, (xmax = 0) AS inserted, account_caldav_username IS NOT NULL AS has_account_credential",
     )
     .bind(keycloak_sub)
     .bind(email)
@@ -109,7 +109,29 @@ pub async fn find_or_create_user(
         }
     }
 
+    if !has_account_credential {
+        ensure_account_caldav_credential(&state.db, id).await;
+    }
+
     Ok(id)
+}
+
+async fn ensure_account_caldav_credential(pool: &sqlx::PgPool, user_id: i64) {
+    let username = format!("acct_{}", crate::crypto::generate_token(12));
+    let password = crate::crypto::generate_token(24);
+    let Ok(hash) = crate::crypto::hash_password(&password) else {
+        return;
+    };
+    let _ = sqlx::query(
+        "UPDATE users SET account_caldav_username = $1, account_caldav_password_hash = $2, account_caldav_password = $3
+         WHERE id = $4 AND account_caldav_username IS NULL",
+    )
+    .bind(&username)
+    .bind(&hash)
+    .bind(&password)
+    .bind(user_id)
+    .execute(pool)
+    .await;
 }
 
 pub async fn current_user_id(

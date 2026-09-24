@@ -2767,6 +2767,10 @@ pub fn create_app(
             post(crate::pages::me::delete_calendar),
         )
         .route(
+            "/me/account-caldav.mobileconfig",
+            get(crate::pages::me::download_account_mobileconfig),
+        )
+        .route(
             "/me/calendars/{public_id}/log",
             get(leptos_login_required_page()),
         )

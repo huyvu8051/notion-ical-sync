@@ -25,7 +25,8 @@ pub struct MePageData {
     pub just_connected_a_calendar: bool,
     pub already_connected_names: Vec<String>,
     pub calendars: Vec<CalendarCardData>,
-    pub account_caldav_username: Option<String>,
+    pub account_caldav_username: String,
+    pub account_caldav_password: Option<String>,
     pub app_base_url: String,
 }
 
@@ -66,16 +67,35 @@ async fn resolve_user_id(
 ) -> Result<i64, ServerFnError> {
     let sub = claims.subject().as_str();
     let email = claims.email().map(|e| e.as_str()).unwrap_or("");
-    sqlx::query_scalar(
+    let (user_id, has_account_credential): (i64, bool) = sqlx::query_as(
         "INSERT INTO users (keycloak_sub, email) VALUES ($1, $2)
          ON CONFLICT (keycloak_sub) DO UPDATE SET email = EXCLUDED.email
-         RETURNING id",
+         RETURNING id, account_caldav_username IS NOT NULL AS has_account_credential",
     )
     .bind(sub)
     .bind(email)
     .fetch_one(pool)
     .await
-    .map_err(|e| ServerFnError::new(format!("failed to resolve user: {e}")))
+    .map_err(|e| ServerFnError::new(format!("failed to resolve user: {e}")))?;
+
+    if !has_account_credential {
+        let username = format!("acct_{}", generate_token(12));
+        let password = generate_token(24);
+        if let Ok(hash) = hash_password(&password) {
+            let _ = sqlx::query(
+                "UPDATE users SET account_caldav_username = $1, account_caldav_password_hash = $2, account_caldav_password = $3
+                 WHERE id = $4 AND account_caldav_username IS NULL",
+            )
+            .bind(&username)
+            .bind(&hash)
+            .bind(&password)
+            .bind(user_id)
+            .execute(pool)
+            .await;
+        }
+    }
+
+    Ok(user_id)
 }
 
 #[server]
@@ -88,14 +108,15 @@ async fn regenerate_account_credential() -> Result<NewCredential, ServerFnError>
 
     let new_username = format!("acct_{}", generate_token(12));
     let new_password = generate_token(24);
-    let password_hash = hash_password(&new_password)
+    let new_password_hash = hash_password(&new_password)
         .map_err(|e| ServerFnError::new(format!("failed to hash password: {e}")))?;
 
     sqlx::query(
-        "UPDATE users SET account_caldav_username = $1, account_caldav_password_hash = $2 WHERE id = $3",
+        "UPDATE users SET account_caldav_username = $1, account_caldav_password_hash = $2, account_caldav_password = $3 WHERE id = $4",
     )
     .bind(&new_username)
-    .bind(&password_hash)
+    .bind(&new_password_hash)
+    .bind(&new_password)
     .bind(user_id)
     .execute(&pool)
     .await
@@ -124,18 +145,7 @@ async fn load_me_data() -> Result<MePageData, ServerFnError> {
         .unwrap_or(false);
 
     let email = claims.email().map(|e| e.as_str()).unwrap_or("").to_string();
-    let sub = claims.subject().as_str();
-
-    let user_id: i64 = sqlx::query_scalar(
-        "INSERT INTO users (keycloak_sub, email) VALUES ($1, $2)
-         ON CONFLICT (keycloak_sub) DO UPDATE SET email = EXCLUDED.email
-         RETURNING id",
-    )
-    .bind(sub)
-    .bind(&email)
-    .fetch_one(&pool)
-    .await
-    .map_err(|e| ServerFnError::new(format!("failed to upsert user: {e}")))?;
+    let user_id = resolve_user_id(&pool, &claims).await?;
 
     let (billing_status_text, billing_cta_href) = {
         let row: Option<(DateTime<Utc>, String)> =
@@ -187,13 +197,13 @@ async fn load_me_data() -> Result<MePageData, ServerFnError> {
     .await
     .unwrap_or_default();
 
-    let account_caldav_username: Option<String> =
-        sqlx::query_scalar("SELECT account_caldav_username FROM users WHERE id = $1")
-            .bind(user_id)
-            .fetch_optional(&pool)
-            .await
-            .ok()
-            .flatten();
+    let (account_caldav_username, account_caldav_password): (String, Option<String>) = sqlx::query_as(
+        "SELECT account_caldav_username, account_caldav_password FROM users WHERE id = $1",
+    )
+    .bind(user_id)
+    .fetch_one(&pool)
+    .await
+    .map_err(|e| ServerFnError::new(format!("failed to load account caldav credential: {e}")))?;
 
     let just_connected_a_calendar: bool = {
         let stashed: Vec<(String, String, String)> = session
@@ -250,6 +260,7 @@ async fn load_me_data() -> Result<MePageData, ServerFnError> {
         already_connected_names,
         calendars: cards,
         account_caldav_username,
+        account_caldav_password,
         app_base_url,
     })
 }
@@ -329,7 +340,11 @@ pub fn MePage(data: MePageData) -> impl IntoView {
                         <span>"Connect another database"</span>
                     </a>
                 </div>
-                <AccountCredentialSection account_caldav_username=data.account_caldav_username app_base_url=data.app_base_url/>
+                <AccountCredentialSection
+                    account_caldav_username=data.account_caldav_username
+                    account_caldav_password=data.account_caldav_password
+                    app_base_url=data.app_base_url
+                />
                 {has_calendars.then(|| view! {
                     <p class="text-label-md text-on-surface-variant italic">
                         "Heads up: per-calendar CalDAV credentials below will be deprecated soon — use the account-wide access above instead."
@@ -348,100 +363,6 @@ fn spawn_client(fut: impl std::future::Future<Output = ()> + 'static) {
 }
 #[cfg(not(feature = "hydrate"))]
 fn spawn_client(_fut: impl std::future::Future<Output = ()> + 'static) {}
-
-#[cfg(feature = "hydrate")]
-fn client_origin() -> String {
-    web_sys::window()
-        .and_then(|w| w.location().origin().ok())
-        .unwrap_or_default()
-}
-#[cfg(not(feature = "hydrate"))]
-fn client_origin() -> String {
-    String::new()
-}
-
-#[cfg(feature = "hydrate")]
-fn client_host() -> String {
-    web_sys::window()
-        .and_then(|w| w.location().host().ok())
-        .unwrap_or_default()
-}
-#[cfg(not(feature = "hydrate"))]
-fn client_host() -> String {
-    String::new()
-}
-
-#[cfg(feature = "hydrate")]
-fn random_uuid() -> String {
-    fn hex(n: usize) -> String {
-        (0..n)
-            .map(|_| std::char::from_digit((js_sys::Math::random() * 16.0) as u32, 16).unwrap())
-            .collect()
-    }
-    format!("{}-{}-{}-{}-{}", hex(8), hex(4), hex(4), hex(4), hex(12))
-}
-
-#[cfg(feature = "hydrate")]
-fn caldav_mobileconfig_data_uri(host: &str, username: &str, password: &str) -> String {
-    let plist = format!(
-        r#"<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-    <key>PayloadContent</key>
-    <array>
-        <dict>
-            <key>CalDAVAccountDescription</key>
-            <string>NotionCal</string>
-            <key>CalDAVHostName</key>
-            <string>{host}</string>
-            <key>CalDAVPassword</key>
-            <string>{password}</string>
-            <key>CalDAVPort</key>
-            <integer>443</integer>
-            <key>CalDAVUseSSL</key>
-            <true/>
-            <key>CalDAVUsername</key>
-            <string>{username}</string>
-            <key>PayloadDescription</key>
-            <string>Adds a two-way CalDAV account for NotionCal.</string>
-            <key>PayloadDisplayName</key>
-            <string>NotionCal CalDAV Account</string>
-            <key>PayloadIdentifier</key>
-            <string>vn.opendiy.notion-caldav.caldav.{username}</string>
-            <key>PayloadType</key>
-            <string>com.apple.caldav.account</string>
-            <key>PayloadUUID</key>
-            <string>{account_uuid}</string>
-            <key>PayloadVersion</key>
-            <integer>1</integer>
-        </dict>
-    </array>
-    <key>PayloadDisplayName</key>
-    <string>NotionCal</string>
-    <key>PayloadIdentifier</key>
-    <string>vn.opendiy.notion-caldav.profile.{username}</string>
-    <key>PayloadType</key>
-    <string>Configuration</string>
-    <key>PayloadUUID</key>
-    <string>{profile_uuid}</string>
-    <key>PayloadVersion</key>
-    <integer>1</integer>
-</dict>
-</plist>
-"#,
-        account_uuid = random_uuid(),
-        profile_uuid = random_uuid(),
-    );
-    let encoded = web_sys::window()
-        .and_then(|w| w.btoa(&plist).ok())
-        .unwrap_or_default();
-    format!("data:application/x-apple-aspen-config;base64,{encoded}")
-}
-#[cfg(not(feature = "hydrate"))]
-fn caldav_mobileconfig_data_uri(_host: &str, _username: &str, _password: &str) -> String {
-    String::new()
-}
 
 #[component]
 fn RegenerateButton<F, Fut>(label: String, confirm_label: String, class: String, on_confirm: F) -> impl IntoView
@@ -470,54 +391,46 @@ where
 }
 
 #[component]
-fn AccountCredentialSection(account_caldav_username: Option<String>, app_base_url: String) -> impl IntoView {
-    let has_credential = account_caldav_username.is_some();
-    let (revealed, set_revealed) = signal(None::<NewCredential>);
+fn AccountCredentialSection(
+    account_caldav_username: String,
+    account_caldav_password: Option<String>,
+    app_base_url: String,
+) -> impl IntoView {
+    let (credential, set_credential) =
+        signal((account_caldav_username, account_caldav_password));
 
     let on_confirm = move || async move {
         if let Ok(cred) = regenerate_account_credential().await {
-            set_revealed.set(Some(cred));
+            set_credential.set((cred.username, Some(cred.password)));
         }
-    };
-
-    let button_label = if has_credential { "Regenerate" } else { "Generate account-wide access" };
-    let confirm_label = if has_credential {
-        "Generate a new account-wide password? The old one will stop working immediately."
-    } else {
-        "Create one password with access to every calendar you own?"
     };
 
     view! {
         <div class="bg-surface border border-outline-variant rounded-lg p-lg">
             <h2 class="font-semibold text-h3">"Account-wide CalDAV access"</h2>
             <p class="text-on-surface-variant text-body-md mt-1">"One username/password that gives a CalDAV client access to every calendar above at once — your calendar app will list them all automatically. Each calendar's own credentials above still work independently."</p>
-            {move || match revealed.get() {
-                Some(cred) => {
-                    let mobileconfig_href =
-                        caldav_mobileconfig_data_uri(&client_host(), &cred.username, &cred.password);
-                    view! {
-                        <CopyRow label="CalDAV URL" value=client_origin()/>
-                        <CopyRow label="Username" value=cred.username.clone()/>
-                        <CopyRow label="CalDAV password" value=cred.password.clone()/>
+            <CopyRow label="CalDAV URL" value=app_base_url/>
+            {move || {
+                let (username, password) = credential.get();
+                match password {
+                    Some(password) => view! {
+                        <CopyRow label="Username" value=username/>
+                        <CopyRow label="CalDAV password" value=password/>
                         <a
                             class="inline-block mt-sm text-label-md text-secondary hover:underline"
-                            href=mobileconfig_href
-                            download="notioncal.mobileconfig"
+                            href="/me/account-caldav.mobileconfig"
                         >"Download for iOS (2-way sync)"</a>
-                    }.into_any()
-                },
-                None => match &account_caldav_username {
-                    Some(username) => view! {
-                        <CopyRow label="CalDAV URL" value=app_base_url.clone()/>
-                        <CopyRow label="Username" value=username.clone()/>
                     }.into_any(),
-                    None => ().into_any(),
-                },
+                    None => view! {
+                        <CopyRow label="Username" value=username/>
+                        <p class="text-on-surface-variant text-body-md mt-1">"Password already set but no longer shown — click \"Regenerate\" below to see a new one."</p>
+                    }.into_any(),
+                }
             }}
             <div class="mt-md pt-md border-t border-outline-variant">
                 <RegenerateButton
-                    label=button_label.to_string()
-                    confirm_label=confirm_label.to_string()
+                    label="Regenerate".to_string()
+                    confirm_label="Generate a new account-wide password? The old one will stop working immediately.".to_string()
                     class="text-label-md text-secondary hover:underline".to_string()
                     on_confirm=on_confirm
                 />
