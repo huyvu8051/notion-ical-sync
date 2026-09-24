@@ -53,6 +53,9 @@ pub fn GuideRoutePage() -> impl IntoView {
 
                     <p class="mb-md">"Done — the profile installs and every calendar you own now appears in Apple Calendar, fully two-way: events you create or edit there sync back to Notion, and vice versa."</p>
                     <img src="/static/guide/08-ios-profile-installed.jpg" alt="Profile Installed confirmation screen" class="w-full rounded-lg border border-outline-variant"/>
+
+                    <p class="mb-md mt-lg">"Prefer to type it in yourself? Go to "<strong>"Settings → Apps → Calendar → Accounts → Add Account → Other → Add CalDAV Account"</strong>" and enter the CalDAV URL, username, and password from step 3 (leave off "<code>"https://"</code>" in the Server field — iOS adds it automatically)."</p>
+                    <img src="/static/guide/10-ios-manual-caldav.jpg" alt="iOS manual CalDAV account form with server, username, password and description filled in" class="w-full rounded-lg border border-outline-variant"/>
                 </GuideStep>
 
                 <GuideStep number=5 title="Android: DAVx5">
