@@ -56,10 +56,10 @@ pub fn GuideRoutePage() -> impl IntoView {
                 </GuideStep>
 
                 <GuideStep number=5 title="Android: DAVx5">
-                    <p class="mb-md">"Android has no OS-level equivalent to the iOS profile above — the standard way to get two-way CalDAV sync is the "<a class="text-secondary underline" href="https://f-droid.org/packages/at.bitfire.davdroid/" target="_blank">"DAVx5"</a>" app. Install it, then on its login screen either:"</p>
+                    <p class="mb-md">"Android has no OS-level equivalent to the iOS profile above — the standard way to get two-way CalDAV sync is the "<a class="text-secondary underline" href="https://f-droid.org/packages/at.bitfire.davdroid/" target="_blank">"DAVx5"</a>" app. Install it, tap \"Add account\", then either:"</p>
                     <ul class="list-disc pl-lg space-y-xs mb-md">
-                        <li>"Tap the QR icon and scan the "<strong>"Android (DAVx5)"</strong>" code from step 3 — it prefills the server and username; you still type the password yourself."</li>
-                        <li>"Or choose \"Login with URL and username\" and paste the three fields from step 3 in by hand."</li>
+                        <li>"Open your phone's Camera app (or any QR scanner) and point it at the "<strong>"Android (DAVx5)"</strong>" code from step 3 — it'll offer to open DAVx5 with the server and username already filled in; you still type the password yourself."</li>
+                        <li>"Or in DAVx5 choose \"Login with URL and user name\" and type the three fields from step 3 in by hand."</li>
                     </ul>
                     <p class="text-on-surface-variant text-body-md">"Same result as iOS: every calendar you own shows up, fully two-way."</p>
                 </GuideStep>
