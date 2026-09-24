@@ -435,6 +435,7 @@ fn AccountCredentialSection(
                         <a
                             class="inline-block mt-sm text-label-md text-secondary hover:underline"
                             href=format!("/me/account-caldav.mobileconfig?token={token}")
+                            target="_blank"
                         >"Download for iOS (2-way sync)"</a>
                     }.into_any(),
                     None => view! {
