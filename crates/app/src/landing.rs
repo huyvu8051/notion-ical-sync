@@ -224,7 +224,7 @@ pub fn LandingPage() -> impl IntoView {
                                         <span class="material-symbols-outlined !text-[18px]">"check_circle"</span> "Unlimited events"
                                     </li>
                                     <li class="flex items-center gap-2 text-body-md opacity-90">
-                                        <span class="material-symbols-outlined !text-[18px]">"check_circle"</span> "Secure checkout via Stripe"
+                                        <span class="material-symbols-outlined !text-[18px]">"check_circle"</span> "Secure checkout via Paddle"
                                     </li>
                                     <li class="flex items-center gap-2 text-body-md opacity-90">
                                         <span class="material-symbols-outlined !text-[18px]">"check_circle"</span> "Cancel anytime"

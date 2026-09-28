@@ -239,7 +239,7 @@ pub struct AppState {
     pub notion_oauth: Option<crate::pages::connect_notion::NotionOAuthConfig>,
     pub notion_api_base_url: String,
     pub mapbox_token: Option<String>,
-    pub stripe: Option<crate::billing::StripeConfig>,
+    pub paddle: Option<crate::billing::PaddleConfig>,
     pub email: Option<crate::email::EmailConfig>,
     pub admin_secret: Option<String>,
     pub leptos_options: leptos::config::LeptosOptions,
@@ -285,7 +285,7 @@ impl AppState {
         notion_oauth: Option<crate::pages::connect_notion::NotionOAuthConfig>,
         notion_api_base_url: String,
         mapbox_token: Option<String>,
-        stripe: Option<crate::billing::StripeConfig>,
+        paddle: Option<crate::billing::PaddleConfig>,
         email: Option<crate::email::EmailConfig>,
         admin_secret: Option<String>,
         leptos_options: leptos::config::LeptosOptions,
@@ -301,7 +301,7 @@ impl AppState {
             notion_oauth,
             notion_api_base_url,
             mapbox_token,
-            stripe,
+            paddle,
             email,
             admin_secret,
             leptos_options,
@@ -2611,7 +2611,7 @@ pub fn create_app(
     let notion_api_base_url_for_context =
         app::page_shell::NotionApiBaseUrl(state.notion_api_base_url.clone());
     let app_base_url_for_context = app::page_shell::AppBaseUrl(app_config.base_url.clone());
-    let stripe_configured_for_context = app::page_shell::StripeConfigured(state.stripe.is_some());
+    let paddle_configured_for_context = app::page_shell::PaddleConfigured(state.paddle.is_some());
     let mapbox_token_for_context = app::page_shell::MapboxToken(state.mapbox_token.clone());
 
     let oidc_login_service = ServiceBuilder::new()
@@ -2711,7 +2711,7 @@ pub fn create_app(
         let http_client = http_client_for_context.clone();
         let notion_api_base_url = notion_api_base_url_for_context.clone();
         let app_base_url = app_base_url_for_context.clone();
-        let stripe_configured = stripe_configured_for_context.clone();
+        let paddle_configured = paddle_configured_for_context.clone();
         let mapbox_token = mapbox_token_for_context.clone();
         move || {
             let leptos_options = leptos_options.clone();
@@ -2719,7 +2719,7 @@ pub fn create_app(
             let http_client = http_client.clone();
             let notion_api_base_url = notion_api_base_url.clone();
             let app_base_url = app_base_url.clone();
-            let stripe_configured = stripe_configured.clone();
+            let paddle_configured = paddle_configured.clone();
             let mapbox_token = mapbox_token.clone();
             move |request: axum::extract::Request| {
                 let leptos_options = leptos_options.clone();
@@ -2727,7 +2727,7 @@ pub fn create_app(
                 let http_client = http_client.clone();
                 let notion_api_base_url = notion_api_base_url.clone();
                 let app_base_url = app_base_url.clone();
-                let stripe_configured = stripe_configured.clone();
+                let paddle_configured = paddle_configured.clone();
                 let mapbox_token = mapbox_token.clone();
                 async move {
                     let handler = leptos_axum::render_app_to_stream_with_context(
@@ -2736,7 +2736,7 @@ pub fn create_app(
                             leptos::prelude::provide_context(http_client.clone());
                             leptos::prelude::provide_context(notion_api_base_url.clone());
                             leptos::prelude::provide_context(app_base_url.clone());
-                            leptos::prelude::provide_context(stripe_configured.clone());
+                            leptos::prelude::provide_context(paddle_configured.clone());
                             leptos::prelude::provide_context(mapbox_token.clone());
                         },
                         move || app::shell(leptos_options.clone()),
@@ -2805,7 +2805,7 @@ pub fn create_app(
         )
         .route(
             "/billing/webhook",
-            post(crate::billing::handle_stripe_webhook),
+            post(crate::billing::handle_paddle_webhook),
         )
         .route("/admin/reset-billing", post(crate::billing::reset_billing))
         .route(
@@ -2859,7 +2859,7 @@ pub fn create_app(
                 leptos::prelude::provide_context(http_client_for_context.clone());
                 leptos::prelude::provide_context(notion_api_base_url_for_context.clone());
                 leptos::prelude::provide_context(app_base_url_for_context.clone());
-                leptos::prelude::provide_context(stripe_configured_for_context.clone());
+                leptos::prelude::provide_context(paddle_configured_for_context.clone());
                 leptos::prelude::provide_context(mapbox_token_for_context.clone());
             },
             move || app::shell(leptos_options.clone()),

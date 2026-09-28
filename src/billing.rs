@@ -2,7 +2,7 @@ use axum::{
     body::Bytes,
     extract::State,
     http::{HeaderMap, StatusCode},
-    response::{IntoResponse, Redirect},
+    response::{Html, IntoResponse},
     Json,
 };
 use axum_oidc::{EmptyAdditionalClaims, OidcClaims};
@@ -88,113 +88,68 @@ pub async fn enforce_quota(state: &AppState, user_id: i64) -> Result<(), ()> {
     }
 }
 
+/// Paddle Billing (not Classic) config. Sandbox and live are entirely
+/// separate datasets/API keys/base URLs — which one we're in is derived
+/// from the API key's own prefix (`pdl_sdbx_...` vs `pdl_live_...`) rather
+/// than a second env var, so it can't drift out of sync with the key.
 #[derive(Clone)]
-pub struct StripeConfig {
-    pub secret_key: String,
+pub struct PaddleConfig {
+    pub api_key: String,
     pub webhook_secret: String,
     pub price_id: String,
+    pub client_token: String,
+    pub api_base: &'static str,
 }
 
-impl StripeConfig {
+impl PaddleConfig {
     pub fn from_env() -> Option<Self> {
+        let api_key = std::env::var("PADDLE_API_KEY").ok()?;
+        let webhook_secret = std::env::var("PADDLE_WEBHOOK_SECRET").ok()?;
+        let price_id = std::env::var("PADDLE_PRICE_ID").ok()?;
+        let client_token = std::env::var("PADDLE_CLIENT_TOKEN").ok()?;
+        let api_base = if api_key.starts_with("pdl_sdbx_") {
+            "https://sandbox-api.paddle.com"
+        } else {
+            "https://api.paddle.com"
+        };
         Some(Self {
-            secret_key: std::env::var("STRIPE_SECRET_KEY").ok()?,
-            webhook_secret: std::env::var("STRIPE_WEBHOOK_SECRET").ok()?,
-            price_id: std::env::var("STRIPE_PRICE_ID").ok()?,
+            api_key,
+            webhook_secret,
+            price_id,
+            client_token,
+            api_base,
         })
     }
+
+    fn is_sandbox(&self) -> bool {
+        self.api_base.contains("sandbox")
+    }
 }
 
-#[derive(serde::Deserialize)]
-struct CheckoutSessionResponse {
-    url: String,
-}
-
-pub async fn create_checkout_session(
-    state: &AppState,
-    stripe: &StripeConfig,
-    user_id: i64,
-    email: &str,
-    existing_customer_id: Option<&str>,
-    trial_started_at: DateTime<Utc>,
-    app_base_url: &str,
-) -> Result<String, String> {
-    let mut params: Vec<(&str, String)> = vec![
-        ("mode", "subscription".to_string()),
-        ("line_items[0][price]", stripe.price_id.clone()),
-        ("line_items[0][quantity]", "1".to_string()),
-        ("client_reference_id", user_id.to_string()),
-        ("success_url", format!("{app_base_url}/me?checkout=success")),
-        (
-            "cancel_url",
-            format!("{app_base_url}/me?checkout=cancelled"),
-        ),
-    ];
-    match existing_customer_id {
-        Some(customer_id) => params.push(("customer", customer_id.to_string())),
-        None => params.push(("customer_email", email.to_string())),
-    }
-    let trial_end_at = trial_end(trial_started_at);
-    let stripe_min_trial_end = Utc::now() + chrono::Duration::hours(48);
-    if trial_end_at > stripe_min_trial_end {
-        params.push((
-            "subscription_data[trial_end]",
-            trial_end_at.timestamp().to_string(),
-        ));
-    }
-
-    info!(user_id, "-> Stripe API request (create checkout session)");
-    let resp = state
-        .client
-        .post("https://api.stripe.com/v1/checkout/sessions")
-        .basic_auth(&stripe.secret_key, Some(""))
-        .form(&params)
-        .send()
-        .await
-        .map_err(|e| e.to_string())?;
-
-    if !resp.status().is_success() {
-        let status = resp.status();
-        let body = resp.text().await.unwrap_or_default();
-        return Err(format!(
-            "Stripe checkout session creation failed ({status}): {body}"
-        ));
-    }
-
-    resp.json::<CheckoutSessionResponse>()
-        .await
-        .map(|r| r.url)
-        .map_err(|e| e.to_string())
-}
-
-fn verify_stripe_signature(secret: &str, header: &str, body: &[u8]) -> bool {
+fn verify_paddle_signature(secret: &str, header: &str, body: &[u8]) -> bool {
     let mut timestamp = None;
-    let mut signatures = Vec::new();
-    for part in header.split(',') {
-        if let Some(t) = part.strip_prefix("t=") {
+    let mut signature_hex = None;
+    for part in header.split(';') {
+        if let Some(t) = part.strip_prefix("ts=") {
             timestamp = Some(t);
-        } else if let Some(v1) = part.strip_prefix("v1=") {
-            signatures.push(v1);
+        } else if let Some(h1) = part.strip_prefix("h1=") {
+            signature_hex = Some(h1);
         }
     }
-    let Some(timestamp) = timestamp else {
+    let (Some(timestamp), Some(signature_hex)) = (timestamp, signature_hex) else {
         return false;
     };
-    if signatures.is_empty() {
+    let Ok(expected) = hex_decode(signature_hex) else {
         return false;
-    }
-
-    let signed_payload = [timestamp.as_bytes(), b".", body].concat();
-    signatures.iter().any(|sig_hex| {
-        let Ok(expected) = hex_decode(sig_hex) else {
-            return false;
-        };
-        let Ok(mut mac) = HmacSha256::new_from_slice(secret.as_bytes()) else {
-            return false;
-        };
-        mac.update(&signed_payload);
-        mac.verify_slice(&expected).is_ok()
-    })
+    };
+    // Paddle signs "{timestamp}:{raw_body}" (colon-joined), unlike Stripe's
+    // "{timestamp}.{raw_body}".
+    let signed_payload = [timestamp.as_bytes(), b":", body].concat();
+    let Ok(mut mac) = HmacSha256::new_from_slice(secret.as_bytes()) else {
+        return false;
+    };
+    mac.update(&signed_payload);
+    mac.verify_slice(&expected).is_ok()
 }
 
 fn hex_decode(s: &str) -> Result<Vec<u8>, ()> {
@@ -207,56 +162,56 @@ fn hex_decode(s: &str) -> Result<Vec<u8>, ()> {
         .collect()
 }
 
-pub async fn handle_stripe_webhook(
+pub async fn handle_paddle_webhook(
     State(state): State<AppState>,
     headers: HeaderMap,
     body: Bytes,
 ) -> StatusCode {
-    let Some(stripe) = state.stripe.as_ref() else {
-        warn!("stripe webhook: STRIPE_* not configured, dropping event");
+    let Some(paddle) = state.paddle.as_ref() else {
+        warn!("paddle webhook: PADDLE_* not configured, dropping event");
         return StatusCode::OK;
     };
 
     let signature = headers
-        .get("stripe-signature")
+        .get("paddle-signature")
         .and_then(|v| v.to_str().ok());
     let Some(signature) = signature else {
-        warn!("stripe webhook: missing Stripe-Signature header");
+        warn!("paddle webhook: missing Paddle-Signature header");
         return StatusCode::BAD_REQUEST;
     };
-    if !verify_stripe_signature(&stripe.webhook_secret, signature, &body) {
-        warn!("stripe webhook: signature verification failed, dropping event");
+    if !verify_paddle_signature(&paddle.webhook_secret, signature, &body) {
+        warn!("paddle webhook: signature verification failed, dropping event");
         return StatusCode::BAD_REQUEST;
     }
 
     let json: serde_json::Value = match serde_json::from_slice(&body) {
         Ok(v) => v,
         Err(e) => {
-            warn!(error = %e, "stripe webhook: invalid JSON body");
+            warn!(error = %e, "paddle webhook: invalid JSON body");
             return StatusCode::BAD_REQUEST;
         }
     };
 
     let event_type = json
-        .get("type")
+        .get("event_type")
         .and_then(|v| v.as_str())
         .unwrap_or("unknown");
-    let data = json.pointer("/data/object").cloned().unwrap_or_default();
-    info!(event_type, "-> Stripe webhook event verified");
+    let data = json.get("data").cloned().unwrap_or_default();
+    info!(event_type, "-> Paddle webhook event verified");
 
     match event_type {
-        "checkout.session.completed" => {
+        "transaction.completed" => {
             let user_id = data
-                .get("client_reference_id")
+                .pointer("/custom_data/user_id")
                 .and_then(|v| v.as_str())
                 .and_then(|s| s.parse::<i64>().ok());
-            let customer_id = data.get("customer").and_then(|v| v.as_str());
-            let subscription_id = data.get("subscription").and_then(|v| v.as_str());
+            let customer_id = data.get("customer_id").and_then(|v| v.as_str());
+            let subscription_id = data.get("subscription_id").and_then(|v| v.as_str());
             if let (Some(user_id), Some(customer_id), Some(subscription_id)) =
                 (user_id, customer_id, subscription_id)
             {
                 if let Err(e) = sqlx::query(
-                    "UPDATE users SET stripe_customer_id = $1, stripe_subscription_id = $2, subscription_status = 'trialing' WHERE id = $3",
+                    "UPDATE users SET billing_customer_id = $1, billing_subscription_id = $2, subscription_status = 'trialing' WHERE id = $3",
                 )
                 .bind(customer_id)
                 .bind(subscription_id)
@@ -264,20 +219,31 @@ pub async fn handle_stripe_webhook(
                 .execute(&state.db)
                 .await
                 {
-                    warn!("stripe webhook: failed to link customer/subscription to user {}: {}", user_id, e);
-                } else if let Some(cfg) = state.email.clone() {
-                    notify_user_by_id(&state, cfg, user_id, crate::email::subscribed_email).await;
+                    warn!("paddle webhook: failed to link customer/subscription to user {}: {}", user_id, e);
+                } else {
+                    if let Err(e) =
+                        defer_subscription_to_trial_end(&state, paddle, user_id, subscription_id)
+                            .await
+                    {
+                        warn!(
+                            "paddle webhook: failed to adjust trial billing date for subscription {}: {}",
+                            subscription_id, e
+                        );
+                    }
+                    if let Some(cfg) = state.email.clone() {
+                        notify_user_by_id(&state, cfg, user_id, crate::email::subscribed_email).await;
+                    }
                 }
             } else {
-                warn!("stripe webhook: checkout.session.completed missing client_reference_id/customer/subscription");
+                warn!("paddle webhook: transaction.completed missing custom_data.user_id/customer_id/subscription_id");
             }
         }
-        "customer.subscription.updated" => {
-            let customer_id = data.get("customer").and_then(|v| v.as_str());
+        "subscription.updated" => {
+            let customer_id = data.get("customer_id").and_then(|v| v.as_str());
             let status = data.get("status").and_then(|v| v.as_str());
             if let (Some(customer_id), Some(status)) = (customer_id, status) {
                 if let Err(e) = sqlx::query(
-                    "UPDATE users SET subscription_status = $1 WHERE stripe_customer_id = $2",
+                    "UPDATE users SET subscription_status = $1 WHERE billing_customer_id = $2",
                 )
                 .bind(status)
                 .bind(customer_id)
@@ -285,21 +251,21 @@ pub async fn handle_stripe_webhook(
                 .await
                 {
                     warn!(
-                        "stripe webhook: failed to update subscription_status for customer {}: {}",
+                        "paddle webhook: failed to update subscription_status for customer {}: {}",
                         customer_id, e
                     );
                 }
             }
         }
-        "customer.subscription.deleted" => {
-            let customer_id = data.get("customer").and_then(|v| v.as_str());
+        "subscription.canceled" => {
+            let customer_id = data.get("customer_id").and_then(|v| v.as_str());
             let status = data
                 .get("status")
                 .and_then(|v| v.as_str())
                 .unwrap_or("canceled");
             if let Some(customer_id) = customer_id {
                 if let Err(e) = sqlx::query(
-                    "UPDATE users SET subscription_status = $1 WHERE stripe_customer_id = $2",
+                    "UPDATE users SET subscription_status = $1 WHERE billing_customer_id = $2",
                 )
                 .bind(status)
                 .bind(customer_id)
@@ -307,7 +273,7 @@ pub async fn handle_stripe_webhook(
                 .await
                 {
                     warn!(
-                        "stripe webhook: failed to update subscription_status for customer {}: {}",
+                        "paddle webhook: failed to update subscription_status for customer {}: {}",
                         customer_id, e
                     );
                 } else if let Some(cfg) = state.email.clone() {
@@ -321,8 +287,8 @@ pub async fn handle_stripe_webhook(
                 }
             }
         }
-        "invoice.payment_failed" => {
-            if let Some(customer_id) = data.get("customer").and_then(|v| v.as_str()) {
+        "transaction.payment_failed" => {
+            if let Some(customer_id) = data.get("customer_id").and_then(|v| v.as_str()) {
                 if let Some(cfg) = state.email.clone() {
                     notify_user_by_customer_id(
                         &state,
@@ -338,6 +304,54 @@ pub async fn handle_stripe_webhook(
     }
 
     StatusCode::OK
+}
+
+/// Our trial length is dynamic (6 months from each user's own signup date),
+/// but Paddle prices only support a fixed trial length for everyone. The
+/// price is configured with a generous flat trial as an upper bound, and
+/// every checkout immediately gets this follow-up call to push the actual
+/// next charge to this user's real trial end (or to "now" if their trial
+/// already ended before they checked out) — mirroring the old Stripe
+/// `subscription_data[trial_end]` checkout param, which Paddle has no
+/// equivalent for at transaction-creation time.
+async fn defer_subscription_to_trial_end(
+    state: &AppState,
+    paddle: &PaddleConfig,
+    user_id: i64,
+    subscription_id: &str,
+) -> Result<(), String> {
+    let trial_started_at: Option<DateTime<Utc>> =
+        sqlx::query_scalar("SELECT trial_started_at FROM users WHERE id = $1")
+            .bind(user_id)
+            .fetch_optional(&state.db)
+            .await
+            .map_err(|e| e.to_string())?;
+    let Some(trial_started_at) = trial_started_at else {
+        return Ok(());
+    };
+    let next_billed_at = trial_end(trial_started_at).max(Utc::now() + chrono::Duration::minutes(5));
+
+    let url = format!("{}/subscriptions/{}", paddle.api_base, subscription_id);
+    let body = serde_json::json!({
+        "next_billed_at": next_billed_at.to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
+        "proration_billing_mode": "do_not_bill",
+    });
+    info!(subscription_id, "-> Paddle API request (defer next_billed_at to trial end)");
+    let resp = state
+        .client
+        .patch(&url)
+        .bearer_auth(&paddle.api_key)
+        .json(&body)
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let text = resp.text().await.unwrap_or_default();
+        return Err(format!("Paddle subscription update failed ({status}): {text}"));
+    }
+    Ok(())
 }
 
 async fn notify_user_by_id(
@@ -365,7 +379,7 @@ async fn notify_user_by_customer_id(
     template: fn() -> (&'static str, String),
 ) {
     let row: Option<(String,)> =
-        sqlx::query_as("SELECT email FROM users WHERE stripe_customer_id = $1")
+        sqlx::query_as("SELECT email FROM users WHERE billing_customer_id = $1")
             .bind(customer_id)
             .fetch_optional(&state.db)
             .await
@@ -379,16 +393,20 @@ async fn notify_user_by_customer_id(
 
 #[derive(sqlx::FromRow)]
 struct CheckoutUserRow {
+    #[allow(dead_code)]
     trial_started_at: DateTime<Utc>,
-    stripe_customer_id: Option<String>,
 }
 
+/// Paddle Billing checkout is opened client-side via Paddle.js (there's no
+/// pure server-side "create a session, redirect to a hosted page" flow like
+/// Stripe Checkout) — so this renders a tiny page that loads Paddle.js and
+/// immediately opens the overlay, instead of returning a redirect.
 pub async fn start_checkout(
     State(state): State<AppState>,
     claims: OidcClaims<EmptyAdditionalClaims>,
     cfg: axum::Extension<crate::session::AppConfig>,
 ) -> impl IntoResponse {
-    let Some(stripe) = state.stripe.as_ref() else {
+    let Some(paddle) = state.paddle.as_ref() else {
         return crate::error_page::error_page(crate::error_page::OauthError::BillingNotConfigured);
     };
 
@@ -400,36 +418,45 @@ pub async fn start_checkout(
     };
 
     let row: Option<CheckoutUserRow> =
-        sqlx::query_as("SELECT trial_started_at, stripe_customer_id FROM users WHERE id = $1")
+        sqlx::query_as("SELECT trial_started_at FROM users WHERE id = $1")
             .bind(user_id)
             .fetch_optional(&state.db)
             .await
             .ok()
             .flatten();
-    let Some(row) = row else {
+    if row.is_none() {
         return crate::error_page::error_page(crate::error_page::OauthError::Generic);
+    }
+
+    let checkout_config = serde_json::json!({
+        "items": [{ "priceId": paddle.price_id, "quantity": 1 }],
+        "customer": { "email": email },
+        "customData": { "user_id": user_id.to_string() },
+        "settings": { "successUrl": format!("{}/me?checkout=success", cfg.base_url) },
+    });
+    let environment_js = if paddle.is_sandbox() {
+        "Paddle.Environment.set(\"sandbox\");"
+    } else {
+        ""
     };
 
-    match create_checkout_session(
-        &state,
-        stripe,
-        user_id,
-        &email,
-        row.stripe_customer_id.as_deref(),
-        row.trial_started_at,
-        &cfg.base_url,
-    )
-    .await
-    {
-        Ok(url) => Redirect::to(&url).into_response(),
-        Err(e) => {
-            warn!(
-                "failed to create stripe checkout session for user {}: {}",
-                user_id, e
-            );
-            crate::error_page::error_page(crate::error_page::OauthError::FailedToCreateCheckoutSession)
-        }
-    }
+    let html = format!(
+        r#"<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Opening checkout…</title>
+<script src="https://cdn.paddle.com/paddle/v2/paddle.js"></script>
+</head><body>
+<p>Opening checkout…</p>
+<script>
+{environment_js}
+Paddle.Initialize({{ token: {client_token} }});
+Paddle.Checkout.open({checkout_config});
+</script>
+</body></html>"#,
+        client_token = serde_json::to_string(&paddle.client_token).unwrap_or_default(),
+        checkout_config = checkout_config,
+    );
+
+    Html(html).into_response()
 }
 
 pub async fn send_trial_reminders(state: &AppState) {
@@ -489,10 +516,10 @@ pub async fn reset_billing(
     #[derive(sqlx::FromRow)]
     struct UserRow {
         id: i64,
-        stripe_subscription_id: Option<String>,
+        billing_subscription_id: Option<String>,
     }
     let row: Option<UserRow> =
-        sqlx::query_as("SELECT id, stripe_subscription_id FROM users WHERE email = $1")
+        sqlx::query_as("SELECT id, billing_subscription_id FROM users WHERE email = $1")
             .bind(&body.email)
             .fetch_optional(&state.db)
             .await
@@ -504,25 +531,25 @@ pub async fn reset_billing(
         return StatusCode::NOT_FOUND.into_response();
     };
 
-    let mut stripe_cancel_result = "no subscription on file";
-    if let (Some(sub_id), Some(stripe)) =
-        (row.stripe_subscription_id.as_deref(), state.stripe.as_ref())
+    let mut paddle_cancel_result = "no subscription on file";
+    if let (Some(sub_id), Some(paddle)) =
+        (row.billing_subscription_id.as_deref(), state.paddle.as_ref())
     {
-        match cancel_stripe_subscription(&state, stripe, sub_id).await {
-            Ok(()) => stripe_cancel_result = "cancelled",
+        match cancel_paddle_subscription(&state, paddle, sub_id).await {
+            Ok(()) => paddle_cancel_result = "cancelled",
             Err(e) => {
                 warn!(
-                    "reset_billing: failed to cancel Stripe subscription {}: {}",
+                    "reset_billing: failed to cancel Paddle subscription {}: {}",
                     sub_id, e
                 );
-                stripe_cancel_result = "cancel failed (see server logs) — DB reset anyway";
+                paddle_cancel_result = "cancel failed (see server logs) — DB reset anyway";
             }
         }
     }
 
     if let Err(e) = sqlx::query(
         "UPDATE users SET subscription_status = 'none', trial_started_at = now(),
-         stripe_customer_id = NULL, stripe_subscription_id = NULL, trial_reminder_sent_at = NULL
+         billing_customer_id = NULL, billing_subscription_id = NULL, trial_reminder_sent_at = NULL
          WHERE id = $1",
     )
     .bind(row.id)
@@ -538,28 +565,29 @@ pub async fn reset_billing(
     }
 
     info!(
-        "reset_billing: reset user {} ({}) — stripe: {}",
-        row.id, body.email, stripe_cancel_result
+        "reset_billing: reset user {} ({}) — paddle: {}",
+        row.id, body.email, paddle_cancel_result
     );
     Json(serde_json::json!({
         "user_id": row.id,
-        "stripe_subscription": stripe_cancel_result,
+        "paddle_subscription": paddle_cancel_result,
         "trial_started_at": "now (fresh 6-month trial)",
     }))
     .into_response()
 }
 
-async fn cancel_stripe_subscription(
+async fn cancel_paddle_subscription(
     state: &AppState,
-    stripe: &StripeConfig,
+    paddle: &PaddleConfig,
     subscription_id: &str,
 ) -> Result<(), String> {
-    let url = format!("https://api.stripe.com/v1/subscriptions/{subscription_id}");
-    info!(notion_method = "DELETE", notion_url = %url, "-> Stripe API request (cancel subscription)");
+    let url = format!("{}/subscriptions/{}/cancel", paddle.api_base, subscription_id);
+    info!(method = "POST", url = %url, "-> Paddle API request (cancel subscription)");
     let resp = state
         .client
-        .delete(&url)
-        .basic_auth(&stripe.secret_key, Some(""))
+        .post(&url)
+        .bearer_auth(&paddle.api_key)
+        .json(&serde_json::json!({ "effective_from": "immediately" }))
         .send()
         .await
         .map_err(|e| e.to_string())?;
@@ -567,7 +595,7 @@ async fn cancel_stripe_subscription(
     if !resp.status().is_success() {
         let status = resp.status();
         let body = resp.text().await.unwrap_or_default();
-        return Err(format!("Stripe cancel failed ({status}): {body}"));
+        return Err(format!("Paddle cancel failed ({status}): {body}"));
     }
     Ok(())
 }
@@ -601,10 +629,10 @@ pub async fn grant_lifetime_to_non_paying_users(
         id: i64,
         email: String,
         subscription_status: String,
-        stripe_subscription_id: Option<String>,
+        billing_subscription_id: Option<String>,
     }
     let rows: Vec<NonPayingUserRow> = sqlx::query_as(
-        "SELECT id, email, subscription_status, stripe_subscription_id FROM users WHERE subscription_status <> 'active'",
+        "SELECT id, email, subscription_status, billing_subscription_id FROM users WHERE subscription_status <> 'active'",
     )
     .fetch_all(&state.db)
     .await
@@ -629,14 +657,14 @@ pub async fn grant_lifetime_to_non_paying_users(
             .into_response();
     }
 
-    let mut stripe_subscriptions_cancelled = 0;
-    if let Some(stripe) = state.stripe.as_ref() {
+    let mut paddle_subscriptions_cancelled = 0;
+    if let Some(paddle) = state.paddle.as_ref() {
         for row in &rows {
-            if let Some(sub_id) = row.stripe_subscription_id.as_deref() {
-                match cancel_stripe_subscription(&state, stripe, sub_id).await {
-                    Ok(()) => stripe_subscriptions_cancelled += 1,
+            if let Some(sub_id) = row.billing_subscription_id.as_deref() {
+                match cancel_paddle_subscription(&state, paddle, sub_id).await {
+                    Ok(()) => paddle_subscriptions_cancelled += 1,
                     Err(e) => warn!(
-                        "grant_lifetime_to_non_paying_users: failed to cancel Stripe subscription {} for user {}: {}",
+                        "grant_lifetime_to_non_paying_users: failed to cancel Paddle subscription {} for user {}: {}",
                         sub_id, row.id, e
                     ),
                 }
@@ -652,9 +680,9 @@ pub async fn grant_lifetime_to_non_paying_users(
     {
         Ok(result) => {
             info!(
-                "grant_lifetime_to_non_paying_users: granted lifetime_free to {} users, cancelled {} pending Stripe subscriptions",
+                "grant_lifetime_to_non_paying_users: granted lifetime_free to {} users, cancelled {} pending Paddle subscriptions",
                 result.rows_affected(),
-                stripe_subscriptions_cancelled
+                paddle_subscriptions_cancelled
             );
             let mut promo_emails_sent = 0;
             if opts.send_promo_email {
@@ -673,7 +701,7 @@ pub async fn grant_lifetime_to_non_paying_users(
             }
             Json(serde_json::json!({
                 "users_granted": result.rows_affected(),
-                "stripe_subscriptions_cancelled": stripe_subscriptions_cancelled,
+                "paddle_subscriptions_cancelled": paddle_subscriptions_cancelled,
                 "promo_emails_sent": promo_emails_sent,
             }))
             .into_response()

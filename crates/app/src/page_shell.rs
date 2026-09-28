@@ -25,7 +25,7 @@ pub struct AppBaseUrl(pub String);
 
 #[cfg(feature = "ssr")]
 #[derive(Clone)]
-pub struct StripeConfigured(pub bool);
+pub struct PaddleConfigured(pub bool);
 
 #[cfg(feature = "ssr")]
 #[derive(Clone)]

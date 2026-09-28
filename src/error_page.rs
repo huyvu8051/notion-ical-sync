@@ -53,7 +53,6 @@ pub(crate) enum OauthError {
     CalendarNotFound,
     FailedToDeleteCalendar,
     BillingNotConfigured,
-    FailedToCreateCheckoutSession,
 }
 
 impl OauthError {
@@ -76,7 +75,6 @@ impl OauthError {
             Self::CalendarNotFound => "This calendar wasn't found.".to_string(),
             Self::FailedToDeleteCalendar => "Failed to delete this calendar.".to_string(),
             Self::BillingNotConfigured => "Billing isn't configured on this server.".to_string(),
-            Self::FailedToCreateCheckoutSession => "Failed to create a checkout session.".to_string(),
         }
     }
 }

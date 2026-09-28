@@ -114,10 +114,10 @@ async fn main() -> anyhow::Result<()> {
          input with no autocomplete",
     );
 
-    let stripe = billing::StripeConfig::from_env();
+    let paddle = billing::PaddleConfig::from_env();
     warn_if_unconfigured(
-        &stripe,
-        "STRIPE_SECRET_KEY/STRIPE_WEBHOOK_SECRET/STRIPE_PRICE_ID not set; \
+        &paddle,
+        "PADDLE_API_KEY/PADDLE_WEBHOOK_SECRET/PADDLE_PRICE_ID/PADDLE_CLIENT_TOKEN not set; \
          /billing/checkout will show a not-configured page until they're set",
     );
 
@@ -157,7 +157,7 @@ async fn main() -> anyhow::Result<()> {
         notion_oauth,
         notion_api_base_url,
         mapbox_token,
-        stripe,
+        paddle,
         email,
         admin_secret,
         leptos_options,

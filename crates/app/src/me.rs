@@ -147,7 +147,7 @@ async fn load_me_data() -> Result<MePageData, ServerFnError> {
     let app_base_url = use_context::<crate::page_shell::AppBaseUrl>()
         .ok_or_else(|| ServerFnError::new("missing app base url context"))?
         .0;
-    let stripe_configured = use_context::<crate::page_shell::StripeConfigured>()
+    let paddle_configured = use_context::<crate::page_shell::PaddleConfigured>()
         .map(|v| v.0)
         .unwrap_or(false);
 
@@ -192,7 +192,7 @@ async fn load_me_data() -> Result<MePageData, ServerFnError> {
                 (format!("{used_today}/{FREE_DAILY_QUOTA} events today"), true)
             }
         };
-        let cta_href = (show_cta && stripe_configured).then(|| "/billing/checkout".to_string());
+        let cta_href = (show_cta && paddle_configured).then(|| "/billing/checkout".to_string());
         (status_text, cta_href)
     };
 

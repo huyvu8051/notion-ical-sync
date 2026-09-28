@@ -182,7 +182,7 @@ pub fn payment_failed_email() -> (&'static str, String) {
         "Your payment failed",
         wrap_in_email_template(
             r#"<p>Hi there,</p>
-<p>We couldn't charge your $1/year subscription. Please check and update your payment method on Stripe to avoid any interruption.</p>
+<p>We couldn't charge your $1/year subscription. Please check and update your payment method to avoid any interruption.</p>
 <p>— The NotionCal team</p>"#,
         ),
     )
