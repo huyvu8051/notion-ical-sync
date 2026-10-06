@@ -1,5 +1,7 @@
 use notion_ical_sync::pages::connect_notion;
 use notion_ical_sync::{billing, create_app, email, session, AppState, CaldavAllowWrites};
+use opentelemetry::trace::TracerProvider;
+use opentelemetry_appender_tracing::layer::OpenTelemetryTracingBridge;
 use std::{env, time::Duration};
 use tower_sessions::cookie::time::Duration as CookieDuration;
 use tower_sessions::cookie::SameSite;
@@ -31,6 +33,87 @@ fn warn_if_unconfigured<T>(value: &Option<T>, message: &str) {
     if value.is_none() {
         tracing::warn!("{}", message);
     }
+}
+
+fn build_env_filter() -> tracing_subscriber::EnvFilter {
+    tracing_subscriber::EnvFilter::from_default_env().add_directive(tracing::Level::INFO.into())
+}
+
+/// Holds the OTel providers alive for the process lifetime; their `Drop`
+/// flushes any pending batch on the way down. Best-effort only — this
+/// app doesn't hook a graceful-shutdown signal, so a SIGKILL skips this
+/// and just loses the last few seconds of unflushed data, same tradeoff
+/// already accepted for the DB pool.
+struct OtelGuard {
+    tracer_provider: opentelemetry_sdk::trace::SdkTracerProvider,
+    logger_provider: opentelemetry_sdk::logs::SdkLoggerProvider,
+}
+
+impl Drop for OtelGuard {
+    fn drop(&mut self) {
+        if let Err(e) = self.tracer_provider.shutdown() {
+            eprintln!("failed to shut down OTel tracer provider: {e}");
+        }
+        if let Err(e) = self.logger_provider.shutdown() {
+            eprintln!("failed to shut down OTel logger provider: {e}");
+        }
+    }
+}
+
+/// Wires up `tracing_subscriber` with stdout (as before) plus, when
+/// `OTEL_EXPORTER_OTLP_ENDPOINT` is set, OTLP export of both spans (to
+/// Tempo) and log events (to Loki) via the cluster's Grafana Alloy
+/// collector. Unset (e.g. local dev) degrades to stdout-only, matching
+/// every other optional integration in this file.
+fn init_tracing() -> Option<OtelGuard> {
+    let otel_endpoint = env::var("OTEL_EXPORTER_OTLP_ENDPOINT").ok();
+
+    let Some(_) = otel_endpoint else {
+        tracing_subscriber::registry()
+            .with(build_env_filter())
+            .with(tracing_subscriber::fmt::layer())
+            .init();
+        tracing::warn!(
+            "OTEL_EXPORTER_OTLP_ENDPOINT not set; traces/logs only go to stdout, not to Tempo/Loki"
+        );
+        return None;
+    };
+
+    let resource = opentelemetry_sdk::Resource::builder()
+        .with_service_name("notion-caldav-saas")
+        .build();
+
+    let span_exporter = opentelemetry_otlp::SpanExporter::builder()
+        .with_http()
+        .build()
+        .expect("failed to build OTLP span exporter");
+    let tracer_provider = opentelemetry_sdk::trace::SdkTracerProvider::builder()
+        .with_batch_exporter(span_exporter)
+        .with_resource(resource.clone())
+        .build();
+    let tracer = tracer_provider.tracer("notion-caldav-saas");
+
+    let log_exporter = opentelemetry_otlp::LogExporter::builder()
+        .with_http()
+        .build()
+        .expect("failed to build OTLP log exporter");
+    let logger_provider = opentelemetry_sdk::logs::SdkLoggerProvider::builder()
+        .with_batch_exporter(log_exporter)
+        .with_resource(resource)
+        .build();
+    let otel_log_layer = OpenTelemetryTracingBridge::new(&logger_provider);
+
+    tracing_subscriber::registry()
+        .with(build_env_filter())
+        .with(tracing_subscriber::fmt::layer())
+        .with(tracing_opentelemetry::layer().with_tracer(tracer))
+        .with(otel_log_layer)
+        .init();
+
+    Some(OtelGuard {
+        tracer_provider,
+        logger_provider,
+    })
 }
 
 async fn run_periodic_refresh_job(state: AppState) {
@@ -66,13 +149,7 @@ async fn run_daily_trial_reminder_job(state: AppState) {
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     dotenvy::dotenv().ok();
-    tracing_subscriber::registry()
-        .with(
-            tracing_subscriber::EnvFilter::from_default_env()
-                .add_directive(tracing::Level::INFO.into()),
-        )
-        .with(tracing_subscriber::fmt::layer())
-        .init();
+    let _otel_guard = init_tracing();
 
     app::init_executor();
 
