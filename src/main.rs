@@ -168,11 +168,16 @@ async fn main() -> anyhow::Result<()> {
     // tenant databases that routinely took 60+ seconds, well past the
     // liveness probe's threshold, so kubelet killed the pod before it ever
     // reached `axum::serve` below. That was the crash loop. This spawn is
-    // non-blocking and advisory-locked (only one replica does the work per
-    // tick), at the cost of the first sync after a restart not happening
-    // until this job's first tick, ~PERIODIC_REFRESH_INTERVAL later —
-    // verified empirically, `tokio::time::interval`'s first tick is not
-    // immediate despite what its docs might suggest.
+    // non-blocking; `run_periodic_refresh_job`'s first tick fires right away
+    // (confirmed: "refresh_all: pull cycle started" logged <1s after process
+    // start), so this still covers the startup sync in the common case. The
+    // advisory lock means only one replica's tick actually does the work
+    // though — if that first attempt loses the lock (e.g. racing an outgoing
+    // replica's own in-flight sweep during a rollout), it's silently skipped
+    // and the next successful sync waits for the *next* scheduled tick
+    // (~PERIODIC_REFRESH_INTERVAL later, ticks are evenly spaced from
+    // startup, not re-tried immediately) — this is what happened on this
+    // feature's first production deploy.
     tokio::spawn(run_periodic_refresh_job(state.clone()));
     tokio::spawn(run_daily_trial_reminder_job(state.clone()));
 
