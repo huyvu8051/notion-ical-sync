@@ -199,3 +199,27 @@ pub fn subscription_canceled_email() -> (&'static str, String) {
         ),
     )
 }
+
+pub fn notion_token_invalid_email(
+    workspace_name: &str,
+    calendar_names: &[String],
+    reconnect_url: &str,
+    stop_url: &str,
+) -> (&'static str, String) {
+    let workspace = crate::session::html_escape(workspace_name);
+    let list = calendar_names
+        .iter()
+        .map(|n| format!("<li>{}</li>", crate::session::html_escape(n)))
+        .collect::<String>();
+    (
+        "Notion disconnected — your sync has paused",
+        wrap_in_email_template(&format!(
+            r#"<p>Hi there,</p>
+<p>Notion rejected the access token for your <strong>{workspace}</strong> workspace, so these calendars stopped syncing:</p>
+<ul>{list}</ul>
+<p>This usually happens when the Notion integration is removed, or the connection is revoked from Notion's side. Nothing has been deleted — your data and calendar subscriptions are untouched, just not being updated anymore.</p>
+<p><a href="{reconnect_url}">Reconnect Notion</a> to resume syncing, or if you'd rather not deal with it right now, <a href="{stop_url}">stop syncing these calendars</a> (no login needed).</p>
+<p>— The NotionCal team</p>"#
+        )),
+    )
+}

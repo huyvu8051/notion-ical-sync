@@ -1,11 +1,11 @@
-use axum::extract::{Query, State};
-use axum::response::{IntoResponse, Redirect};
+use axum::extract::{Path, Query, State};
+use axum::response::{Html, IntoResponse, Redirect};
 use axum_oidc::{EmptyAdditionalClaims, OidcClaims};
 use serde::Deserialize;
 use tracing::error;
 
 use crate::crypto::generate_token;
-use crate::error_page::{error_page, OauthError};
+use crate::error_page::{error_page, OauthError, AUTH_STYLE};
 use crate::session::find_or_create_user;
 use crate::AppState;
 
@@ -162,7 +162,8 @@ pub async fn notion_oauth_callback(
          ON CONFLICT (user_id, workspace_id) DO UPDATE SET
              notion_access_token = EXCLUDED.notion_access_token,
              workspace_name = EXCLUDED.workspace_name,
-             bot_id = EXCLUDED.bot_id
+             bot_id = EXCLUDED.bot_id,
+             token_invalid_since = NULL
          RETURNING id",
     )
     .bind(user_id)
@@ -184,4 +185,51 @@ pub async fn notion_oauth_callback(
         "/connect/notion/databases?connection_id={connection_id}"
     ))
     .into_response()
+}
+
+/// No-login quick-action link sent in the token-invalid notification email
+/// (see `AppState::mark_notion_connection_invalid_and_notify`). Capability-
+/// based on the unguessable `action_token`, same trust model as
+/// `users.mobileconfig_token`. Removes the connection's calendars (stops
+/// syncing, drops their CalDAV subscriptions) but leaves the
+/// `notion_connections` row itself — reconnecting that workspace later
+/// still finds and revives it via the `(user_id, workspace_id)` upsert
+/// above.
+pub async fn stop_sync_by_action_token(
+    State(state): State<AppState>,
+    Path(action_token): Path<String>,
+) -> impl IntoResponse {
+    let result = sqlx::query(
+        "DELETE FROM calendars WHERE notion_connection_id = (
+             SELECT id FROM notion_connections WHERE action_token = $1
+         )",
+    )
+    .bind(&action_token)
+    .execute(&state.db)
+    .await;
+
+    let message = match result {
+        Ok(r) if r.rows_affected() > 0 => format!(
+            "Syncing stopped for {} calendar{}. You can reconnect anytime from your dashboard.",
+            r.rows_affected(),
+            if r.rows_affected() == 1 { "" } else { "s" }
+        ),
+        Ok(_) => {
+            "Nothing to stop — this link has already been used or is no longer valid.".to_string()
+        }
+        Err(e) => {
+            error!("failed to stop sync for action_token: {}", e);
+            "Something went wrong. Please try again or contact support.".to_string()
+        }
+    };
+
+    Html(format!(
+        r#"<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">{AUTH_STYLE}</head>
+<body>
+<div class="top-nav"><strong>NotionCal</strong></div>
+<p class="hint">{}</p>
+</body></html>"#,
+        crate::session::html_escape(&message)
+    ))
 }

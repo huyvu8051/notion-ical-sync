@@ -267,6 +267,25 @@ pub struct CalendarRow {
     pub display_name: String,
     pub caldav_username: String,
     pub notion_access_token: String,
+    pub notion_connection_id: i64,
+}
+
+/// `refresh_db`'s failure modes. `Unauthorized` means Notion rejected the
+/// bearer token itself (not a per-page permission issue — that's 403/404),
+/// so the token is dead and retrying won't help; callers pause the whole
+/// connection on this variant instead of just logging and moving on.
+pub enum RefreshError {
+    Unauthorized,
+    Other(String),
+}
+
+impl std::fmt::Display for RefreshError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Unauthorized => write!(f, "Notion error 401 Unauthorized: token revoked or invalid"),
+            Self::Other(e) => write!(f, "{e}"),
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -310,8 +329,9 @@ impl AppState {
 
     pub async fn all_calendars(&self) -> Vec<CalendarRow> {
         sqlx::query_as::<_, CalendarRow>(
-            "SELECT c.id, c.user_id, c.database_id, c.public_id, c.data_source_id, c.date_property, c.display_name, c.caldav_username, nc.notion_access_token
-             FROM calendars c JOIN notion_connections nc ON nc.id = c.notion_connection_id",
+            "SELECT c.id, c.user_id, c.database_id, c.public_id, c.data_source_id, c.date_property, c.display_name, c.caldav_username, nc.notion_access_token, nc.id AS notion_connection_id
+             FROM calendars c JOIN notion_connections nc ON nc.id = c.notion_connection_id
+             WHERE nc.token_invalid_since IS NULL",
         )
         .fetch_all(&self.db)
         .await
@@ -323,7 +343,7 @@ impl AppState {
 
     pub async fn calendars_for_user(&self, user_id: i64) -> Vec<CalendarRow> {
         sqlx::query_as::<_, CalendarRow>(
-            "SELECT c.id, c.user_id, c.database_id, c.public_id, c.data_source_id, c.date_property, c.display_name, c.caldav_username, nc.notion_access_token
+            "SELECT c.id, c.user_id, c.database_id, c.public_id, c.data_source_id, c.date_property, c.display_name, c.caldav_username, nc.notion_access_token, nc.id AS notion_connection_id
              FROM calendars c JOIN notion_connections nc ON nc.id = c.notion_connection_id
              WHERE c.user_id = $1",
         )
@@ -338,7 +358,7 @@ impl AppState {
 
     pub async fn calendar_by_public_id(&self, public_id: &str) -> Option<CalendarRow> {
         sqlx::query_as::<_, CalendarRow>(
-            "SELECT c.id, c.user_id, c.database_id, c.public_id, c.data_source_id, c.date_property, c.display_name, c.caldav_username, nc.notion_access_token
+            "SELECT c.id, c.user_id, c.database_id, c.public_id, c.data_source_id, c.date_property, c.display_name, c.caldav_username, nc.notion_access_token, nc.id AS notion_connection_id
              FROM calendars c JOIN notion_connections nc ON nc.id = c.notion_connection_id
              WHERE c.public_id = $1",
         )
@@ -553,7 +573,7 @@ impl AppState {
 
     async fn calendar_by_db_id(&self, db_id: &str) -> Option<CalendarRow> {
         sqlx::query_as::<_, CalendarRow>(
-            "SELECT c.id, c.user_id, c.database_id, c.public_id, c.data_source_id, c.date_property, c.display_name, c.caldav_username, nc.notion_access_token
+            "SELECT c.id, c.user_id, c.database_id, c.public_id, c.data_source_id, c.date_property, c.display_name, c.caldav_username, nc.notion_access_token, nc.id AS notion_connection_id
              FROM calendars c JOIN notion_connections nc ON nc.id = c.notion_connection_id
              WHERE c.database_id = $1
              ORDER BY c.created_at ASC
@@ -570,9 +590,9 @@ impl AppState {
 
     pub async fn calendar_by_data_source_id(&self, ds_id: &str) -> Option<CalendarRow> {
         sqlx::query_as::<_, CalendarRow>(
-            "SELECT c.id, c.user_id, c.database_id, c.public_id, c.data_source_id, c.date_property, c.display_name, c.caldav_username, nc.notion_access_token
+            "SELECT c.id, c.user_id, c.database_id, c.public_id, c.data_source_id, c.date_property, c.display_name, c.caldav_username, nc.notion_access_token, nc.id AS notion_connection_id
              FROM calendars c JOIN notion_connections nc ON nc.id = c.notion_connection_id
-             WHERE c.data_source_id = $1",
+             WHERE c.data_source_id = $1 AND nc.token_invalid_since IS NULL",
         )
         .bind(ds_id)
         .fetch_optional(&self.db)
@@ -650,6 +670,10 @@ impl AppState {
                     info!("DB {} synced: {} events", cal.database_id, pages.len());
                     self.log_diff(cal.id, &pages).await;
                 }
+                Err(RefreshError::Unauthorized) => {
+                    error!("DB {} refresh failed: unauthorized (token revoked?)", cal.database_id);
+                    self.mark_notion_connection_invalid_and_notify(cal.notion_connection_id).await;
+                }
                 Err(e) => error!("DB {} refresh failed: {}", cal.database_id, e),
             }
         }
@@ -660,7 +684,7 @@ impl AppState {
         ds_id: &str,
         date_property: &str,
         notion_token: &str,
-    ) -> Result<Vec<PageInfo>, String> {
+    ) -> Result<Vec<PageInfo>, RefreshError> {
         let url = format!(
             "{}/v1/data_sources/{}/query",
             self.notion_api_base_url, ds_id
@@ -688,20 +712,23 @@ impl AppState {
             .await
             .map_err(|e| {
                 error!(notion_url = %url, error = %e, "<- Notion API request failed (transport)");
-                format!("Request failed: {}", e)
+                RefreshError::Other(format!("Request failed: {}", e))
             })?;
 
         let resp_status = resp.status();
         if !resp_status.is_success() {
             let txt = resp.text().await.unwrap_or_default();
             error!(notion_url = %url, status = %resp_status, body = %txt, "<- Notion API error response");
-            return Err(format!("Notion error {}: {}", resp_status, txt));
+            if resp_status == reqwest::StatusCode::UNAUTHORIZED {
+                return Err(RefreshError::Unauthorized);
+            }
+            return Err(RefreshError::Other(format!("Notion error {}: {}", resp_status, txt)));
         }
 
         let data: NotionQueryResponse = resp
             .json()
             .await
-            .map_err(|e| format!("Parse failed: {}", e))?;
+            .map_err(|e| RefreshError::Other(format!("Parse failed: {}", e)))?;
         info!(notion_url = %url, status = %resp_status, page_count = data.results.len(), "<- Notion API response");
 
         let mut events = Vec::new();
@@ -788,6 +815,54 @@ impl AppState {
         Ok(events)
     }
 
+    /// Pauses this connection (future refreshes skip it, see `all_calendars`/
+    /// `calendar_by_data_source_id`'s `token_invalid_since IS NULL` filter)
+    /// and emails the owner once. A no-op if already paused, so repeated
+    /// 401s from the same dead token across sync cycles cost nothing extra.
+    pub async fn mark_notion_connection_invalid_and_notify(&self, connection_id: i64) {
+        let row: Option<(i64, String, String, String)> = sqlx::query_as(
+            "UPDATE notion_connections nc SET token_invalid_since = now()
+             FROM users u
+             WHERE nc.id = $1 AND nc.token_invalid_since IS NULL AND u.id = nc.user_id
+             RETURNING nc.id, nc.action_token, nc.workspace_name, u.email",
+        )
+        .bind(connection_id)
+        .fetch_optional(&self.db)
+        .await
+        .unwrap_or_else(|e| {
+            error!("failed to mark notion_connection {} invalid: {}", connection_id, e);
+            None
+        });
+
+        let Some((_, action_token, workspace_name, email)) = row else {
+            return;
+        };
+        if email.is_empty() {
+            return;
+        }
+        let Some(cfg) = self.email.clone() else {
+            return;
+        };
+
+        let calendar_names: Vec<String> = sqlx::query_scalar(
+            "SELECT display_name FROM calendars WHERE notion_connection_id = $1 ORDER BY display_name",
+        )
+        .bind(connection_id)
+        .fetch_all(&self.db)
+        .await
+        .unwrap_or_default();
+
+        let reconnect_url = "https://notion-caldav.opendiy.vn/connect/notion/start".to_string();
+        let stop_url = format!("https://notion-caldav.opendiy.vn/notion-connection/{action_token}/stop");
+        let (subject, html) = crate::email::notion_token_invalid_email(
+            &workspace_name,
+            &calendar_names,
+            &reconnect_url,
+            &stop_url,
+        );
+        crate::email::spawn_send(cfg, email, subject.to_string(), html);
+    }
+
     pub async fn refresh_all(&self) {
         let calendars = self.all_calendars().await;
         let mut seen = std::collections::HashSet::new();
@@ -806,6 +881,10 @@ impl AppState {
                 Ok(pages) => {
                     info!("DB {} synced: {} events", cal.database_id, pages.len());
                     self.log_diff(cal.id, &pages).await;
+                }
+                Err(RefreshError::Unauthorized) => {
+                    error!("DB {} refresh failed: unauthorized (token revoked?)", cal.database_id);
+                    self.mark_notion_connection_invalid_and_notify(cal.notion_connection_id).await;
                 }
                 Err(e) => error!("DB {} refresh failed: {}", cal.database_id, e),
             }
@@ -835,6 +914,13 @@ impl AppState {
                     pages.len()
                 );
                 self.log_diff(cal.id, &pages).await;
+            }
+            Err(RefreshError::Unauthorized) => {
+                error!(
+                    "DB {} webhook-triggered refresh failed: unauthorized (token revoked?)",
+                    cal.database_id
+                );
+                self.mark_notion_connection_invalid_and_notify(cal.notion_connection_id).await;
             }
             Err(e) => error!(
                 "DB {} webhook-triggered refresh failed: {}",
@@ -2820,6 +2906,10 @@ pub fn create_app(
         .route(
             "/me/account-caldav-qr.svg",
             get(crate::pages::me::account_caldav_qr),
+        )
+        .route(
+            "/notion-connection/{action_token}/stop",
+            get(crate::pages::connect_notion::stop_sync_by_action_token),
         )
         .nest_service(
             "/pkg",
