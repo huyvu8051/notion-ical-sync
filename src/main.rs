@@ -163,7 +163,11 @@ async fn main() -> anyhow::Result<()> {
         leptos_options,
     );
 
-    state.refresh_all().await;
+    // `tokio::time::interval`'s first tick resolves immediately, so this
+    // spawn covers the startup sync too (advisory-locked, unlike the old
+    // blocking `state.refresh_all().await` that used to sit here — that
+    // delayed `axum::serve` below past the liveness probe's threshold on
+    // every restart, the root cause of the crash loop this replaced).
     tokio::spawn(run_periodic_refresh_job(state.clone()));
     tokio::spawn(run_daily_trial_reminder_job(state.clone()));
 
