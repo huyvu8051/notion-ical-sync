@@ -163,11 +163,16 @@ async fn main() -> anyhow::Result<()> {
         leptos_options,
     );
 
-    // `tokio::time::interval`'s first tick resolves immediately, so this
-    // spawn covers the startup sync too (advisory-locked, unlike the old
-    // blocking `state.refresh_all().await` that used to sit here — that
-    // delayed `axum::serve` below past the liveness probe's threshold on
-    // every restart, the root cause of the crash loop this replaced).
+    // Replaces an old blocking `state.refresh_all().await` that used to sit
+    // here, un-locked, run by every replica on every restart — with enough
+    // tenant databases that routinely took 60+ seconds, well past the
+    // liveness probe's threshold, so kubelet killed the pod before it ever
+    // reached `axum::serve` below. That was the crash loop. This spawn is
+    // non-blocking and advisory-locked (only one replica does the work per
+    // tick), at the cost of the first sync after a restart not happening
+    // until this job's first tick, ~PERIODIC_REFRESH_INTERVAL later —
+    // verified empirically, `tokio::time::interval`'s first tick is not
+    // immediate despite what its docs might suggest.
     tokio::spawn(run_periodic_refresh_job(state.clone()));
     tokio::spawn(run_daily_trial_reminder_job(state.clone()));
 
