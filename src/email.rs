@@ -50,8 +50,9 @@ pub async fn send_email(
 
 pub fn spawn_send(cfg: EmailConfig, to: String, subject: String, html: String) {
     tokio::spawn(async move {
-        if let Err(e) = send_email(&cfg, &to, &subject, &html).await {
-            tracing::error!("failed to send email to {}: {}", to, e);
+        match send_email(&cfg, &to, &subject, &html).await {
+            Ok(()) => tracing::info!(to = %to, subject = %subject, "email sent"),
+            Err(e) => tracing::error!(to = %to, subject = %subject, error = %e, "failed to send email"),
         }
     });
 }

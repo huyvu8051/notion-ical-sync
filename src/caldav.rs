@@ -268,6 +268,7 @@ pub struct CalendarRow {
     pub caldav_username: String,
     pub notion_access_token: String,
     pub notion_connection_id: i64,
+    pub workspace_name: String,
 }
 
 /// `refresh_db`'s failure modes. `Unauthorized` means Notion rejected the
@@ -329,7 +330,7 @@ impl AppState {
 
     pub async fn all_calendars(&self) -> Vec<CalendarRow> {
         sqlx::query_as::<_, CalendarRow>(
-            "SELECT c.id, c.user_id, c.database_id, c.public_id, c.data_source_id, c.date_property, c.display_name, c.caldav_username, nc.notion_access_token, nc.id AS notion_connection_id
+            "SELECT c.id, c.user_id, c.database_id, c.public_id, c.data_source_id, c.date_property, c.display_name, c.caldav_username, nc.notion_access_token, nc.id AS notion_connection_id, nc.workspace_name
              FROM calendars c JOIN notion_connections nc ON nc.id = c.notion_connection_id
              WHERE nc.token_invalid_since IS NULL",
         )
@@ -343,7 +344,7 @@ impl AppState {
 
     pub async fn calendars_for_user(&self, user_id: i64) -> Vec<CalendarRow> {
         sqlx::query_as::<_, CalendarRow>(
-            "SELECT c.id, c.user_id, c.database_id, c.public_id, c.data_source_id, c.date_property, c.display_name, c.caldav_username, nc.notion_access_token, nc.id AS notion_connection_id
+            "SELECT c.id, c.user_id, c.database_id, c.public_id, c.data_source_id, c.date_property, c.display_name, c.caldav_username, nc.notion_access_token, nc.id AS notion_connection_id, nc.workspace_name
              FROM calendars c JOIN notion_connections nc ON nc.id = c.notion_connection_id
              WHERE c.user_id = $1",
         )
@@ -358,7 +359,7 @@ impl AppState {
 
     pub async fn calendar_by_public_id(&self, public_id: &str) -> Option<CalendarRow> {
         sqlx::query_as::<_, CalendarRow>(
-            "SELECT c.id, c.user_id, c.database_id, c.public_id, c.data_source_id, c.date_property, c.display_name, c.caldav_username, nc.notion_access_token, nc.id AS notion_connection_id
+            "SELECT c.id, c.user_id, c.database_id, c.public_id, c.data_source_id, c.date_property, c.display_name, c.caldav_username, nc.notion_access_token, nc.id AS notion_connection_id, nc.workspace_name
              FROM calendars c JOIN notion_connections nc ON nc.id = c.notion_connection_id
              WHERE c.public_id = $1",
         )
@@ -573,7 +574,7 @@ impl AppState {
 
     async fn calendar_by_db_id(&self, db_id: &str) -> Option<CalendarRow> {
         sqlx::query_as::<_, CalendarRow>(
-            "SELECT c.id, c.user_id, c.database_id, c.public_id, c.data_source_id, c.date_property, c.display_name, c.caldav_username, nc.notion_access_token, nc.id AS notion_connection_id
+            "SELECT c.id, c.user_id, c.database_id, c.public_id, c.data_source_id, c.date_property, c.display_name, c.caldav_username, nc.notion_access_token, nc.id AS notion_connection_id, nc.workspace_name
              FROM calendars c JOIN notion_connections nc ON nc.id = c.notion_connection_id
              WHERE c.database_id = $1
              ORDER BY c.created_at ASC
@@ -590,7 +591,7 @@ impl AppState {
 
     pub async fn calendar_by_data_source_id(&self, ds_id: &str) -> Option<CalendarRow> {
         sqlx::query_as::<_, CalendarRow>(
-            "SELECT c.id, c.user_id, c.database_id, c.public_id, c.data_source_id, c.date_property, c.display_name, c.caldav_username, nc.notion_access_token, nc.id AS notion_connection_id
+            "SELECT c.id, c.user_id, c.database_id, c.public_id, c.data_source_id, c.date_property, c.display_name, c.caldav_username, nc.notion_access_token, nc.id AS notion_connection_id, nc.workspace_name
              FROM calendars c JOIN notion_connections nc ON nc.id = c.notion_connection_id
              WHERE c.data_source_id = $1 AND nc.token_invalid_since IS NULL",
         )
@@ -667,14 +668,34 @@ impl AppState {
                 .await
             {
                 Ok(pages) => {
-                    info!("DB {} synced: {} events", cal.database_id, pages.len());
+                    info!(
+                        connection_id = cal.notion_connection_id,
+                        workspace = %cal.workspace_name,
+                        calendar = %cal.display_name,
+                        database_id = %cal.database_id,
+                        events = pages.len(),
+                        "pull succeeded"
+                    );
                     self.log_diff(cal.id, &pages).await;
                 }
                 Err(RefreshError::Unauthorized) => {
-                    error!("DB {} refresh failed: unauthorized (token revoked?)", cal.database_id);
+                    error!(
+                        connection_id = cal.notion_connection_id,
+                        workspace = %cal.workspace_name,
+                        calendar = %cal.display_name,
+                        database_id = %cal.database_id,
+                        "pull failed: unauthorized (token revoked?)"
+                    );
                     self.mark_notion_connection_invalid_and_notify(cal.notion_connection_id).await;
                 }
-                Err(e) => error!("DB {} refresh failed: {}", cal.database_id, e),
+                Err(e) => error!(
+                    connection_id = cal.notion_connection_id,
+                    workspace = %cal.workspace_name,
+                    calendar = %cal.display_name,
+                    database_id = %cal.database_id,
+                    error = %e,
+                    "pull failed"
+                ),
             }
         }
     }
@@ -865,7 +886,10 @@ impl AppState {
 
     pub async fn refresh_all(&self) {
         let calendars = self.all_calendars().await;
+        info!(calendar_count = calendars.len(), "refresh_all: pull cycle started");
         let mut seen = std::collections::HashSet::new();
+        let mut succeeded = 0usize;
+        let mut failed = 0usize;
         for cal in calendars {
             if !seen.insert(cal.database_id.clone()) {
                 continue;
@@ -879,16 +903,42 @@ impl AppState {
                 .await
             {
                 Ok(pages) => {
-                    info!("DB {} synced: {} events", cal.database_id, pages.len());
+                    succeeded += 1;
+                    info!(
+                        connection_id = cal.notion_connection_id,
+                        workspace = %cal.workspace_name,
+                        calendar = %cal.display_name,
+                        database_id = %cal.database_id,
+                        events = pages.len(),
+                        "pull succeeded"
+                    );
                     self.log_diff(cal.id, &pages).await;
                 }
                 Err(RefreshError::Unauthorized) => {
-                    error!("DB {} refresh failed: unauthorized (token revoked?)", cal.database_id);
+                    failed += 1;
+                    error!(
+                        connection_id = cal.notion_connection_id,
+                        workspace = %cal.workspace_name,
+                        calendar = %cal.display_name,
+                        database_id = %cal.database_id,
+                        "pull failed: unauthorized (token revoked?)"
+                    );
                     self.mark_notion_connection_invalid_and_notify(cal.notion_connection_id).await;
                 }
-                Err(e) => error!("DB {} refresh failed: {}", cal.database_id, e),
+                Err(e) => {
+                    failed += 1;
+                    error!(
+                        connection_id = cal.notion_connection_id,
+                        workspace = %cal.workspace_name,
+                        calendar = %cal.display_name,
+                        database_id = %cal.database_id,
+                        error = %e,
+                        "pull failed"
+                    );
+                }
             }
         }
+        info!(succeeded, failed, "refresh_all: pull cycle completed");
     }
 
     pub async fn refresh_by_data_source(&self, data_source_id: &str) {
@@ -909,22 +959,32 @@ impl AppState {
         {
             Ok(pages) => {
                 info!(
-                    "DB {} synced via webhook: {} events",
-                    cal.database_id,
-                    pages.len()
+                    connection_id = cal.notion_connection_id,
+                    workspace = %cal.workspace_name,
+                    calendar = %cal.display_name,
+                    database_id = %cal.database_id,
+                    events = pages.len(),
+                    "pull succeeded (webhook-triggered)"
                 );
                 self.log_diff(cal.id, &pages).await;
             }
             Err(RefreshError::Unauthorized) => {
                 error!(
-                    "DB {} webhook-triggered refresh failed: unauthorized (token revoked?)",
-                    cal.database_id
+                    connection_id = cal.notion_connection_id,
+                    workspace = %cal.workspace_name,
+                    calendar = %cal.display_name,
+                    database_id = %cal.database_id,
+                    "pull failed (webhook-triggered): unauthorized (token revoked?)"
                 );
                 self.mark_notion_connection_invalid_and_notify(cal.notion_connection_id).await;
             }
             Err(e) => error!(
-                "DB {} webhook-triggered refresh failed: {}",
-                cal.database_id, e
+                connection_id = cal.notion_connection_id,
+                workspace = %cal.workspace_name,
+                calendar = %cal.display_name,
+                database_id = %cal.database_id,
+                error = %e,
+                "pull failed (webhook-triggered)"
             ),
         }
     }
