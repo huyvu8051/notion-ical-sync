@@ -37,9 +37,13 @@ async fn run_periodic_refresh_job(state: AppState) {
     let mut ticker = tokio::time::interval(PERIODIC_REFRESH_INTERVAL);
     loop {
         ticker.tick().await;
-        if let Some(lock) = advisory_lock(&state.db, JOB_LOCK_REFRESH_ALL).await {
-            state.refresh_all().await;
-            let _ = lock.commit().await;
+        info!("refresh_all: polling tick fired");
+        match advisory_lock(&state.db, JOB_LOCK_REFRESH_ALL).await {
+            Some(lock) => {
+                state.refresh_all().await;
+                let _ = lock.commit().await;
+            }
+            None => info!("refresh_all: tick skipped, another replica holds the lock"),
         }
     }
 }
@@ -48,9 +52,13 @@ async fn run_daily_trial_reminder_job(state: AppState) {
     let mut ticker = tokio::time::interval(DAILY_TRIAL_REMINDER_INTERVAL);
     loop {
         ticker.tick().await;
-        if let Some(lock) = advisory_lock(&state.db, JOB_LOCK_TRIAL_REMINDERS).await {
-            billing::send_trial_reminders(&state).await;
-            let _ = lock.commit().await;
+        info!("trial_reminders: polling tick fired");
+        match advisory_lock(&state.db, JOB_LOCK_TRIAL_REMINDERS).await {
+            Some(lock) => {
+                billing::send_trial_reminders(&state).await;
+                let _ = lock.commit().await;
+            }
+            None => info!("trial_reminders: tick skipped, another replica holds the lock"),
         }
     }
 }
