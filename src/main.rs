@@ -83,12 +83,23 @@ fn init_tracing() -> Option<OtelGuard> {
         .with_service_name("notion-caldav-saas")
         .build();
 
+    // Must use the async-runtime-integrated processors (spawn their export
+    // loop via `tokio::spawn` onto this already-running runtime) rather than
+    // the default `.with_batch_exporter(...)` path, which spawns a plain
+    // `std::thread` with no Tokio reactor — that thread panics ("there is no
+    // reactor running") the moment the async reqwest client underneath the
+    // OTLP exporter tries to do I/O. Learned this the hard way in production.
     let span_exporter = opentelemetry_otlp::SpanExporter::builder()
         .with_http()
         .build()
         .expect("failed to build OTLP span exporter");
+    let span_processor = opentelemetry_sdk::trace::span_processor_with_async_runtime::BatchSpanProcessor::builder(
+        span_exporter,
+        opentelemetry_sdk::runtime::Tokio,
+    )
+    .build();
     let tracer_provider = opentelemetry_sdk::trace::SdkTracerProvider::builder()
-        .with_batch_exporter(span_exporter)
+        .with_span_processor(span_processor)
         .with_resource(resource.clone())
         .build();
     let tracer = tracer_provider.tracer("notion-caldav-saas");
@@ -97,8 +108,13 @@ fn init_tracing() -> Option<OtelGuard> {
         .with_http()
         .build()
         .expect("failed to build OTLP log exporter");
+    let log_processor = opentelemetry_sdk::logs::log_processor_with_async_runtime::BatchLogProcessor::builder(
+        log_exporter,
+        opentelemetry_sdk::runtime::Tokio,
+    )
+    .build();
     let logger_provider = opentelemetry_sdk::logs::SdkLoggerProvider::builder()
-        .with_batch_exporter(log_exporter)
+        .with_log_processor(log_processor)
         .with_resource(resource)
         .build();
     let otel_log_layer = OpenTelemetryTracingBridge::new(&logger_provider);
