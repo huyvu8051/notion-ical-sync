@@ -50,7 +50,7 @@ argon2 = "0.5"
 base64 = "0.22"
 opentelemetry = "0.33"
 opentelemetry_sdk = { version = "0.33", default-features = false, features = ["trace", "logs", "internal-logs", "rt-tokio", "experimental_trace_batch_span_processor_with_async_runtime", "experimental_logs_batch_log_processor_with_async_runtime"] }
-opentelemetry-otlp = { version = "0.33", default-features = false, features = ["http-proto", "reqwest-client", "trace", "logs", "internal-logs"] }
+opentelemetry-otlp = { version = "0.33", default-features = false, features = ["http-proto", "reqwest-client", "reqwest-rustls", "trace", "logs", "internal-logs"] }
 opentelemetry-appender-tracing = "0.33"
 opentelemetry-semantic-conventions = "0.33"
 tracing-opentelemetry = "0.34"
