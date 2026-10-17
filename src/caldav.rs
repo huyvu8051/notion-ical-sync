@@ -12,7 +12,7 @@ use sqlx::PgPool;
 use std::{collections::HashMap, time::Duration};
 use tower_http::cors::CorsLayer;
 use tower_http::trace::{DefaultMakeSpan, TraceLayer};
-use tracing::{error, info};
+use tracing::{error, info, warn};
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct PageInfo {
@@ -254,7 +254,22 @@ impl axum::extract::FromRef<AppState> for leptos::config::LeptosOptions {
 #[derive(Debug, Deserialize)]
 struct NotionQueryResponse {
     results: Vec<serde_json::Value>,
+    /// Notion caps a query at 100 rows per page. Ignoring these two fields
+    /// silently truncated every database with more than 100 dated rows — and
+    /// because the query sorts by date descending, the rows that survived were
+    /// the newest ones, so a calendar appeared to simply start partway through
+    /// the year. Worse, `remove_stale_page_state` then deleted the older events
+    /// from the cache on every pull, so they disappeared from clients that had
+    /// already seen them.
+    #[serde(default)]
+    has_more: bool,
+    #[serde(default)]
+    next_cursor: Option<String>,
 }
+
+/// Upper bound on pages fetched per calendar (100 rows each), so a malformed
+/// `next_cursor` that never advances cannot spin forever against the API.
+const MAX_QUERY_PAGES: usize = 100;
 
 #[derive(Debug, Clone, sqlx::FromRow)]
 pub struct CalendarRow {
@@ -711,49 +726,75 @@ impl AppState {
             self.notion_api_base_url, ds_id
         );
 
-        let body = serde_json::json!({
-            "filter": {
-                "property": date_property,
-                "date": { "is_not_empty": true }
-            },
-            "sorts": [
-                { "property": date_property, "direction": "descending" }
-            ]
-        });
+        // Walk every page of results, not just the first. A database with more
+        // than 100 dated rows otherwise loses everything past the first page.
+        let mut rows: Vec<serde_json::Value> = Vec::new();
+        let mut cursor: Option<String> = None;
+        let mut pages_fetched = 0usize;
 
-        info!(notion_method = "POST", notion_url = %url, "-> Notion API request");
-        let resp = self
-            .client
-            .post(&url)
-            .header("Authorization", format!("Bearer {}", notion_token))
-            .header("Notion-Version", "2025-09-03")
-            .header("Content-Type", "application/json")
-            .json(&body)
-            .send()
-            .await
-            .map_err(|e| {
-                error!(notion_url = %url, error = %e, "<- Notion API request failed (transport)");
-                RefreshError::Other(format!("Request failed: {}", e))
-            })?;
-
-        let resp_status = resp.status();
-        if !resp_status.is_success() {
-            let txt = resp.text().await.unwrap_or_default();
-            error!(notion_url = %url, status = %resp_status, body = %txt, "<- Notion API error response");
-            if resp_status == reqwest::StatusCode::UNAUTHORIZED {
-                return Err(RefreshError::Unauthorized);
+        loop {
+            let mut body = serde_json::json!({
+                "filter": {
+                    "property": date_property,
+                    "date": { "is_not_empty": true }
+                },
+                "sorts": [
+                    { "property": date_property, "direction": "descending" }
+                ],
+                "page_size": 100,
+            });
+            if let Some(cursor) = &cursor {
+                body["start_cursor"] = serde_json::json!(cursor);
             }
-            return Err(RefreshError::Other(format!("Notion error {}: {}", resp_status, txt)));
+
+            info!(notion_method = "POST", notion_url = %url, page = pages_fetched + 1, "-> Notion API request");
+            let resp = self
+                .client
+                .post(&url)
+                .header("Authorization", format!("Bearer {}", notion_token))
+                .header("Notion-Version", "2025-09-03")
+                .header("Content-Type", "application/json")
+                .json(&body)
+                .send()
+                .await
+                .map_err(|e| {
+                    error!(notion_url = %url, error = %e, "<- Notion API request failed (transport)");
+                    RefreshError::Other(format!("Request failed: {}", e))
+                })?;
+
+            let resp_status = resp.status();
+            if !resp_status.is_success() {
+                let txt = resp.text().await.unwrap_or_default();
+                error!(notion_url = %url, status = %resp_status, body = %txt, "<- Notion API error response");
+                if resp_status == reqwest::StatusCode::UNAUTHORIZED {
+                    return Err(RefreshError::Unauthorized);
+                }
+                return Err(RefreshError::Other(format!("Notion error {}: {}", resp_status, txt)));
+            }
+
+            let data: NotionQueryResponse = resp
+                .json()
+                .await
+                .map_err(|e| RefreshError::Other(format!("Parse failed: {}", e)))?;
+            pages_fetched += 1;
+            info!(notion_url = %url, status = %resp_status, page = pages_fetched, page_count = data.results.len(), has_more = data.has_more, "<- Notion API response");
+            rows.extend(data.results);
+
+            match data.next_cursor {
+                Some(next) if data.has_more => cursor = Some(next),
+                _ => break,
+            }
+
+            if pages_fetched >= MAX_QUERY_PAGES {
+                warn!(notion_url = %url, pages_fetched, rows = rows.len(), "stopping pagination at the page cap; some rows may be missing");
+                break;
+            }
         }
 
-        let data: NotionQueryResponse = resp
-            .json()
-            .await
-            .map_err(|e| RefreshError::Other(format!("Parse failed: {}", e)))?;
-        info!(notion_url = %url, status = %resp_status, page_count = data.results.len(), "<- Notion API response");
+        info!(notion_url = %url, pages_fetched, total_rows = rows.len(), "<- Notion query complete");
 
         let mut events = Vec::new();
-        for page in data.results {
+        for page in rows {
             let props = match page.get("properties") {
                 Some(p) => p,
                 None => continue,

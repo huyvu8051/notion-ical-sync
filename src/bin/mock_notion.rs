@@ -107,7 +107,7 @@ struct MockState {
 }
 
 fn seed_pages() -> Vec<MockPage> {
-    vec![
+    let mut pages = vec![
         MockPage {
             id: "mock-page-edmonton".to_string(),
             title: "Edmonton event (report repro, UTC-6)".to_string(),
@@ -150,7 +150,32 @@ fn seed_pages() -> Vec<MockPage> {
             travel_time: None,
             last_edited: "2026-09-25T00:00:00.000Z".to_string(),
         },
-    ]
+    ];
+
+    // Pad past Notion's 100-row page limit, matching the size a user reported
+    // (185 dated rows). Spread over consecutive days so that a client reading
+    // only the first page keeps the newest dates and appears to start partway
+    // through the calendar instead of looking obviously truncated.
+    let mut day = chrono::NaiveDate::from_ymd_opt(2026, 1, 5).expect("valid seed date");
+    for i in 0..182 {
+        pages.push(MockPage {
+            id: format!("mock-page-bulk-{i:03}"),
+            title: format!("Bulk event {:03}", i + 1),
+            start: day.format("%Y-%m-%d").to_string(),
+            end: None,
+            archived: false,
+            location: None,
+            notes: None,
+            priority: None,
+            busy: None,
+            reminder: None,
+            travel_time: None,
+            last_edited: "2026-09-25T00:00:00.000Z".to_string(),
+        });
+        day = day.succ_opt().expect("date stays in range");
+    }
+
+    pages
 }
 
 type SharedState = Arc<Mutex<MockState>>;
@@ -206,15 +231,76 @@ async fn get_data_source(Path(_id): Path<String>) -> impl IntoResponse {
 async fn query_data_source(
     State(state): State<SharedState>,
     Path(_id): Path<String>,
+    Json(body): Json<Value>,
 ) -> impl IntoResponse {
     let state = state.lock().await;
-    let results: Vec<Value> = state
+    let mut matching: Vec<Value> = state
         .pages
         .iter()
         .filter(|p| !p.archived)
         .map(MockPage::to_notion_json)
         .collect();
-    Json(json!({ "results": results }))
+
+    // Sort the way the app asks, so paging is stable and the first page really
+    // is the newest rows — the detail that made the truncation look like "my
+    // calendar starts in June" rather than "my calendar is cut off".
+    if let Some(property) = body
+        .pointer("/sorts/0/property")
+        .and_then(|p| p.as_str())
+        .map(|s| s.to_string())
+    {
+        let descending = body
+            .pointer("/sorts/0/direction")
+            .and_then(|d| d.as_str())
+            .unwrap_or("ascending")
+            == "descending";
+        matching.sort_by(|a, b| {
+            let key = |page: &Value| {
+                page.pointer(&format!("/properties/{property}/date/start"))
+                    .and_then(|s| s.as_str())
+                    .unwrap_or("")
+                    .to_string()
+            };
+            if descending {
+                key(b).cmp(&key(a))
+            } else {
+                key(a).cmp(&key(b))
+            }
+        });
+    }
+
+    // Page exactly like Notion: at most `page_size` (default and max 100) rows,
+    // with an opaque cursor. Returning everything at once would let a client
+    // that ignores `has_more` look correct.
+    let page_size = body
+        .get("page_size")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(100)
+        .clamp(1, 100) as usize;
+    let start = body
+        .get("start_cursor")
+        .and_then(|v| v.as_str())
+        .and_then(|c| c.parse::<usize>().ok())
+        .unwrap_or(0);
+
+    let total = matching.len();
+    let end = (start + page_size).min(total);
+    let results: Vec<Value> = matching[start.min(total)..end].to_vec();
+    let has_more = end < total;
+    let next_cursor = has_more.then(|| end.to_string());
+
+    tracing::info!(
+        start,
+        returned = results.len(),
+        total,
+        has_more,
+        "mock-notion: query"
+    );
+    Json(json!({
+        "results": results,
+        "has_more": has_more,
+        "next_cursor": next_cursor,
+    }))
 }
 
 async fn get_database(Path(_id): Path<String>) -> impl IntoResponse {
@@ -233,7 +319,10 @@ fn prop_str(properties: &Value, name: &str, inner: &str) -> Option<String> {
         .map(|s| s.to_string())
 }
 
-async fn create_page(State(state): State<SharedState>, Json(body): Json<Value>) -> impl IntoResponse {
+async fn create_page(
+    State(state): State<SharedState>,
+    Json(body): Json<Value>,
+) -> impl IntoResponse {
     let mut state = state.lock().await;
     state.next_id += 1;
     let id = format!("mock-page-created-{}", state.next_id);
@@ -263,8 +352,14 @@ async fn create_page(State(state): State<SharedState>, Json(body): Json<Value>) 
             .and_then(|s| s.get("name"))
             .and_then(|n| n.as_str())
             .map(|s| s.to_string()),
-        busy: properties.get("Busy").and_then(|b| b.get("checkbox")).and_then(|b| b.as_bool()),
-        reminder: properties.get("Reminder").and_then(|r| r.get("number")).and_then(|n| n.as_i64()),
+        busy: properties
+            .get("Busy")
+            .and_then(|b| b.get("checkbox"))
+            .and_then(|b| b.as_bool()),
+        reminder: properties
+            .get("Reminder")
+            .and_then(|r| r.get("number"))
+            .and_then(|n| n.as_i64()),
         travel_time: properties
             .get("Travel time")
             .and_then(|r| r.get("number"))
@@ -282,7 +377,10 @@ async fn patch_page(
 ) -> impl IntoResponse {
     let mut state = state.lock().await;
     let Some(page) = state.pages.iter_mut().find(|p| p.id == id) else {
-        return (axum::http::StatusCode::NOT_FOUND, Json(json!({ "error": "not found" })));
+        return (
+            axum::http::StatusCode::NOT_FOUND,
+            Json(json!({ "error": "not found" })),
+        );
     };
     if body.get("in_trash").and_then(|v| v.as_bool()) == Some(true)
         || body.get("archived").and_then(|v| v.as_bool()) == Some(true)
@@ -299,7 +397,10 @@ async fn patch_page(
             if let Some(s) = date.get("start").and_then(|v| v.as_str()) {
                 page.start = s.to_string();
             }
-            page.end = date.get("end").and_then(|v| v.as_str()).map(|s| s.to_string());
+            page.end = date
+                .get("end")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string());
         }
         if let Some(v) = prop_str(properties, "Location", "rich_text") {
             page.location = Some(v);
@@ -315,10 +416,18 @@ async fn patch_page(
         {
             page.priority = Some(v.to_string());
         }
-        if let Some(v) = properties.get("Busy").and_then(|b| b.get("checkbox")).and_then(|b| b.as_bool()) {
+        if let Some(v) = properties
+            .get("Busy")
+            .and_then(|b| b.get("checkbox"))
+            .and_then(|b| b.as_bool())
+        {
             page.busy = Some(v);
         }
-        if let Some(v) = properties.get("Reminder").and_then(|r| r.get("number")).and_then(|n| n.as_i64()) {
+        if let Some(v) = properties
+            .get("Reminder")
+            .and_then(|r| r.get("number"))
+            .and_then(|n| n.as_i64())
+        {
             page.reminder = Some(v);
         }
         if let Some(v) = properties
@@ -394,7 +503,9 @@ async fn main() {
         .with_state(state);
 
     let addr: std::net::SocketAddr = format!("0.0.0.0:{port}").parse().unwrap();
-    tracing::info!("mock-notion listening on {addr} — status page at http://localhost:{port}/status");
+    tracing::info!(
+        "mock-notion listening on {addr} — status page at http://localhost:{port}/status"
+    );
     let listener = tokio::net::TcpListener::bind(addr).await.unwrap();
     axum::serve(listener, app).await.unwrap();
 }
