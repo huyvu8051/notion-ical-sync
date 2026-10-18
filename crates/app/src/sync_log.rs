@@ -28,6 +28,13 @@ pub struct SyncLogPageData {
     pub status_ok: String,
     pub status_error: String,
     pub rows: Vec<SyncLogRow>,
+    /// Public id of this calendar, so the failure banner can link to its
+    /// column mapping page.
+    pub public_id: String,
+    /// Error text of the most recent failed pull, if the calendar is currently
+    /// failing to read from Notion. A pull failure is invisible everywhere
+    /// else — it produces no rows, it just silently stops updating events.
+    pub pull_error: Option<String>,
 }
 
 #[cfg(feature = "ssr")]
@@ -86,6 +93,18 @@ async fn load_sync_log_data(public_id: String) -> Result<SyncLogPageData, Server
 
     let (cal_id, calendar_name) = owned_calendar_id_and_name(&pool, &claims, &public_id).await?;
 
+    // A failing pull is cleared on the next success (see
+    // AppState::clear_pull_failures), so the presence of a row here means the
+    // calendar is failing right now, not that it failed once in the past.
+    let pull_error: Option<String> = sqlx::query_scalar(
+        "SELECT detail FROM sync_log WHERE calendar_id = $1 AND source = 'notion' \
+         AND action = 'pull' AND status = 'error' ORDER BY occurred_at DESC LIMIT 1",
+    )
+    .bind(cal_id)
+    .fetch_optional(&pool)
+    .await
+    .map_err(|e| ServerFnError::new(format!("failed to load pull status: {e}")))?;
+
     let rows: Vec<(String, String, String, String, String, String, String)> = sqlx::query_as(
         "SELECT to_char(occurred_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'), \
          source, action, event_uid, notion_page_id, status, detail
@@ -113,17 +132,21 @@ async fn load_sync_log_data(public_id: String) -> Result<SyncLogPageData, Server
         empty_state: l.empty_state.to_string(),
         status_ok: l.status_ok.to_string(),
         status_error: l.status_error.to_string(),
+        public_id,
+        pull_error,
         rows: rows
             .into_iter()
             .map(
-                |(occurred_at, source, action, event_uid, notion_page_id, status, detail)| SyncLogRow {
-                    occurred_at,
-                    source,
-                    action,
-                    event_uid,
-                    notion_page_id,
-                    status,
-                    detail,
+                |(occurred_at, source, action, event_uid, notion_page_id, status, detail)| {
+                    SyncLogRow {
+                        occurred_at,
+                        source,
+                        action,
+                        event_uid,
+                        notion_page_id,
+                        status,
+                        detail,
+                    }
                 },
             )
             .collect(),
@@ -161,6 +184,32 @@ pub fn SyncLogPage(data: SyncLogPageData) -> impl IntoView {
     let status_error = data.status_error.clone();
     let heading = format!("{} — {}", data.heading_label, data.calendar_name);
 
+    // A pull failure produces no log rows at all — the calendar just quietly
+    // stops updating — so without this banner the page would look idle rather
+    // than broken.
+    let pull_error_banner = data.pull_error.clone().map(|detail| {
+        let mapping_href = format!("/me/calendars/{}/mapping", data.public_id);
+        view! {
+            <div class="border border-error rounded-lg p-md bg-error-container/30">
+                <div class="flex items-center gap-sm mb-sm">
+                    <span class="material-symbols-outlined text-error">"error"</span>
+                    <h2 class="text-h3 text-error">"This calendar is not syncing"</h2>
+                </div>
+                <p class="text-on-surface-variant text-body-md mb-sm">
+                    "Notion rejected the most recent read of this database. Until it succeeds, events here will not update."
+                </p>
+                <pre class="bg-surface-container-low border border-outline-variant rounded p-sm text-label-sm overflow-x-auto whitespace-pre-wrap">{detail}</pre>
+                <p class="text-on-surface-variant text-body-md mt-sm">
+                    "If a column was renamed or removed in Notion, "
+                    <a class="text-secondary underline" href=mapping_href>"update the column mapping"</a>
+                    ". If the database was unshared, "
+                    <a class="text-secondary underline" href="/connect/notion/start">"re-grant access on Notion"</a>
+                    "."
+                </p>
+            </div>
+        }
+    });
+
     let body_rows = if data.rows.is_empty() {
         view! {
             <tr>
@@ -192,6 +241,7 @@ pub fn SyncLogPage(data: SyncLogPageData) -> impl IntoView {
                     </leptos_router::components::A>
                     <h1 class="text-h1 font-semibold">{heading}</h1>
                 </div>
+                {pull_error_banner}
                 <div class="bg-surface border border-outline-variant rounded-lg overflow-hidden overflow-x-auto">
                     <table class="w-full text-body-md">
                         <thead>
@@ -220,7 +270,11 @@ fn SyncLogRowView(row: SyncLogRow, status_ok: String, status_error: String) -> i
     } else {
         "text-error font-semibold"
     };
-    let status_label = if row.status == "ok" { status_ok } else { status_error };
+    let status_label = if row.status == "ok" {
+        status_ok
+    } else {
+        status_error
+    };
     let uid_display = if row.event_uid.is_empty() {
         "—".to_string()
     } else {

@@ -1,3 +1,5 @@
+use app::column_mapping::{ColumnMapping, Field};
+
 use argon2::password_hash::PasswordVerifier;
 use axum::{
     extract::{Path, State},
@@ -151,16 +153,34 @@ pub struct ExtraEventFields<'a> {
     pub travel_minutes: Option<i64>,
 }
 
-fn extract_busy(props: &serde_json::Value) -> Option<bool> {
-    if let Some(prop) = find_property_case_insensitive(props, "Busy") {
-        if prop.get("type").and_then(|t| t.as_str()) == Some("checkbox") {
-            if let Some(b) = prop.get("checkbox").and_then(|v| v.as_bool()) {
-                return Some(b);
+/// Busy is the one field with two shapes: a `checkbox` that is directly the
+/// answer, or a `select` ("Show As") whose value is compared against "busy".
+/// `names` is tried in order, so an unconfigured calendar still gets the old
+/// "Busy" then "Show As" behaviour.
+fn extract_busy(props: &serde_json::Value, names: &[&str]) -> Option<bool> {
+    for name in names {
+        let Some(prop) = find_property_case_insensitive(props, name) else {
+            continue;
+        };
+        match prop.get("type").and_then(|t| t.as_str()) {
+            Some("checkbox") => {
+                if let Some(b) = prop.get("checkbox").and_then(|v| v.as_bool()) {
+                    return Some(b);
+                }
             }
+            Some("select") => {
+                if let Some(value) = prop
+                    .get("select")
+                    .and_then(|s| s.get("name"))
+                    .and_then(|n| n.as_str())
+                {
+                    return Some(value.eq_ignore_ascii_case("busy"));
+                }
+            }
+            _ => {}
         }
     }
-    let show_as = extract_select_name(props, "Show As")?;
-    Some(show_as.eq_ignore_ascii_case("busy"))
+    None
 }
 
 fn map_repeat_to_rrule(select_name: &str) -> Option<String> {
@@ -258,9 +278,9 @@ struct NotionQueryResponse {
     /// silently truncated every database with more than 100 dated rows — and
     /// because the query sorts by date descending, the rows that survived were
     /// the newest ones, so a calendar appeared to simply start partway through
-    /// the year. Worse, `remove_stale_page_state` then deleted the older events
-    /// from the cache on every pull, so they disappeared from clients that had
-    /// already seen them.
+    /// the year. Worse, `remove_stale_page_state` then deleted the older
+    /// events from the cache on every pull, so they disappeared from clients
+    /// that had already seen them.
     #[serde(default)]
     has_more: bool,
     #[serde(default)]
@@ -284,7 +304,16 @@ pub struct CalendarRow {
     pub notion_access_token: String,
     pub notion_connection_id: i64,
     pub workspace_name: String,
+    #[sqlx(json)]
+    pub column_mapping: ColumnMapping,
 }
+
+/// Column list shared by every `CalendarRow` query, so adding a field does not
+/// mean hunting down five hand-copied SELECTs again.
+const CALENDAR_ROW_COLUMNS: &str =
+    "c.id, c.user_id, c.database_id, c.public_id, c.data_source_id, \
+     c.date_property, c.display_name, c.caldav_username, c.column_mapping, \
+     nc.notion_access_token, nc.id AS notion_connection_id, nc.workspace_name";
 
 /// `refresh_db`'s failure modes. `Unauthorized` means Notion rejected the
 /// bearer token itself (not a per-page permission issue — that's 403/404),
@@ -298,7 +327,9 @@ pub enum RefreshError {
 impl std::fmt::Display for RefreshError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Unauthorized => write!(f, "Notion error 401 Unauthorized: token revoked or invalid"),
+            Self::Unauthorized => {
+                write!(f, "Notion error 401 Unauthorized: token revoked or invalid")
+            }
             Self::Other(e) => write!(f, "{e}"),
         }
     }
@@ -344,11 +375,11 @@ impl AppState {
     }
 
     pub async fn all_calendars(&self) -> Vec<CalendarRow> {
-        sqlx::query_as::<_, CalendarRow>(
-            "SELECT c.id, c.user_id, c.database_id, c.public_id, c.data_source_id, c.date_property, c.display_name, c.caldav_username, nc.notion_access_token, nc.id AS notion_connection_id, nc.workspace_name
+        sqlx::query_as::<_, CalendarRow>(&format!(
+            "SELECT {CALENDAR_ROW_COLUMNS}
              FROM calendars c JOIN notion_connections nc ON nc.id = c.notion_connection_id
              WHERE nc.token_invalid_since IS NULL",
-        )
+        ))
         .fetch_all(&self.db)
         .await
         .unwrap_or_else(|e| {
@@ -358,11 +389,11 @@ impl AppState {
     }
 
     pub async fn calendars_for_user(&self, user_id: i64) -> Vec<CalendarRow> {
-        sqlx::query_as::<_, CalendarRow>(
-            "SELECT c.id, c.user_id, c.database_id, c.public_id, c.data_source_id, c.date_property, c.display_name, c.caldav_username, nc.notion_access_token, nc.id AS notion_connection_id, nc.workspace_name
+        sqlx::query_as::<_, CalendarRow>(&format!(
+            "SELECT {CALENDAR_ROW_COLUMNS}
              FROM calendars c JOIN notion_connections nc ON nc.id = c.notion_connection_id
              WHERE c.user_id = $1",
-        )
+        ))
         .bind(user_id)
         .fetch_all(&self.db)
         .await
@@ -373,11 +404,11 @@ impl AppState {
     }
 
     pub async fn calendar_by_public_id(&self, public_id: &str) -> Option<CalendarRow> {
-        sqlx::query_as::<_, CalendarRow>(
-            "SELECT c.id, c.user_id, c.database_id, c.public_id, c.data_source_id, c.date_property, c.display_name, c.caldav_username, nc.notion_access_token, nc.id AS notion_connection_id, nc.workspace_name
+        sqlx::query_as::<_, CalendarRow>(&format!(
+            "SELECT {CALENDAR_ROW_COLUMNS}
              FROM calendars c JOIN notion_connections nc ON nc.id = c.notion_connection_id
              WHERE c.public_id = $1",
-        )
+        ))
         .bind(public_id)
         .fetch_optional(&self.db)
         .await
@@ -444,12 +475,28 @@ impl AppState {
             }
             match upsert_result {
                 Some(true) => {
-                    self.log_sync(calendar_id, "notion", "create", &page.id, &page.id, "ok", "")
-                        .await;
+                    self.log_sync(
+                        calendar_id,
+                        "notion",
+                        "create",
+                        &page.id,
+                        &page.id,
+                        "ok",
+                        "",
+                    )
+                    .await;
                 }
                 Some(false) => {
-                    self.log_sync(calendar_id, "notion", "update", &page.id, &page.id, "ok", "")
-                        .await;
+                    self.log_sync(
+                        calendar_id,
+                        "notion",
+                        "update",
+                        &page.id,
+                        &page.id,
+                        "ok",
+                        "",
+                    )
+                    .await;
                 }
                 None => {}
             }
@@ -460,8 +507,16 @@ impl AppState {
         }
 
         for page_id in self.remove_stale_page_state(calendar_id, new_pages).await {
-            self.log_sync(calendar_id, "notion", "delete", &page_id, &page_id, "ok", "")
-                .await;
+            self.log_sync(
+                calendar_id,
+                "notion",
+                "delete",
+                &page_id,
+                &page_id,
+                "ok",
+                "",
+            )
+            .await;
         }
     }
 
@@ -544,7 +599,11 @@ impl AppState {
         .collect()
     }
 
-    async fn remove_stale_page_state(&self, calendar_id: i64, current_pages: &[PageInfo]) -> Vec<String> {
+    async fn remove_stale_page_state(
+        &self,
+        calendar_id: i64,
+        current_pages: &[PageInfo],
+    ) -> Vec<String> {
         let current_ids: Vec<String> = current_pages.iter().map(|p| p.id.clone()).collect();
         sqlx::query_scalar(
             "DELETE FROM calendar_page_state
@@ -588,13 +647,13 @@ impl AppState {
     }
 
     async fn calendar_by_db_id(&self, db_id: &str) -> Option<CalendarRow> {
-        sqlx::query_as::<_, CalendarRow>(
-            "SELECT c.id, c.user_id, c.database_id, c.public_id, c.data_source_id, c.date_property, c.display_name, c.caldav_username, nc.notion_access_token, nc.id AS notion_connection_id, nc.workspace_name
+        sqlx::query_as::<_, CalendarRow>(&format!(
+            "SELECT {CALENDAR_ROW_COLUMNS}
              FROM calendars c JOIN notion_connections nc ON nc.id = c.notion_connection_id
              WHERE c.database_id = $1
              ORDER BY c.created_at ASC
              LIMIT 1",
-        )
+        ))
         .bind(db_id)
         .fetch_optional(&self.db)
         .await
@@ -605,11 +664,11 @@ impl AppState {
     }
 
     pub async fn calendar_by_data_source_id(&self, ds_id: &str) -> Option<CalendarRow> {
-        sqlx::query_as::<_, CalendarRow>(
-            "SELECT c.id, c.user_id, c.database_id, c.public_id, c.data_source_id, c.date_property, c.display_name, c.caldav_username, nc.notion_access_token, nc.id AS notion_connection_id, nc.workspace_name
+        sqlx::query_as::<_, CalendarRow>(&format!(
+            "SELECT {CALENDAR_ROW_COLUMNS}
              FROM calendars c JOIN notion_connections nc ON nc.id = c.notion_connection_id
              WHERE c.data_source_id = $1 AND nc.token_invalid_since IS NULL",
-        )
+        ))
         .bind(ds_id)
         .fetch_optional(&self.db)
         .await
@@ -679,6 +738,7 @@ impl AppState {
                     &cal.data_source_id,
                     &cal.date_property,
                     &cal.notion_access_token,
+                    &cal.column_mapping,
                 )
                 .await
             {
@@ -692,6 +752,7 @@ impl AppState {
                         "pull succeeded"
                     );
                     self.log_diff(cal.id, &pages).await;
+                    self.clear_pull_failures(cal.id).await;
                 }
                 Err(RefreshError::Unauthorized) => {
                     error!(
@@ -701,18 +762,52 @@ impl AppState {
                         database_id = %cal.database_id,
                         "pull failed: unauthorized (token revoked?)"
                     );
-                    self.mark_notion_connection_invalid_and_notify(cal.notion_connection_id).await;
+                    self.mark_notion_connection_invalid_and_notify(cal.notion_connection_id)
+                        .await;
                 }
-                Err(e) => error!(
-                    connection_id = cal.notion_connection_id,
-                    workspace = %cal.workspace_name,
-                    calendar = %cal.display_name,
-                    database_id = %cal.database_id,
-                    error = %e,
-                    "pull failed"
-                ),
+                Err(e) => self.log_pull_failure(&cal, &e).await,
             }
         }
+    }
+
+    /// Clear the failure marker after a pull succeeds.
+    ///
+    /// A successful pull writes no row of its own (only actual event changes
+    /// do), so without this a one-off failure would keep the "this calendar is
+    /// not syncing" banner up forever. Dropping the rows keeps "a pull error
+    /// row exists" equivalent to "this calendar is failing right now", which
+    /// is the question the banner answers.
+    async fn clear_pull_failures(&self, calendar_id: i64) {
+        if let Err(e) = sqlx::query(
+            "DELETE FROM sync_log WHERE calendar_id = $1 AND source = 'notion' \
+             AND action = 'pull' AND status = 'error'",
+        )
+        .bind(calendar_id)
+        .execute(&self.db)
+        .await
+        {
+            error!(calendar_id, error = %e, "failed to clear pull failure rows");
+        }
+    }
+
+    /// Record a failed pull where the owner can see it.
+    ///
+    /// Pull failures used to go only to `tracing`, so a user whose calendar had
+    /// silently stopped syncing had no way to find out — the sync log showed
+    /// only successful writes. Now the same row that drives the sync log page
+    /// carries the Notion error text.
+    async fn log_pull_failure(&self, cal: &CalendarRow, err: &RefreshError) {
+        error!(
+            connection_id = cal.notion_connection_id,
+            workspace = %cal.workspace_name,
+            calendar = %cal.display_name,
+            database_id = %cal.database_id,
+            date_property = %cal.date_property,
+            error = %err,
+            "pull failed"
+        );
+        self.log_sync(cal.id, "notion", "pull", "", "", "error", &err.to_string())
+            .await;
     }
 
     pub async fn refresh_db(
@@ -720,6 +815,7 @@ impl AppState {
         ds_id: &str,
         date_property: &str,
         notion_token: &str,
+        mapping: &ColumnMapping,
     ) -> Result<Vec<PageInfo>, RefreshError> {
         let url = format!(
             "{}/v1/data_sources/{}/query",
@@ -769,7 +865,10 @@ impl AppState {
                 if resp_status == reqwest::StatusCode::UNAUTHORIZED {
                     return Err(RefreshError::Unauthorized);
                 }
-                return Err(RefreshError::Other(format!("Notion error {}: {}", resp_status, txt)));
+                return Err(RefreshError::Other(format!(
+                    "Notion error {}: {}",
+                    resp_status, txt
+                )));
             }
 
             let data: NotionQueryResponse = resp
@@ -777,7 +876,14 @@ impl AppState {
                 .await
                 .map_err(|e| RefreshError::Other(format!("Parse failed: {}", e)))?;
             pages_fetched += 1;
-            info!(notion_url = %url, status = %resp_status, page = pages_fetched, page_count = data.results.len(), has_more = data.has_more, "<- Notion API response");
+            info!(
+                notion_url = %url,
+                status = %resp_status,
+                page = pages_fetched,
+                page_count = data.results.len(),
+                has_more = data.has_more,
+                "<- Notion API response"
+            );
             rows.extend(data.results);
 
             match data.next_cursor {
@@ -786,23 +892,50 @@ impl AppState {
             }
 
             if pages_fetched >= MAX_QUERY_PAGES {
-                warn!(notion_url = %url, pages_fetched, rows = rows.len(), "stopping pagination at the page cap; some rows may be missing");
+                warn!(
+                    notion_url = %url,
+                    pages_fetched,
+                    rows = rows.len(),
+                    "stopping pagination at the page cap; some rows may be missing"
+                );
                 break;
             }
         }
 
-        info!(notion_url = %url, pages_fetched, total_rows = rows.len(), "<- Notion query complete");
+        info!(
+            notion_url = %url,
+            pages_fetched,
+            total_rows = rows.len(),
+            "<- Notion query complete"
+        );
+
+        info!(
+            notion_url = %url,
+            date_property,
+            title = mapping.name_for(Field::Title).unwrap_or("<none>"),
+            location = mapping.name_for(Field::Location).unwrap_or("<none>"),
+            notes = mapping.name_for(Field::Notes).unwrap_or("<none>"),
+            priority = mapping.name_for(Field::Priority).unwrap_or("<none>"),
+            busy = mapping.name_for(Field::Busy).unwrap_or("<none>"),
+            reminder = mapping.name_for(Field::Reminder).unwrap_or("<none>"),
+            travel_minutes = mapping.name_for(Field::TravelMinutes).unwrap_or("<none>"),
+            repeat = mapping.name_for(Field::Repeat).unwrap_or("<none>"),
+            attendees = mapping.name_for(Field::Attendees).unwrap_or("<none>"),
+            configured = mapping.configured,
+            "reading pages with column mapping"
+        );
 
         let mut events = Vec::new();
+        let mut skipped_no_date = 0usize;
         for page in rows {
             let props = match page.get("properties") {
                 Some(p) => p,
                 None => continue,
             };
 
-            let title = props
-                .as_object()
-                .and_then(|o| o.get("Name"))
+            let title = mapping
+                .name_for(Field::Title)
+                .and_then(|name| find_property_case_insensitive(props, name))
                 .or_else(|| {
                     props.as_object().and_then(|o| {
                         o.values()
@@ -817,9 +950,23 @@ impl AppState {
                 .unwrap_or("(untitled)")
                 .to_string();
 
-            let date_val = match props.get(date_property).and_then(|v| v.get("date")) {
+            // The date column is matched case-insensitively like every other
+            // field — an exact-case lookup here used to drop every page
+            // whenever the stored name differed only in capitalisation.
+            // An unset date comes back as `"date": null`, which is `Some(Null)`
+            // rather than `None` — without the null check such a page becomes
+            // an event with an empty start. The Notion query already filters
+            // on `is_not_empty`, but relying on that alone means one filter
+            // change silently fills the cache with dateless rows.
+            let date_val = match find_property_case_insensitive(props, date_property)
+                .and_then(|v| v.get("date"))
+                .filter(|d| !d.is_null())
+            {
                 Some(d) => d,
-                None => continue,
+                None => {
+                    skipped_no_date += 1;
+                    continue;
+                }
             };
 
             let start = date_val
@@ -846,15 +993,25 @@ impl AppState {
 
             let notion_url = format!("https://notion.so/{}", id.replace("-", ""));
 
-            let location = extract_text_or_url_property(props, "Location");
-            let notes = extract_text_or_url_property(props, "Notes");
-            let priority = extract_select_name(props, "Priority").and_then(|s| map_priority(&s));
-            let busy = extract_busy(props);
-            let reminder_minutes = extract_number_property(props, "Reminder");
-            let travel_minutes = extract_number_property(props, "Travel time");
-            let repeat_rule =
-                extract_select_name(props, "Repeat").and_then(|s| map_repeat_to_rrule(&s));
-            let attendees = extract_attendees(props, "Attendees");
+            let by_name = |field: Field| mapping.name_for(field);
+            let location =
+                by_name(Field::Location).and_then(|name| extract_text_or_url_property(props, name));
+            let notes =
+                by_name(Field::Notes).and_then(|name| extract_text_or_url_property(props, name));
+            let priority = by_name(Field::Priority)
+                .and_then(|name| extract_select_name(props, name))
+                .and_then(|s| map_priority(&s));
+            let busy = extract_busy(props, &mapping.names_for(Field::Busy));
+            let reminder_minutes =
+                by_name(Field::Reminder).and_then(|name| extract_number_property(props, name));
+            let travel_minutes =
+                by_name(Field::TravelMinutes).and_then(|name| extract_number_property(props, name));
+            let repeat_rule = by_name(Field::Repeat)
+                .and_then(|name| extract_select_name(props, name))
+                .and_then(|s| map_repeat_to_rrule(&s));
+            let attendees = by_name(Field::Attendees)
+                .map(|name| extract_attendees(props, name))
+                .unwrap_or_default();
 
             events.push(PageInfo {
                 id,
@@ -872,6 +1029,16 @@ impl AppState {
                 repeat_rule,
                 attendees,
             });
+        }
+
+        if skipped_no_date > 0 {
+            info!(
+                notion_url = %url,
+                date_property,
+                skipped_no_date,
+                kept = events.len(),
+                "pages skipped: date property missing on the page"
+            );
         }
 
         Ok(events)
@@ -892,7 +1059,10 @@ impl AppState {
         .fetch_optional(&self.db)
         .await
         .unwrap_or_else(|e| {
-            error!("failed to mark notion_connection {} invalid: {}", connection_id, e);
+            error!(
+                "failed to mark notion_connection {} invalid: {}",
+                connection_id, e
+            );
             None
         });
 
@@ -915,7 +1085,8 @@ impl AppState {
         .unwrap_or_default();
 
         let reconnect_url = "https://notion-caldav.opendiy.vn/connect/notion/start".to_string();
-        let stop_url = format!("https://notion-caldav.opendiy.vn/notion-connection/{action_token}/stop");
+        let stop_url =
+            format!("https://notion-caldav.opendiy.vn/notion-connection/{action_token}/stop");
         let (subject, html) = crate::email::notion_token_invalid_email(
             &workspace_name,
             &calendar_names,
@@ -927,7 +1098,10 @@ impl AppState {
 
     pub async fn refresh_all(&self) {
         let calendars = self.all_calendars().await;
-        info!(calendar_count = calendars.len(), "refresh_all: pull cycle started");
+        info!(
+            calendar_count = calendars.len(),
+            "refresh_all: pull cycle started"
+        );
         let mut seen = std::collections::HashSet::new();
         let mut succeeded = 0usize;
         let mut failed = 0usize;
@@ -940,6 +1114,7 @@ impl AppState {
                     &cal.data_source_id,
                     &cal.date_property,
                     &cal.notion_access_token,
+                    &cal.column_mapping,
                 )
                 .await
             {
@@ -954,6 +1129,7 @@ impl AppState {
                         "pull succeeded"
                     );
                     self.log_diff(cal.id, &pages).await;
+                    self.clear_pull_failures(cal.id).await;
                 }
                 Err(RefreshError::Unauthorized) => {
                     failed += 1;
@@ -964,18 +1140,12 @@ impl AppState {
                         database_id = %cal.database_id,
                         "pull failed: unauthorized (token revoked?)"
                     );
-                    self.mark_notion_connection_invalid_and_notify(cal.notion_connection_id).await;
+                    self.mark_notion_connection_invalid_and_notify(cal.notion_connection_id)
+                        .await;
                 }
                 Err(e) => {
                     failed += 1;
-                    error!(
-                        connection_id = cal.notion_connection_id,
-                        workspace = %cal.workspace_name,
-                        calendar = %cal.display_name,
-                        database_id = %cal.database_id,
-                        error = %e,
-                        "pull failed"
-                    );
+                    self.log_pull_failure(&cal, &e).await;
                 }
             }
         }
@@ -995,6 +1165,7 @@ impl AppState {
                 &cal.data_source_id,
                 &cal.date_property,
                 &cal.notion_access_token,
+                &cal.column_mapping,
             )
             .await
         {
@@ -1008,6 +1179,7 @@ impl AppState {
                     "pull succeeded (webhook-triggered)"
                 );
                 self.log_diff(cal.id, &pages).await;
+                self.clear_pull_failures(cal.id).await;
             }
             Err(RefreshError::Unauthorized) => {
                 error!(
@@ -1017,16 +1189,10 @@ impl AppState {
                     database_id = %cal.database_id,
                     "pull failed (webhook-triggered): unauthorized (token revoked?)"
                 );
-                self.mark_notion_connection_invalid_and_notify(cal.notion_connection_id).await;
+                self.mark_notion_connection_invalid_and_notify(cal.notion_connection_id)
+                    .await;
             }
-            Err(e) => error!(
-                connection_id = cal.notion_connection_id,
-                workspace = %cal.workspace_name,
-                calendar = %cal.display_name,
-                database_id = %cal.database_id,
-                error = %e,
-                "pull failed (webhook-triggered)"
-            ),
+            Err(e) => self.log_pull_failure(&cal, &e).await,
         }
     }
 
@@ -1039,7 +1205,9 @@ impl AppState {
         serde_json::Value::Object(date)
     }
 
-    async fn get_data_source_properties(
+    /// Live property schema of a data source, keyed by lowercased name:
+    /// `lowercased -> (real name, notion type)`.
+    pub async fn get_data_source_properties(
         &self,
         data_source_id: &str,
         notion_token: &str,
@@ -1085,14 +1253,51 @@ impl AppState {
     }
 }
 
+/// Resolve the real name of the title property to write into.
+///
+/// Writing to a literal `"Name"` was the single biggest source of write
+/// failures: Notion rejects the whole request with `"Name is not a property
+/// that exists."` whenever the database's title column is called anything else,
+/// which is most non-English databases. Prefer the mapped name, then whatever
+/// property the schema actually reports as the title.
+fn title_property_name(
+    schema: &HashMap<String, (String, String)>,
+    mapping: &ColumnMapping,
+) -> Option<String> {
+    if let Some(mapped) = mapping.name_for(Field::Title) {
+        if let Some((real_name, _)) = schema.get(&mapped.to_lowercase()) {
+            return Some(real_name.clone());
+        }
+        warn!(
+            requested = mapped,
+            "mapped title property not found in schema, falling back to the title-typed property"
+        );
+    }
+    schema
+        .values()
+        .find(|(_, ptype)| ptype == "title")
+        .map(|(real_name, _)| real_name.clone())
+}
+
 fn optional_event_properties(
     schema: &HashMap<String, (String, String)>,
     fields: &ExtraEventFields,
+    mapping: &ColumnMapping,
 ) -> serde_json::Map<String, serde_json::Value> {
     let mut properties = serde_json::Map::new();
 
+    // Look a field up by its mapped name, falling back to the legacy English
+    // key so an unconfigured calendar writes exactly where it used to.
+    let slot = |field: Field, legacy: &str| -> Option<(String, String)> {
+        let key = mapping
+            .name_for(field)
+            .map(|n| n.to_lowercase())
+            .unwrap_or_else(|| legacy.to_string());
+        schema.get(&key).cloned()
+    };
+
     if let Some(location) = fields.location {
-        if let Some((name, ptype)) = schema.get("location") {
+        if let Some((name, ptype)) = slot(Field::Location, "location").as_ref() {
             let value = match ptype.as_str() {
                 "rich_text" => {
                     Some(serde_json::json!({ "rich_text": [{ "text": { "content": location } }] }))
@@ -1106,7 +1311,7 @@ fn optional_event_properties(
         }
     }
     if let Some(notes) = fields.notes {
-        if let Some((name, ptype)) = schema.get("notes") {
+        if let Some((name, ptype)) = slot(Field::Notes, "notes").as_ref() {
             if ptype == "rich_text" {
                 properties.insert(
                     name.clone(),
@@ -1116,7 +1321,7 @@ fn optional_event_properties(
         }
     }
     if let Some(priority) = fields.priority {
-        if let Some((name, ptype)) = schema.get("priority") {
+        if let Some((name, ptype)) = slot(Field::Priority, "priority").as_ref() {
             if ptype == "select" {
                 if let Some(option_name) = priority_number_to_select_name(priority) {
                     properties.insert(
@@ -1128,28 +1333,36 @@ fn optional_event_properties(
         }
     }
     if let Some(busy) = fields.busy {
-        if let Some((name, ptype)) = schema.get("busy") {
-            if ptype == "checkbox" {
-                properties.insert(name.clone(), serde_json::json!({ "checkbox": busy }));
-            }
-        } else if let Some((name, ptype)) = schema.get("show as") {
-            if ptype == "select" {
-                properties.insert(
-                    name.clone(),
-                    serde_json::json!({ "select": { "name": if busy { "Busy" } else { "Free" } } }),
-                );
+        // Busy accepts either shape, so take the first candidate name the
+        // schema actually has and write whichever form it is.
+        let found = mapping
+            .names_for(Field::Busy)
+            .into_iter()
+            .find_map(|name| schema.get(&name.to_lowercase()));
+        if let Some((name, ptype)) = found {
+            match ptype.as_str() {
+                "checkbox" => {
+                    properties.insert(name.clone(), serde_json::json!({ "checkbox": busy }));
+                }
+                "select" => {
+                    properties.insert(
+                        name.clone(),
+                        serde_json::json!({ "select": { "name": if busy { "Busy" } else { "Free" } } }),
+                    );
+                }
+                _ => {}
             }
         }
     }
     if let Some(minutes) = fields.reminder_minutes {
-        if let Some((name, ptype)) = schema.get("reminder") {
+        if let Some((name, ptype)) = slot(Field::Reminder, "reminder").as_ref() {
             if ptype == "number" {
                 properties.insert(name.clone(), serde_json::json!({ "number": minutes }));
             }
         }
     }
     if let Some(minutes) = fields.travel_minutes {
-        if let Some((name, ptype)) = schema.get("travel time") {
+        if let Some((name, ptype)) = slot(Field::TravelMinutes, "travel time").as_ref() {
             if ptype == "number" {
                 properties.insert(name.clone(), serde_json::json!({ "number": minutes }));
             }
@@ -1170,20 +1383,30 @@ impl AppState {
         start: &str,
         end: Option<&str>,
         extra: &ExtraEventFields<'_>,
+        mapping: &ColumnMapping,
     ) -> Result<String, String> {
+        let schema = self
+            .get_data_source_properties(data_source_id, notion_token)
+            .await;
+
         let mut properties = serde_json::Map::new();
+        let title_name = title_property_name(&schema, mapping)
+            .ok_or_else(|| "Notion database has no title property".to_string())?;
+        info!(
+            data_source_id,
+            title_property = %title_name,
+            date_property,
+            "resolved properties for create"
+        );
         properties.insert(
-            "Name".into(),
+            title_name,
             serde_json::json!({ "title": [{ "text": { "content": title } }] }),
         );
         properties.insert(
             date_property.to_string(),
             serde_json::json!({ "date": self.date_property_value(start, end) }),
         );
-        let schema = self
-            .get_data_source_properties(data_source_id, notion_token)
-            .await;
-        properties.extend(optional_event_properties(&schema, extra));
+        properties.extend(optional_event_properties(&schema, extra, mapping));
 
         let body = serde_json::json!({
             "parent": { "type": "data_source_id", "data_source_id": data_source_id },
@@ -1236,11 +1459,23 @@ impl AppState {
         start: Option<&str>,
         end: Option<Option<&str>>,
         extra: &ExtraEventFields<'_>,
+        mapping: &ColumnMapping,
     ) -> Result<(), String> {
+        let schema = self
+            .get_data_source_properties(data_source_id, notion_token)
+            .await;
+
         let mut properties = serde_json::Map::new();
         if let Some(t) = title {
+            let title_name = title_property_name(&schema, mapping)
+                .ok_or_else(|| "Notion database has no title property".to_string())?;
+            info!(
+                data_source_id,
+                title_property = %title_name,
+                "resolved properties for update"
+            );
             properties.insert(
-                "Name".into(),
+                title_name,
                 serde_json::json!({ "title": [{ "text": { "content": t } }] }),
             );
         }
@@ -1250,10 +1485,7 @@ impl AppState {
                 serde_json::json!({ "date": self.date_property_value(s, end.flatten()) }),
             );
         }
-        let schema = self
-            .get_data_source_properties(data_source_id, notion_token)
-            .await;
-        properties.extend(optional_event_properties(&schema, extra));
+        properties.extend(optional_event_properties(&schema, extra, mapping));
 
         if properties.is_empty() {
             return Ok(());
@@ -1990,6 +2222,7 @@ pub async fn handle_calendar_event_impl(
                     Some(&new_page.start),
                     Some(new_page.end.as_deref()),
                     &extra,
+                    &cal.column_mapping,
                 )
                 .await
                 .map(|_| (axum::http::StatusCode::NO_CONTENT, page_id))
@@ -2003,6 +2236,7 @@ pub async fn handle_calendar_event_impl(
                     &new_page.start,
                     new_page.end.as_deref(),
                     &extra,
+                    &cal.column_mapping,
                 )
                 .await
             {
@@ -2446,7 +2680,10 @@ async fn handle_calendars_propfind(
         Some(a) => {
             let cals = state.calendars_for_user(a.0.user_id).await;
             match &a.0.scoped_public_id {
-                Some(scoped) => cals.into_iter().filter(|c| &c.public_id == scoped).collect(),
+                Some(scoped) => cals
+                    .into_iter()
+                    .filter(|c| &c.public_id == scoped)
+                    .collect(),
                 None => cals,
             }
         }
@@ -2717,7 +2954,9 @@ async fn auth_middleware(
     if let Some(target) = &target_public_id {
         let authorized = match &scoped_public_id {
             Some(scoped) => target == scoped,
-            None => matches!(state.calendar_by_public_id(target).await, Some(cal) if cal.user_id == user_id),
+            None => {
+                matches!(state.calendar_by_public_id(target).await, Some(cal) if cal.user_id == user_id)
+            }
         };
         if !authorized {
             info!(username = %username, target_public_id = %target, "Authorization failure: calendar not owned by these credentials");
@@ -2769,6 +3008,7 @@ fn routes_dispatched_outside_leptos_routes() -> Vec<String> {
         "/me",
         "/app/{public_id}",
         "/me/calendars/{public_id}/log",
+        "/me/calendars/{public_id}/mapping",
     ]
     .into_iter()
     .map(String::from)
@@ -2789,8 +3029,10 @@ pub fn create_app(
     use leptos_axum::{generate_route_list_with_exclusions, LeptosRoutes};
     use tower::ServiceBuilder;
 
-    let leptos_routes =
-        generate_route_list_with_exclusions(app::App, Some(routes_dispatched_outside_leptos_routes()));
+    let leptos_routes = generate_route_list_with_exclusions(
+        app::App,
+        Some(routes_dispatched_outside_leptos_routes()),
+    );
     let leptos_options = state.leptos_options.clone();
     let leptos_options_for_login_required = leptos_options.clone();
     let db_pool_for_context = state.db.clone();
@@ -2958,6 +3200,10 @@ pub fn create_app(
             get(leptos_login_required_page()),
         )
         .route(
+            "/me/calendars/{public_id}/mapping",
+            get(leptos_login_required_page()).post(crate::pages::edit_mapping::update_mapping),
+        )
+        .route(
             "/app",
             get(|| async { axum::response::Redirect::to("/me") }),
         )
@@ -2995,6 +3241,10 @@ pub fn create_app(
             post(crate::billing::handle_paddle_webhook),
         )
         .route("/admin/reset-billing", post(crate::billing::reset_billing))
+        .route(
+            "/admin/backfill-column-mappings",
+            post(crate::pages::backfill_mapping::backfill_column_mappings),
+        )
         .route(
             "/admin/grant-lifetime",
             post(crate::billing::grant_lifetime_to_non_paying_users),
@@ -3087,3 +3337,4 @@ pub fn create_app(
                 ),
         )
 }
+

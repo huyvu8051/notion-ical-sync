@@ -8,9 +8,9 @@ use axum_oidc::{EmptyAdditionalClaims, OidcClaims};
 use serde::Deserialize;
 use tracing::error;
 
-use app::webview::labels_for;
 use crate::session::require_owned_calendar;
 use crate::AppState;
+use app::webview::labels_for;
 
 pub async fn handle_list_events(
     State(state): State<AppState>,
@@ -110,6 +110,7 @@ pub async fn handle_create_event(
             &body.start,
             body.end.as_deref(),
             &extra,
+            &cal.column_mapping,
         )
         .await
     {
@@ -209,6 +210,7 @@ pub async fn handle_update_event(
             body.start.as_deref(),
             body.end.as_ref().map(|o| o.as_deref()),
             &extra,
+            &cal.column_mapping,
         )
         .await
     {

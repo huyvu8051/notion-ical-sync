@@ -2,12 +2,36 @@ use leptos::ev::Event;
 use leptos::prelude::*;
 use serde::{Deserialize, Serialize};
 
+use crate::column_mapping::{schema_from_pairs, ColumnMapping, Field};
+
 #[derive(Clone, Serialize, Deserialize)]
 pub struct CandidateData {
     pub icon: String,
     pub title: String,
     pub database_id: String,
-    pub date_property: Option<String>,
+    /// Every property as `(name, notion type)`, so the user can choose which
+    /// one backs each calendar field instead of the app guessing from
+    /// hardcoded English names.
+    pub properties: Vec<(String, String)>,
+}
+
+impl CandidateData {
+    pub fn date_properties(&self) -> Vec<&str> {
+        self.properties
+            .iter()
+            .filter(|(_, notion_type)| notion_type == "date")
+            .map(|(name, _)| name.as_str())
+            .collect()
+    }
+
+    /// Properties this field can legally read from, for its dropdown.
+    pub fn options_for(&self, field: Field) -> Vec<&str> {
+        self.properties
+            .iter()
+            .filter(|(_, notion_type)| field.accepts_type(notion_type))
+            .map(|(name, _)| name.as_str())
+            .collect()
+    }
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -94,21 +118,26 @@ async fn fetch_syncable_databases(
             .map(|s| s.to_string())
             .unwrap_or_else(|| "📄".to_string());
 
-        let date_property = ds
+        let mut properties: Vec<(String, String)> = ds
             .get("properties")
             .and_then(|p| p.as_object())
-            .and_then(|props| {
+            .map(|props| {
                 props
                     .iter()
-                    .find(|(_, def)| def.get("type").and_then(|t| t.as_str()) == Some("date"))
-                    .map(|(name, _)| name.clone())
-            });
+                    .filter_map(|(name, def)| {
+                        let notion_type = def.get("type")?.as_str()?;
+                        Some((name.clone(), notion_type.to_string()))
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        properties.sort_by_key(|(name, _)| name.to_lowercase());
 
         candidates.push(CandidateData {
             icon,
             title,
             database_id: database_id.to_string(),
-            date_property,
+            properties,
         });
     }
 
@@ -136,6 +165,131 @@ async fn list_candidates(connection_id: i64) -> Result<Vec<CandidateData>, Serve
     fetch_syncable_databases(&client, &api_base_url, &access_token)
         .await
         .map_err(ServerFnError::new)
+}
+
+/// One labelled `<select>` listing the properties a calendar field can read.
+///
+/// `selected` is the preselected property name — the same guess the app used
+/// to apply silently, now visible and overridable. An empty value means the
+/// user wants nothing mapped to this field.
+#[component]
+pub fn PropertySelect(
+    name: String,
+    label: String,
+    hint: &'static str,
+    options: Vec<String>,
+    selected: Option<String>,
+    #[prop(default = false)] required: bool,
+) -> impl IntoView {
+    let empty_selected = selected.is_none();
+    let options = options
+        .into_iter()
+        .map(|option| {
+            let is_selected = selected.as_deref() == Some(option.as_str());
+            let label = option.clone();
+            view! { <option value=option selected=is_selected>{label}</option> }
+        })
+        .collect_view();
+
+    view! {
+        <label class="flex flex-col gap-xs">
+            <span class="text-label-md text-primary">{label}</span>
+            <select
+                name=name
+                required=required
+                class="h-[40px] px-sm border border-outline-variant rounded bg-white text-body-md text-on-surface focus:border-primary focus:outline-none"
+            >
+                // A required field with nothing preselected gets an empty
+                // placeholder, so `required` has something invalid to reject
+                // and the user has to make the choice rather than inherit a
+                // default that may well be wrong.
+                {(required && empty_selected).then(|| view! {
+                    <option value="" selected=true disabled=true>"— choose a column —"</option>
+                })}
+                {(!required).then(|| view! {
+                    <option value="" selected=empty_selected>"— not synced —"</option>
+                })}
+                {options}
+            </select>
+            <span class="text-on-surface-variant text-label-sm">{hint}</span>
+        </label>
+    }
+}
+
+/// The per-database mapping panel: which Notion property backs the date and
+/// each optional calendar field.
+///
+/// Shown collapsed-but-present rather than conditionally rendered, so the
+/// selects keep their values when a database is unticked and reticked. The
+/// server only reads the mapping of databases whose checkbox was submitted.
+#[component]
+fn ColumnMappingFields(candidate: CandidateData, visible: RwSignal<bool>) -> impl IntoView {
+    let schema = schema_from_pairs(&candidate.properties);
+    let guess = ColumnMapping::guess_from_schema(&schema);
+    let db_id = candidate.database_id.clone();
+
+    let date_options: Vec<String> = candidate
+        .date_properties()
+        .into_iter()
+        .map(|s| s.to_string())
+        .collect();
+    // The old code took whichever date column sorted first alphabetically,
+    // which is how calendars ended up syncing "Archivierungsdatum" or
+    // "Completed" instead of the deadline the user meant. When there is a
+    // genuine choice, make the user make it — preselecting would quietly
+    // reinstate the very bug this page exists to fix. With a single date
+    // column there is nothing to decide, so keep that path frictionless.
+    let date_selected = (date_options.len() == 1)
+        .then(|| date_options.first().cloned())
+        .flatten();
+
+    let field_selects = Field::ALL
+        .into_iter()
+        .map(|field| {
+            let options: Vec<String> = candidate
+                .options_for(field)
+                .into_iter()
+                .map(|s| s.to_string())
+                .collect();
+            let selected = guess.get(field).map(|s| s.to_string());
+            let hint = if options.is_empty() {
+                "No compatible property in this database"
+            } else {
+                field.type_hint()
+            };
+            view! {
+                <PropertySelect
+                    name=format!("map[{}][{}]", db_id, field.key())
+                    label=field.label().to_string()
+                    hint=hint
+                    options=options
+                    selected=selected
+                />
+            }
+        })
+        .collect_view();
+
+    view! {
+        <div
+            class="border-t border-outline-variant bg-surface-container-low px-md py-md"
+            class:hidden=move || !visible.get()
+        >
+            <p class="text-on-surface-variant text-label-md mb-md">
+                "Choose which Notion property backs each calendar field. You can change this later."
+            </p>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-md">
+                <PropertySelect
+                    name=format!("date[{}]", candidate.database_id)
+                    label="Date (required)".to_string()
+                    hint="Rows with this property empty are not synced"
+                    options=date_options
+                    selected=date_selected
+                    required=true
+                />
+                {field_selects}
+            </div>
+        </div>
+    }
 }
 
 #[component]
@@ -189,7 +343,7 @@ pub fn PickDatabasesPage(data: PickDatabasesPageData) -> impl IntoView {
     let syncable_checked_signals: Vec<Option<RwSignal<bool>>> = data
         .candidates
         .iter()
-        .map(|c| c.date_property.is_some().then(|| RwSignal::new(true)))
+        .map(|c| (!c.date_properties().is_empty()).then(|| RwSignal::new(true)))
         .collect();
 
     let checked_count = {
@@ -208,29 +362,32 @@ pub fn PickDatabasesPage(data: PickDatabasesPageData) -> impl IntoView {
         .candidates
         .into_iter()
         .zip(syncable_checked_signals)
-        .map(|(c, sig)| match (c.date_property, sig) {
-            (Some(date_prop), Some(sig)) => view! {
-                <label class="group flex items-center gap-md p-md bg-white border border-outline-variant rounded-lg cursor-pointer hover:border-primary transition-all duration-200 card-shadow">
-                    <input
-                        type="checkbox"
-                        name="db_ids"
-                        value=c.database_id
-                        prop:checked=move || sig.get()
-                        on:change=move |ev: Event| sig.set(event_target_checked(&ev))
-                        class="w-5 h-5 border-2 border-outline-variant rounded-sm text-primary focus:ring-0 focus:ring-offset-0 custom-checkbox"
-                    />
-                    <div class="flex items-center justify-center w-10 h-10 bg-surface-container rounded-lg text-xl">{c.icon}</div>
-                    <div class="flex-grow">
-                        <h3 class="text-h3 text-primary">{c.title}</h3>
-                        <p class="text-on-surface-variant text-label-md flex items-center gap-xs">
-                            <span class="material-symbols-outlined !text-[14px]">"calendar_today"</span>
-                            {format!("Has a date property: {date_prop}")}
-                        </p>
-                    </div>
-                </label>
+        .map(|(c, sig)| match sig {
+            Some(sig) => view! {
+                <div class="bg-white border border-outline-variant rounded-lg card-shadow overflow-hidden">
+                    <label class="group flex items-center gap-md p-md cursor-pointer hover:border-primary transition-all duration-200">
+                        <input
+                            type="checkbox"
+                            name="db_ids"
+                            value=c.database_id.clone()
+                            prop:checked=move || sig.get()
+                            on:change=move |ev: Event| sig.set(event_target_checked(&ev))
+                            class="w-5 h-5 border-2 border-outline-variant rounded-sm text-primary focus:ring-0 focus:ring-offset-0 custom-checkbox"
+                        />
+                        <div class="flex items-center justify-center w-10 h-10 bg-surface-container rounded-lg text-xl">{c.icon.clone()}</div>
+                        <div class="flex-grow">
+                            <h3 class="text-h3 text-primary">{c.title.clone()}</h3>
+                            <p class="text-on-surface-variant text-label-md flex items-center gap-xs">
+                                <span class="material-symbols-outlined !text-[14px]">"tune"</span>
+                                {format!("{} properties to map", c.properties.len())}
+                            </p>
+                        </div>
+                    </label>
+                    <ColumnMappingFields candidate=c visible=sig/>
+                </div>
             }
             .into_any(),
-            (None, _) => view! {
+            None => view! {
                 <div class="flex items-center gap-md p-md bg-surface-container-low border border-outline-variant opacity-60 rounded-lg grayscale cursor-not-allowed">
                     <input type="checkbox" disabled=true class="w-5 h-5 border-2 border-outline-variant rounded-sm bg-surface-container-highest cursor-not-allowed"/>
                     <div class="flex items-center justify-center w-10 h-10 bg-surface-container-high rounded-lg text-xl">{c.icon}</div>
@@ -247,7 +404,6 @@ pub fn PickDatabasesPage(data: PickDatabasesPageData) -> impl IntoView {
                 </div>
             }
             .into_any(),
-            (Some(_), None) => unreachable!("a syncable candidate always gets a signal"),
         })
         .collect_view();
 

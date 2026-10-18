@@ -189,7 +189,10 @@ async fn load_me_data() -> Result<MePageData, ServerFnError> {
                 .fetch_one(&pool)
                 .await
                 .unwrap_or(0);
-                (format!("{used_today}/{FREE_DAILY_QUOTA} events today"), true)
+                (
+                    format!("{used_today}/{FREE_DAILY_QUOTA} events today"),
+                    true,
+                )
             }
         };
         let cta_href = (show_cta && paddle_configured).then(|| "/billing/checkout".to_string());
@@ -378,7 +381,12 @@ fn spawn_client(fut: impl std::future::Future<Output = ()> + 'static) {
 fn spawn_client(_fut: impl std::future::Future<Output = ()> + 'static) {}
 
 #[component]
-fn RegenerateButton<F, Fut>(label: String, confirm_label: String, class: String, on_confirm: F) -> impl IntoView
+fn RegenerateButton<F, Fut>(
+    label: String,
+    confirm_label: String,
+    class: String,
+    on_confirm: F,
+) -> impl IntoView
 where
     F: Fn() -> Fut + 'static,
     Fut: std::future::Future<Output = ()> + 'static,
@@ -417,7 +425,10 @@ fn AccountCredentialSection(
 
     let on_confirm = move || async move {
         if let Ok(cred) = regenerate_account_credential().await {
-            set_credential.set((cred.username, Some((cred.password, cred.mobileconfig_token))));
+            set_credential.set((
+                cred.username,
+                Some((cred.password, cred.mobileconfig_token)),
+            ));
         }
     };
 
@@ -471,6 +482,7 @@ fn AccountCredentialSection(
 fn CalendarCard(data: CalendarCardData) -> impl IntoView {
     let open_href = format!("/app/{}", data.public_id);
     let view_log_href = format!("/me/calendars/{}/log", data.public_id);
+    let mapping_href = format!("/me/calendars/{}/mapping", data.public_id);
     let delete_action = format!("/me/calendars/{}/delete", data.public_id);
 
     view! {
@@ -487,6 +499,7 @@ fn CalendarCard(data: CalendarCardData) -> impl IntoView {
             <p class="text-on-surface-variant text-[13px] mt-sm">"Paste this link into Apple Calendar, Google Calendar, or any CalDAV app"</p>
             <div class="flex items-center gap-md mt-md pt-md border-t border-outline-variant">
                 <a href=view_log_href class="text-label-md text-secondary hover:underline">"View sync log"</a>
+                <a href=mapping_href class="text-label-md text-secondary hover:underline">"Column mapping"</a>
                 <div class="ml-auto">
                     <ConfirmButton
                         action=delete_action

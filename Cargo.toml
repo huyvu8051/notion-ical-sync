@@ -36,7 +36,7 @@ app = { path = "crates/app", default-features = false, features = ["ssr"] }
 leptos_axum = "0.8"
 hmac = "0.12"
 sha2 = "0.10"
-sqlx = { version = "0.8", default-features = false, features = ["postgres", "runtime-tokio", "macros", "migrate", "chrono"] }
+sqlx = { version = "0.8", default-features = false, features = ["postgres", "runtime-tokio", "macros", "migrate", "chrono", "json"] }
 axum-oidc = "=1.0.0-dev-2"
 tower-sessions = "0.15"
 rand = "0.8"

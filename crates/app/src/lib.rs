@@ -1,7 +1,9 @@
 #![recursion_limit = "256"]
 
+pub mod column_mapping;
 pub mod confirm_button;
 pub mod connect_notion;
+pub mod edit_mapping;
 pub mod guide;
 pub mod landing;
 pub mod legal;
@@ -63,7 +65,10 @@ fn NotYetMigratedFallback() -> impl IntoView {
 fn HomeStyleHeader() -> impl IntoView {
     let location = leptos_router::hooks::use_location();
     let is_home_style_page = move || {
-        matches!(location.pathname.get().as_str(), "/" | "/privacy" | "/terms" | "/guide")
+        matches!(
+            location.pathname.get().as_str(),
+            "/" | "/privacy" | "/terms" | "/guide"
+        )
     };
     view! {
         <Show when=is_home_style_page fallback=|| ()>
@@ -93,6 +98,7 @@ pub fn App() -> impl IntoView {
                 <Route path=StaticSegment("me") view=me::MeRoutePage/>
                 <Route path=(StaticSegment("app"), leptos_router::ParamSegment("public_id")) view=webview::WebviewRoutePage/>
                 <Route path=(StaticSegment("me"), StaticSegment("calendars"), leptos_router::ParamSegment("public_id"), StaticSegment("log")) view=sync_log::SyncLogRoutePage/>
+                <Route path=(StaticSegment("me"), StaticSegment("calendars"), leptos_router::ParamSegment("public_id"), StaticSegment("mapping")) view=edit_mapping::EditMappingRoutePage/>
             </Routes>
         </Router>
     }
