@@ -38,17 +38,40 @@ pub fn GuideRoutePage() -> impl IntoView {
                     <img src="/static/guide/01-connect-notion.jpg" alt="Connect your Notion workspace screen" class="w-full rounded-lg border border-outline-variant"/>
                 </GuideStep>
 
-                <GuideStep number=2 title="Your calendars dashboard">
+                <GuideStep number=2 title="Choose which columns to sync">
+                    <p class="mb-md">"A Notion database has no fixed shape, so NotionCal has to be told which of your columns holds what. You pick this when you connect a database, and you can change it afterwards from "<strong>"Column mapping"</strong>" on any calendar."</p>
+
+                    <p class="mb-md"><strong>"The date column is the one that matters."</strong>" It decides which rows become events at all: a row with that column empty is not synced. If the column holds a range rather than a single date, the event spans it."</p>
+
+                    <p class="mb-md">"When your database has only one date column it is chosen for you. When it has several — a deadline, a created date, an archive date — NotionCal asks rather than guesses, because picking the wrong one leaves the calendar silently empty."</p>
+
+                    <p class="mb-md">"Everything else is optional. A field you leave unmapped simply does not appear on the event; nothing breaks. Each dropdown only lists columns of a type that field can read:"</p>
+                    <ul class="list-disc pl-lg space-y-xs mb-md">
+                        <li><strong>"Event title"</strong>" — your database's title column."</li>
+                        <li><strong>"Location"</strong>" — text or URL."</li>
+                        <li><strong>"Description"</strong>" — text."</li>
+                        <li><strong>"Priority"</strong>" — a select whose options are "<code>"High"</code>", "<code>"Medium"</code>" or "<code>"Low"</code>"."</li>
+                        <li><strong>"Busy / free"</strong>" — a checkbox, or a select with "<code>"Busy"</code>" and "<code>"Free"</code>"."</li>
+                        <li><strong>"Reminder"</strong>" — a number: minutes before the event."</li>
+                        <li><strong>"Travel time"</strong>" — a number: minutes."</li>
+                        <li><strong>"Repeat"</strong>" — a select with "<code>"Daily"</code>", "<code>"Weekly"</code>", "<code>"Monthly"</code>" or "<code>"Yearly"</code>"."</li>
+                        <li><strong>"Attendees"</strong>" — a people column, or text with addresses separated by commas."</li>
+                    </ul>
+
+                    <p class="text-on-surface-variant text-body-md">"Column names can be in any language — only the option values above are matched by name, and those are case-insensitive. If a field stays empty on your events, it is usually because the column holds a different type than the list expects."</p>
+                </GuideStep>
+
+                <GuideStep number=3 title="Your calendars dashboard">
                     <p class="mb-md">"Each Notion database you pick shows up as its own calendar here, alongside one shared \"Account-wide CalDAV access\" credential that gives a calendar app access to every calendar you own at once."</p>
                     <img src="/static/guide/02-your-calendars.jpg" alt="Your calendars dashboard" class="w-full rounded-lg border border-outline-variant"/>
                 </GuideStep>
 
-                <GuideStep number=3 title="Get your CalDAV credentials">
+                <GuideStep number=4 title="Get your CalDAV credentials">
                     <p class="mb-md">"Click \"Regenerate\" (or \"Generate account-wide access\" the first time) to reveal a CalDAV URL, username, and password. The password is shown only this once — copy it now, or use the iOS download button below right away."</p>
                     <img src="/static/guide/03-account-caldav.png" alt="Account-wide CalDAV credentials revealed, with a Download for iOS link" class="w-full rounded-lg border border-outline-variant"/>
                 </GuideStep>
 
-                <GuideStep number=4 title="iPhone or iPad: one-tap setup">
+                <GuideStep number=5 title="iPhone or iPad: one-tap setup">
                     <p class="mb-md">"Tap \"Download for iOS (2-way sync)\" right after generating your password. Safari asks to download a configuration profile — tap \"Allow\"."</p>
                     <img src="/static/guide/05-ios-download-prompt.jpg" alt="Safari asking to allow the configuration profile download" class="w-full rounded-lg border border-outline-variant mb-md"/>
 
@@ -61,29 +84,29 @@ pub fn GuideRoutePage() -> impl IntoView {
                     <p class="mb-md">"Done — the profile installs and every calendar you own now appears in Apple Calendar, fully two-way: events you create or edit there sync back to Notion, and vice versa."</p>
                     <img src="/static/guide/08-ios-profile-installed.jpg" alt="Profile Installed confirmation screen" class="w-full rounded-lg border border-outline-variant"/>
 
-                    <p class="mb-md mt-lg">"Prefer to type it in yourself? Go to "<strong>"Settings → Apps → Calendar → Accounts → Add Account → Other → Add CalDAV Account"</strong>" and enter the CalDAV URL, username, and password from step 3 (leave off "<code>"https://"</code>" in the Server field — iOS adds it automatically)."</p>
+                    <p class="mb-md mt-lg">"Prefer to type it in yourself? Go to "<strong>"Settings → Apps → Calendar → Accounts → Add Account → Other → Add CalDAV Account"</strong>" and enter the CalDAV URL, username, and password from step 4 (leave off "<code>"https://"</code>" in the Server field — iOS adds it automatically)."</p>
                     <img src="/static/guide/10-ios-manual-caldav.jpg" alt="iOS manual CalDAV account form with server, username, password and description filled in" class="w-full rounded-lg border border-outline-variant"/>
                 </GuideStep>
 
-                <GuideStep number=5 title="Android: DAVx5">
+                <GuideStep number=6 title="Android: DAVx5">
                     <p class="mb-md">"Android has no OS-level equivalent to the iOS profile above — the standard way to get two-way CalDAV sync is the "<a class="text-secondary underline" href="https://f-droid.org/packages/at.bitfire.davdroid/" target="_blank">"DAVx5"</a>" app. Install it, tap \"Add account\", then either:"</p>
                     <ul class="list-disc pl-lg space-y-xs mb-md">
-                        <li>"Open your phone's Camera app (or any QR scanner) and point it at the "<strong>"Android (DAVx5)"</strong>" code from step 3 — it'll offer to open DAVx5 with the server and username already filled in; you still type the password yourself."</li>
-                        <li>"Or in DAVx5 choose \"Login with URL and user name\" and type the three fields from step 3 in by hand."</li>
+                        <li>"Open your phone's Camera app (or any QR scanner) and point it at the "<strong>"Android (DAVx5)"</strong>" code from step 4 — it'll offer to open DAVx5 with the server and username already filled in; you still type the password yourself."</li>
+                        <li>"Or in DAVx5 choose \"Login with URL and user name\" and type the three fields from step 4 in by hand."</li>
                     </ul>
                     <img src="/static/guide/09-android-davx5-prefilled.jpg" alt="DAVx5 login screen with server and username pre-filled after scanning the QR code" class="w-full rounded-lg border border-outline-variant mb-md"/>
                     <p class="text-on-surface-variant text-body-md">"Same result as iOS: every calendar you own shows up, fully two-way."</p>
                 </GuideStep>
 
-                <GuideStep number=6 title="Other apps: Google Calendar, Thunderbird, or any CalDAV client">
-                    <p class="mb-md">"Copy the three fields from step 3 — CalDAV URL, username, password — into your app's own \"Add CalDAV account\" or \"Subscribe to calendar\" screen:"</p>
+                <GuideStep number=7 title="Other apps: Google Calendar, Thunderbird, or any CalDAV client">
+                    <p class="mb-md">"Copy the three fields from step 4 — CalDAV URL, username, password — into your app's own \"Add CalDAV account\" or \"Subscribe to calendar\" screen:"</p>
                     <ul class="list-disc pl-lg space-y-xs">
                         <li><strong>"Two-way sync "</strong>"(create/edit/delete from your calendar app): use an app that supports adding a full CalDAV account, e.g. Thunderbird."</li>
                         <li><strong>"Read-only: "</strong>"most calendar apps also let you \"subscribe\" to a calendar by URL — paste a single calendar's URL there for a live, view-only feed."</li>
                     </ul>
                 </GuideStep>
 
-                <GuideStep number=7 title="Or just use the built-in calendar">
+                <GuideStep number=8 title="Or just use the built-in calendar">
                     <p class="mb-md">"No calendar app needed — click \"Open calendar\" on any calendar in your dashboard to view, create, and edit events directly in your browser."</p>
                     <img src="/static/guide/04-webview-calendar.jpg" alt="Built-in browser calendar view" class="w-full rounded-lg border border-outline-variant"/>
                 </GuideStep>
