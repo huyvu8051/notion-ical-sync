@@ -41,6 +41,8 @@ pub fn GuideRoutePage() -> impl IntoView {
                 <GuideStep number=2 title="Choose which columns to sync">
                     <p class="mb-md">"A Notion database has no fixed shape, so NotionCal has to be told which of your columns holds what. You pick this when you connect a database, and you can change it afterwards from "<strong>"Column mapping"</strong>" on any calendar."</p>
 
+                    <img src="/static/guide/11-choose-columns.jpg" alt="The column mapping panel: a Date dropdown marked required, alongside dropdowns for event title, location, description, priority, busy/free, reminder, travel time, repeat and attendees" class="w-full rounded-lg border border-outline-variant mb-md"/>
+
                     <p class="mb-md"><strong>"The date column is the one that matters."</strong>" It decides which rows become events at all: a row with that column empty is not synced. If the column holds a range rather than a single date, the event spans it."</p>
 
                     <p class="mb-md">"When your database has only one date column it is chosen for you. When it has several — a deadline, a created date, an archive date — NotionCal asks rather than guesses, because picking the wrong one leaves the calendar silently empty."</p>
@@ -57,6 +59,9 @@ pub fn GuideRoutePage() -> impl IntoView {
                         <li><strong>"Repeat"</strong>" — a select with "<code>"Daily"</code>", "<code>"Weekly"</code>", "<code>"Monthly"</code>" or "<code>"Yearly"</code>"."</li>
                         <li><strong>"Attendees"</strong>" — a people column, or text with addresses separated by commas."</li>
                     </ul>
+
+                    <p class="mb-md">"To change it later, open "<strong>"Column mapping"</strong>" on the calendar in your dashboard:"</p>
+                    <img src="/static/guide/12-edit-column-mapping.jpg" alt="A calendar card on the dashboard, showing the Column mapping link next to View sync log" class="w-full rounded-lg border border-outline-variant mb-md"/>
 
                     <p class="text-on-surface-variant text-body-md">"Column names can be in any language — only the option values above are matched by name, and those are case-insensitive. If a field stays empty on your events, it is usually because the column holds a different type than the list expects."</p>
                 </GuideStep>
