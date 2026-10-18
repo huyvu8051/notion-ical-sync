@@ -65,8 +65,24 @@ pub async fn handle_notion_webhook(
         .pointer("/data/parent/data_source_id")
         .and_then(|v| v.as_str())
         .map(|s| s.to_string());
+    // Which page the event is about. Notion documents this as `entity.id`,
+    // but we have never read it, so log what actually arrives before relying
+    // on it to refresh a single page instead of the whole data source.
+    let entity_id = json
+        .pointer("/entity/id")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
 
-    info!(event_type = %event_type, data_source_id = data_source_id.as_deref(), "notion webhook event verified");
+    info!(
+        event_type = %event_type,
+        data_source_id = data_source_id.as_deref(),
+        entity_id = entity_id.as_deref(),
+        "notion webhook event verified"
+    );
+    // Temporary, for designing the incremental-sync path. Safe to log in
+    // full: Notion events carry ids, timestamps and the event type, never the
+    // page content itself — the webhook is only a signal to go read.
+    info!(payload = %json, "notion webhook raw payload");
 
     if let Some(data_source_id) = data_source_id {
         tokio::spawn(async move {
