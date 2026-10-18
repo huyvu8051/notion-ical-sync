@@ -1605,6 +1605,17 @@ pub fn ics_dt(value: &str) -> String {
     }
 }
 
+/// `DTEND` for an all-day event is *exclusive* under RFC 5545, while Notion's
+/// range end is *inclusive*. Emitting Notion's date unchanged therefore drops
+/// the final day, and a single-day range (start == end) becomes a zero-length
+/// event that some clients refuse to draw at all. Advance the date by one day
+/// so the rendered span matches what the user set in Notion.
+fn all_day_dtend(notion_end: &str) -> Option<String> {
+    let date = chrono::NaiveDate::parse_from_str(notion_end, "%Y-%m-%d").ok()?;
+    let exclusive = date.succ_opt()?;
+    Some(format!(";VALUE=DATE:{}", exclusive.format("%Y%m%d")))
+}
+
 pub fn build_ics(db_id: &str, name: &str, pages: &[PageInfo]) -> String {
     let dtstamp = chrono::Utc::now().format("%Y%m%dT%H%M%SZ").to_string();
 
@@ -1619,7 +1630,14 @@ pub fn build_ics(db_id: &str, name: &str, pages: &[PageInfo]) -> String {
 
     for page in pages {
         let start = ics_dt(&page.start);
-        let end = page.end.as_deref().map_or(String::new(), ics_dt);
+        let all_day = !page.start.contains('T');
+        let end = match page.end.as_deref() {
+            // All-day ranges need the inclusive -> exclusive shift; timed
+            // events carry an exact instant and are emitted as-is.
+            Some(e) if all_day => all_day_dtend(e).unwrap_or_default(),
+            Some(e) => ics_dt(e),
+            None => String::new(),
+        };
 
         if start.is_empty() {
             continue;
