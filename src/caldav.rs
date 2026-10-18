@@ -342,6 +342,117 @@ pub struct AuthenticatedCaldavUser {
     pub scoped_public_id: Option<String>,
 }
 
+/// Turn one Notion page object into a `PageInfo`, or `None` when it cannot
+/// become an event — no properties, or the date property empty.
+///
+/// Shared by the full refresh and the single-page upsert so both interpret a
+/// row identically; a second copy of this logic would drift from the first.
+fn page_to_event(
+    page: &serde_json::Value,
+    date_property: &str,
+    mapping: &ColumnMapping,
+) -> Option<PageInfo> {
+
+        let props = page.get("properties")?;
+
+        let title = mapping
+            .name_for(Field::Title)
+            .and_then(|name| find_property_case_insensitive(props, name))
+            .or_else(|| {
+                props.as_object().and_then(|o| {
+                    o.values()
+                        .find(|v| v.get("type").and_then(|t| t.as_str()) == Some("title"))
+                })
+            })
+            .and_then(|t| t.get("title"))
+            .and_then(|arr| arr.as_array())
+            .and_then(|arr| arr.first())
+            .and_then(|item| item.get("plain_text"))
+            .and_then(|t| t.as_str())
+            .unwrap_or("(untitled)")
+            .to_string();
+
+        // The date column is matched case-insensitively like every other
+        // field — an exact-case lookup here used to drop every page
+        // whenever the stored name differed only in capitalisation.
+        // An unset date comes back as `"date": null`, which is `Some(Null)`
+        // rather than `None` — without the null check such a page becomes
+        // an event with an empty start. The Notion query already filters
+        // on `is_not_empty`, but relying on that alone means one filter
+        // change silently fills the cache with dateless rows.
+        let date_val = match find_property_case_insensitive(props, date_property)
+            .and_then(|v| v.get("date"))
+            .filter(|d| !d.is_null())
+        {
+            Some(d) => d,
+            None => {
+                return None;
+            }
+        };
+
+        let start = date_val
+            .get("start")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+
+        let end = date_val
+            .get("end")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+
+        let id = page
+            .get("id")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        let last_edited = page
+            .get("last_edited_time")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+
+        let notion_url = format!("https://notion.so/{}", id.replace("-", ""));
+
+        let by_name = |field: Field| mapping.name_for(field);
+        let location =
+            by_name(Field::Location).and_then(|name| extract_text_or_url_property(props, name));
+        let notes =
+            by_name(Field::Notes).and_then(|name| extract_text_or_url_property(props, name));
+        let priority = by_name(Field::Priority)
+            .and_then(|name| extract_select_name(props, name))
+            .and_then(|s| map_priority(&s));
+        let busy = extract_busy(props, &mapping.names_for(Field::Busy));
+        let reminder_minutes =
+            by_name(Field::Reminder).and_then(|name| extract_number_property(props, name));
+        let travel_minutes =
+            by_name(Field::TravelMinutes).and_then(|name| extract_number_property(props, name));
+        let repeat_rule = by_name(Field::Repeat)
+            .and_then(|name| extract_select_name(props, name))
+            .and_then(|s| map_repeat_to_rrule(&s));
+        let attendees = by_name(Field::Attendees)
+            .map(|name| extract_attendees(props, name))
+            .unwrap_or_default();
+
+        Some(PageInfo {
+            id,
+            title,
+            start,
+            end,
+            url: notion_url,
+            last_edited,
+            location,
+            notes,
+            priority,
+            busy,
+            reminder_minutes,
+            travel_minutes,
+            repeat_rule,
+        attendees,
+    })
+
+}
+
 impl AppState {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
@@ -928,107 +1039,10 @@ impl AppState {
         let mut events = Vec::new();
         let mut skipped_no_date = 0usize;
         for page in rows {
-            let props = match page.get("properties") {
-                Some(p) => p,
-                None => continue,
-            };
-
-            let title = mapping
-                .name_for(Field::Title)
-                .and_then(|name| find_property_case_insensitive(props, name))
-                .or_else(|| {
-                    props.as_object().and_then(|o| {
-                        o.values()
-                            .find(|v| v.get("type").and_then(|t| t.as_str()) == Some("title"))
-                    })
-                })
-                .and_then(|t| t.get("title"))
-                .and_then(|arr| arr.as_array())
-                .and_then(|arr| arr.first())
-                .and_then(|item| item.get("plain_text"))
-                .and_then(|t| t.as_str())
-                .unwrap_or("(untitled)")
-                .to_string();
-
-            // The date column is matched case-insensitively like every other
-            // field — an exact-case lookup here used to drop every page
-            // whenever the stored name differed only in capitalisation.
-            // An unset date comes back as `"date": null`, which is `Some(Null)`
-            // rather than `None` — without the null check such a page becomes
-            // an event with an empty start. The Notion query already filters
-            // on `is_not_empty`, but relying on that alone means one filter
-            // change silently fills the cache with dateless rows.
-            let date_val = match find_property_case_insensitive(props, date_property)
-                .and_then(|v| v.get("date"))
-                .filter(|d| !d.is_null())
-            {
-                Some(d) => d,
-                None => {
-                    skipped_no_date += 1;
-                    continue;
-                }
-            };
-
-            let start = date_val
-                .get("start")
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_string();
-
-            let end = date_val
-                .get("end")
-                .and_then(|v| v.as_str())
-                .map(|s| s.to_string());
-
-            let id = page
-                .get("id")
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_string();
-            let last_edited = page
-                .get("last_edited_time")
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_string();
-
-            let notion_url = format!("https://notion.so/{}", id.replace("-", ""));
-
-            let by_name = |field: Field| mapping.name_for(field);
-            let location =
-                by_name(Field::Location).and_then(|name| extract_text_or_url_property(props, name));
-            let notes =
-                by_name(Field::Notes).and_then(|name| extract_text_or_url_property(props, name));
-            let priority = by_name(Field::Priority)
-                .and_then(|name| extract_select_name(props, name))
-                .and_then(|s| map_priority(&s));
-            let busy = extract_busy(props, &mapping.names_for(Field::Busy));
-            let reminder_minutes =
-                by_name(Field::Reminder).and_then(|name| extract_number_property(props, name));
-            let travel_minutes =
-                by_name(Field::TravelMinutes).and_then(|name| extract_number_property(props, name));
-            let repeat_rule = by_name(Field::Repeat)
-                .and_then(|name| extract_select_name(props, name))
-                .and_then(|s| map_repeat_to_rrule(&s));
-            let attendees = by_name(Field::Attendees)
-                .map(|name| extract_attendees(props, name))
-                .unwrap_or_default();
-
-            events.push(PageInfo {
-                id,
-                title,
-                start,
-                end,
-                url: notion_url,
-                last_edited,
-                location,
-                notes,
-                priority,
-                busy,
-                reminder_minutes,
-                travel_minutes,
-                repeat_rule,
-                attendees,
-            });
+            match page_to_event(&page, date_property, mapping) {
+                Some(ev) => events.push(ev),
+                None => skipped_no_date += 1,
+            }
         }
 
         if skipped_no_date > 0 {
@@ -1150,6 +1164,77 @@ impl AppState {
             }
         }
         info!(succeeded, failed, "refresh_all: pull cycle completed");
+    }
+
+    /// Refresh the cache for a single Notion page after we have written it.
+    ///
+    /// The write paths used to call `refresh_by_data_source`, which re-reads
+    /// the entire database: for a 2733-row calendar that is 28 paginated
+    /// requests and about fourteen seconds, all of it before the user's own
+    /// create or edit returns. Only one row actually changed, so fetch that
+    /// row and upsert it.
+    ///
+    /// Returns false when the page could not be refreshed on its own, so the
+    /// caller can fall back to a full refresh rather than leave a stale cache.
+    pub async fn refresh_single_page(&self, cal: &CalendarRow, notion_page_id: &str) -> bool {
+        let url = format!("{}/v1/pages/{}", self.notion_api_base_url, notion_page_id);
+        let resp = match self
+            .client
+            .get(&url)
+            .header("Authorization", format!("Bearer {}", cal.notion_access_token))
+            .header("Notion-Version", "2025-09-03")
+            .send()
+            .await
+        {
+            Ok(r) if r.status().is_success() => r,
+            Ok(r) => {
+                warn!(notion_url = %url, status = %r.status(), "<- Notion API error response (single page)");
+                return false;
+            }
+            Err(e) => {
+                warn!(notion_url = %url, error = %e, "<- Notion API request failed (single page)");
+                return false;
+            }
+        };
+
+        let page: serde_json::Value = match resp.json().await {
+            Ok(v) => v,
+            Err(e) => {
+                warn!(notion_url = %url, error = %e, "could not parse single page response");
+                return false;
+            }
+        };
+
+        // An archived page, or one whose date was just cleared, is no longer an
+        // event. Removing it here keeps a delete as cheap as a create.
+        let archived = page
+            .get("archived")
+            .or_else(|| page.get("in_trash"))
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        let parsed = page_to_event(&page, &cal.date_property, &cal.column_mapping);
+
+        match (archived, parsed) {
+            (false, Some(event)) => {
+                self.upsert_page_state(cal.id, &event).await;
+                info!(calendar_id = cal.id, notion_page_id, "single page upserted");
+            }
+            _ => {
+                if let Err(e) = sqlx::query(
+                    "DELETE FROM calendar_page_state WHERE calendar_id = $1 AND notion_page_id = $2",
+                )
+                .bind(cal.id)
+                .bind(notion_page_id)
+                .execute(&self.db)
+                .await
+                {
+                    error!(calendar_id = cal.id, error = %e, "failed to drop page from cache");
+                    return false;
+                }
+                info!(calendar_id = cal.id, notion_page_id, archived, "single page removed from cache");
+            }
+        }
+        true
     }
 
     pub async fn refresh_by_data_source(&self, data_source_id: &str) {
@@ -2280,7 +2365,11 @@ pub async fn handle_calendar_event_impl(
                         "",
                     )
                     .await;
-                state.refresh_by_data_source(&cal.data_source_id).await;
+                // Refresh just the row we wrote; fall back to the whole data
+                // source only if that single read fails.
+                if !state.refresh_single_page(&cal, &page_id).await {
+                    state.refresh_by_data_source(&cal.data_source_id).await;
+                }
                 status.into_response()
             }
             Err(e) => {
@@ -2329,7 +2418,11 @@ pub async fn handle_calendar_event_impl(
                 state
                     .delete_caldav_uid_mapping(cal.id, &event_id_clean)
                     .await;
-                state.refresh_by_data_source(&cal.data_source_id).await;
+                // Refresh just the row we wrote; fall back to the whole data
+                // source only if that single read fails.
+                if !state.refresh_single_page(&cal, &page_id).await {
+                    state.refresh_by_data_source(&cal.data_source_id).await;
+                }
                 axum::http::StatusCode::NO_CONTENT.into_response()
             }
             Err(e) => {

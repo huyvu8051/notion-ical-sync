@@ -10,7 +10,7 @@
 
 use axum::extract::{Path, Query, State};
 use axum::response::{Html, IntoResponse, Redirect};
-use axum::routing::{get, patch, post};
+use axum::routing::{get, post};
 use axum::{Json, Router};
 use serde_json::{json, Value};
 use std::collections::HashMap;
@@ -560,6 +560,24 @@ async fn create_page(
     (axum::http::StatusCode::CREATED, Json(json!({ "id": id })))
 }
 
+/// Single-page read, used by the app's post-write refresh so it does not have
+/// to re-query the whole data source.
+async fn get_page(State(state): State<SharedState>, Path(id): Path<String>) -> impl IntoResponse {
+    let state = state.lock().await;
+    match state.pages.iter().find(|p| p.id == id) {
+        Some(page) => {
+            let mut v = page.to_notion_json();
+            v["archived"] = json!(page.archived);
+            (axum::http::StatusCode::OK, Json(v))
+        }
+        None => (
+            axum::http::StatusCode::NOT_FOUND,
+            Json(json!({"object":"error","status":404,"code":"object_not_found",
+                        "message":format!("Could not find page with ID: {id}.")})),
+        ),
+    }
+}
+
 async fn patch_page(
     State(state): State<SharedState>,
     Path(id): Path<String>,
@@ -713,7 +731,7 @@ async fn main() {
         .route("/v1/data_sources/{id}/query", post(query_data_source))
         .route("/v1/databases/{id}", get(get_database))
         .route("/v1/pages", post(create_page))
-        .route("/v1/pages/{id}", patch(patch_page))
+        .route("/v1/pages/{id}", get(get_page).patch(patch_page))
         .with_state(state);
 
     let addr: std::net::SocketAddr = format!("0.0.0.0:{port}").parse().unwrap();

@@ -118,7 +118,9 @@ pub async fn handle_create_event(
             state
                 .log_sync(cal.id, "webview", "create", "", &page_id, "ok", "")
                 .await;
-            state.refresh_by_data_source(&cal.data_source_id).await;
+                if !state.refresh_single_page(&cal, &page_id).await {
+                    state.refresh_by_data_source(&cal.data_source_id).await;
+                }
             (
                 StatusCode::CREATED,
                 Json(serde_json::json!({ "id": page_id })),
@@ -218,7 +220,9 @@ pub async fn handle_update_event(
             state
                 .log_sync(cal.id, "webview", "update", &event_id, &event_id, "ok", "")
                 .await;
-            state.refresh_by_data_source(&cal.data_source_id).await;
+                if !state.refresh_single_page(&cal, &event_id).await {
+                    state.refresh_by_data_source(&cal.data_source_id).await;
+                }
             StatusCode::NO_CONTENT.into_response()
         }
         Err(e) => {
@@ -250,7 +254,9 @@ pub async fn handle_delete_event(
             state
                 .log_sync(cal.id, "webview", "delete", &event_id, &event_id, "ok", "")
                 .await;
-            state.refresh_by_data_source(&cal.data_source_id).await;
+                if !state.refresh_single_page(&cal, &event_id).await {
+                    state.refresh_by_data_source(&cal.data_source_id).await;
+                }
             StatusCode::NO_CONTENT.into_response()
         }
         Err(e) => {
