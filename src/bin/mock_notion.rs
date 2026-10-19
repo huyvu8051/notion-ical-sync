@@ -8,6 +8,7 @@
 //! first date column by map order chose the wrong one; the mapping UI is what
 //! makes the right one reachable.
 
+use axum::http::StatusCode;
 use axum::extract::{Path, Query, State};
 use axum::response::{Html, IntoResponse, Redirect};
 use axum::routing::{get, post};
@@ -192,6 +193,36 @@ fn schema_json(db: &MockDb) -> Value {
 struct MockState {
     pages: Vec<MockPage>,
     next_id: u64,
+    /// data_source_id -> how Notion should pretend to be broken for it.
+    /// Real Notion answers `query` with 404 object_not_found for both a
+    /// trashed and a deleted database, and only `GET /v1/data_sources/{id}`
+    /// separates them. Reproducing that asymmetry is the whole point.
+    unavailable: std::collections::HashMap<String, Availability>,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Availability {
+    /// In the trash: `GET` still answers 200 with `in_trash: true`.
+    Trashed,
+    /// Deleted or unshared: `GET` 404s too.
+    Gone,
+}
+
+/// The 404 body real Notion returns for a trashed or deleted data source —
+/// note it blames sharing, which is what made this state easy to misdiagnose.
+fn object_not_found(id: &str) -> (StatusCode, Json<Value>) {
+    (
+        StatusCode::NOT_FOUND,
+        Json(json!({
+            "object": "error",
+            "status": 404,
+            "code": "object_not_found",
+            "message": format!(
+                "Could not find data_source with ID: {id}. Make sure the relevant pages and \
+                 databases are shared with your integration."
+            ),
+        })),
+    )
 }
 
 fn seed_pages() -> Vec<MockPage> {
@@ -350,8 +381,45 @@ async fn search() -> impl IntoResponse {
     Json(json!({ "results": results }))
 }
 
-async fn get_data_source(Path(id): Path<String>) -> impl IntoResponse {
-    Json(schema_json(&db_by_data_source(&id)))
+async fn get_data_source(
+    State(state): State<SharedState>,
+    Path(id): Path<String>,
+) -> impl IntoResponse {
+    match state.lock().await.unavailable.get(&id) {
+        Some(Availability::Gone) => return object_not_found(&id).into_response(),
+        Some(Availability::Trashed) => {
+            let mut body = schema_json(&db_by_data_source(&id));
+            body["in_trash"] = json!(true);
+            body["object"] = json!("data_source");
+            return Json(body).into_response();
+        }
+        None => {}
+    }
+    Json(schema_json(&db_by_data_source(&id))).into_response()
+}
+
+/// Test hook with no Notion counterpart: flip a data source into the trash,
+/// delete it, or restore it, so the sync loop's reaction can be exercised
+/// without hand-editing a real workspace.
+async fn set_availability(
+    State(state): State<SharedState>,
+    Path((id, how)): Path<(String, String)>,
+) -> impl IntoResponse {
+    let mut st = state.lock().await;
+    match how.as_str() {
+        "trashed" => {
+            st.unavailable.insert(id.clone(), Availability::Trashed);
+        }
+        "gone" => {
+            st.unavailable.insert(id.clone(), Availability::Gone);
+        }
+        "ok" => {
+            st.unavailable.remove(&id);
+        }
+        _ => return (StatusCode::BAD_REQUEST, "use trashed|gone|ok").into_response(),
+    }
+    tracing::info!(data_source = %id, state = %how, "mock: availability changed");
+    (StatusCode::OK, format!("{id} -> {how}\n")).into_response()
 }
 
 async fn query_data_source(
@@ -374,6 +442,9 @@ async fn query_data_source(
         .unwrap_or(false);
 
     let state = state.lock().await;
+    if state.unavailable.contains_key(&id) {
+        return object_not_found(&id).into_response();
+    }
     let mut matching: Vec<Value> = state
         .pages
         .iter()
@@ -447,7 +518,7 @@ async fn query_data_source(
         "results": results,
         "has_more": has_more,
         "next_cursor": next_cursor,
-    }))
+    })).into_response()
 }
 
 async fn get_database(Path(id): Path<String>) -> impl IntoResponse {
@@ -719,6 +790,7 @@ async fn main() {
     let state: SharedState = Arc::new(Mutex::new(MockState {
         pages: seed_pages(),
         next_id: 0,
+            unavailable: std::collections::HashMap::new(),
     }));
 
     let app = Router::new()
@@ -728,6 +800,7 @@ async fn main() {
         .route("/v1/oauth/token", post(oauth_token))
         .route("/v1/search", post(search))
         .route("/v1/data_sources/{id}", get(get_data_source))
+        .route("/v1/_test/availability/{id}/{how}", post(set_availability))
         .route("/v1/data_sources/{id}/query", post(query_data_source))
         .route("/v1/databases/{id}", get(get_database))
         .route("/v1/pages", post(create_page))

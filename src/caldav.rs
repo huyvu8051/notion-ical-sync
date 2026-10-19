@@ -306,6 +306,9 @@ pub struct CalendarRow {
     pub workspace_name: String,
     #[sqlx(json)]
     pub column_mapping: ColumnMapping,
+    /// '' while Notion answers for this data source, else 'trashed' or 'gone'.
+    pub source_state: String,
+    pub source_checked_at: Option<chrono::DateTime<chrono::Utc>>,
 }
 
 /// Column list shared by every `CalendarRow` query, so adding a field does not
@@ -313,6 +316,7 @@ pub struct CalendarRow {
 const CALENDAR_ROW_COLUMNS: &str =
     "c.id, c.user_id, c.database_id, c.public_id, c.data_source_id, \
      c.date_property, c.display_name, c.caldav_username, c.column_mapping, \
+     c.source_state, c.source_checked_at, \
      nc.notion_access_token, nc.id AS notion_connection_id, nc.workspace_name";
 
 /// `refresh_db`'s failure modes. `Unauthorized` means Notion rejected the
@@ -321,7 +325,48 @@ const CALENDAR_ROW_COLUMNS: &str =
 /// connection on this variant instead of just logging and moving on.
 pub enum RefreshError {
     Unauthorized,
+    /// Notion will not serve this data source any more: the user trashed or
+    /// deleted the database. Distinct from `Other` because retrying is
+    /// pointless and the owner is the only one who can fix it.
+    SourceUnavailable(SourceState),
     Other(String),
+}
+
+/// Which flavour of "Notion no longer serves this data source".
+///
+/// The query endpoint cannot tell these apart — it answers 404 with the same
+/// "make sure the relevant pages and databases are shared" text for both, and
+/// for a genuine permission problem too. `GET /v1/data_sources/{id}` can:
+/// a trashed source still returns 200, carrying `in_trash: true`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SourceState {
+    /// In Notion's trash. The user can restore it themselves.
+    Trashed,
+    /// Does not resolve at all — deleted for good, or no longer shared.
+    Gone,
+}
+
+impl SourceState {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Trashed => "trashed",
+            Self::Gone => "gone",
+        }
+    }
+
+    /// Wording aimed at the calendar's owner, shown on the sync log page.
+    pub fn owner_message(self) -> &'static str {
+        match self {
+            Self::Trashed => {
+                "This Notion database is in your trash, so Notion refuses to serve it. \
+                 Restore it in Notion to resume syncing, or delete this calendar."
+            }
+            Self::Gone => {
+                "This Notion database no longer exists, or is no longer shared with the \
+                 NotionCal integration. Re-share it in Notion, or delete this calendar."
+            }
+        }
+    }
 }
 
 impl std::fmt::Display for RefreshError {
@@ -330,6 +375,7 @@ impl std::fmt::Display for RefreshError {
             Self::Unauthorized => {
                 write!(f, "Notion error 401 Unauthorized: token revoked or invalid")
             }
+            Self::SourceUnavailable(state) => write!(f, "{}", state.owner_message()),
             Self::Other(e) => write!(f, "{e}"),
         }
     }
@@ -864,6 +910,7 @@ impl AppState {
                     );
                     self.log_diff(cal.id, &pages).await;
                     self.clear_pull_failures(cal.id).await;
+                    self.note_source_available(&cal).await;
                 }
                 Err(RefreshError::Unauthorized) => {
                     error!(
@@ -876,7 +923,12 @@ impl AppState {
                     self.mark_notion_connection_invalid_and_notify(cal.notion_connection_id)
                         .await;
                 }
-                Err(e) => self.log_pull_failure(&cal, &e).await,
+                Err(e) => {
+                    if let RefreshError::SourceUnavailable(state) = e {
+                        self.note_source_unavailable(&cal, state).await;
+                    }
+                    self.log_pull_failure(&cal, &e).await
+                }
             }
         }
     }
@@ -901,6 +953,77 @@ impl AppState {
         }
     }
 
+    /// Remember that Notion has stopped serving this calendar's data source.
+    ///
+    /// Only the first detection logs at warn level: the steady state is noisy
+    /// (production had 19 such calendars, each retried hourly), and an alert
+    /// wants the moment a calendar breaks, not a count of ones already broken.
+    async fn note_source_unavailable(&self, cal: &CalendarRow, state: SourceState) {
+        let changed = cal.source_state != state.as_str();
+        if changed {
+            warn!(
+                calendar_id = cal.id,
+                connection_id = cal.notion_connection_id,
+                workspace = %cal.workspace_name,
+                calendar = %cal.display_name,
+                database_id = %cal.database_id,
+                state = state.as_str(),
+                "notion source became unavailable"
+            );
+        }
+        if let Err(e) = sqlx::query(
+            "UPDATE calendars SET source_state = $2, source_checked_at = now() WHERE id = $1",
+        )
+        .bind(cal.id)
+        .bind(state.as_str())
+        .execute(&self.db)
+        .await
+        {
+            error!(calendar_id = cal.id, error = %e, "failed to record source state");
+        }
+    }
+
+    /// Clear the marker once Notion serves the data source again — a user who
+    /// restores a database from the trash should not have to reconnect.
+    async fn note_source_available(&self, cal: &CalendarRow) {
+        if cal.source_state.is_empty() {
+            return;
+        }
+        info!(
+            calendar_id = cal.id,
+            connection_id = cal.notion_connection_id,
+            calendar = %cal.display_name,
+            was = %cal.source_state,
+            "notion source recovered"
+        );
+        if let Err(e) = sqlx::query(
+            "UPDATE calendars SET source_state = '', source_checked_at = now() WHERE id = $1",
+        )
+        .bind(cal.id)
+        .execute(&self.db)
+        .await
+        {
+            error!(calendar_id = cal.id, error = %e, "failed to clear source state");
+        }
+    }
+
+    /// How long to leave a known-dead calendar alone before re-probing.
+    ///
+    /// Without this the sync loop spends six requests an hour per broken
+    /// calendar discovering the same deletion; with 19 broken on production
+    /// that was ~2,700 wasted Notion calls a day. Hourly still picks up a
+    /// restore quickly enough that a user who undeletes a database sees their
+    /// calendar come back within the hour.
+    fn source_probe_is_due(cal: &CalendarRow) -> bool {
+        if cal.source_state.is_empty() {
+            return true;
+        }
+        match cal.source_checked_at {
+            Some(at) => chrono::Utc::now() - at >= chrono::Duration::hours(1),
+            None => true,
+        }
+    }
+
     /// Record a failed pull where the owner can see it.
     ///
     /// Pull failures used to go only to `tracing`, so a user whose calendar had
@@ -919,6 +1042,52 @@ impl AppState {
         );
         self.log_sync(cal.id, "notion", "pull", "", "", "error", &err.to_string())
             .await;
+    }
+
+    /// Ask Notion whether a data source that failed to answer a query is
+    /// trashed or gone outright.
+    ///
+    /// `GET /v1/data_sources/{id}` still returns 200 for a trashed source, with
+    /// `in_trash: true`; a deleted or unshared one 404s. That difference is the
+    /// only way to tell the two apart, and it matters because a trashed
+    /// database is something the owner can restore themselves.
+    ///
+    /// Falls back to `Gone` when the probe itself fails: the calendar is not
+    /// syncing either way, and claiming "restore it from the trash" when we do
+    /// not know that would send the owner looking for something that is not
+    /// there.
+    async fn probe_source_state(&self, ds_id: &str, notion_token: &str) -> SourceState {
+        let url = format!("{}/v1/data_sources/{}", self.notion_api_base_url, ds_id);
+        let resp = match self
+            .client
+            .get(&url)
+            .bearer_auth(notion_token)
+            .header("Notion-Version", "2025-09-03")
+            .send()
+            .await
+        {
+            Ok(r) => r,
+            Err(e) => {
+                error!(notion_url = %url, error = %e, "source state probe failed (transport)");
+                return SourceState::Gone;
+            }
+        };
+        if !resp.status().is_success() {
+            return SourceState::Gone;
+        }
+        let in_trash = resp
+            .json::<serde_json::Value>()
+            .await
+            .ok()
+            .and_then(|v| v.get("in_trash").and_then(|t| t.as_bool()))
+            .unwrap_or(false);
+        if in_trash {
+            SourceState::Trashed
+        } else {
+            // Readable but unqueryable, which no production case produced.
+            // Treat it as gone so it is still surfaced rather than retried.
+            SourceState::Gone
+        }
     }
 
     pub async fn refresh_db(
@@ -975,6 +1144,16 @@ impl AppState {
                 error!(notion_url = %url, status = %resp_status, body = %txt, "<- Notion API error response");
                 if resp_status == reqwest::StatusCode::UNAUTHORIZED {
                     return Err(RefreshError::Unauthorized);
+                }
+                // A 404 here reads like a permission problem, but on production
+                // every single one turned out to be a database the user had
+                // trashed or deleted. Ask Notion which it is rather than
+                // retrying the same dead query every ten minutes forever.
+                if resp_status == reqwest::StatusCode::NOT_FOUND
+                    && txt.contains("object_not_found")
+                {
+                    let state = self.probe_source_state(ds_id, notion_token).await;
+                    return Err(RefreshError::SourceUnavailable(state));
                 }
                 return Err(RefreshError::Other(format!(
                     "Notion error {}: {}",
@@ -1119,8 +1298,15 @@ impl AppState {
         let mut seen = std::collections::HashSet::new();
         let mut succeeded = 0usize;
         let mut failed = 0usize;
+        let mut skipped = 0usize;
         for cal in calendars {
             if !seen.insert(cal.database_id.clone()) {
+                continue;
+            }
+            // A database the user trashed or deleted answers the same way every
+            // time; re-asking six times an hour only burns rate limit.
+            if !Self::source_probe_is_due(&cal) {
+                skipped += 1;
                 continue;
             }
             match self
@@ -1144,6 +1330,7 @@ impl AppState {
                     );
                     self.log_diff(cal.id, &pages).await;
                     self.clear_pull_failures(cal.id).await;
+                    self.note_source_available(&cal).await;
                 }
                 Err(RefreshError::Unauthorized) => {
                     failed += 1;
@@ -1159,11 +1346,17 @@ impl AppState {
                 }
                 Err(e) => {
                     failed += 1;
+                    if let RefreshError::SourceUnavailable(state) = e {
+                        self.note_source_unavailable(&cal, state).await;
+                    }
                     self.log_pull_failure(&cal, &e).await;
                 }
             }
         }
-        info!(succeeded, failed, "refresh_all: pull cycle completed");
+        info!(
+            succeeded,
+            failed, skipped, "refresh_all: pull cycle completed"
+        );
     }
 
     /// Refresh the cache for a single Notion page after we have written it.
