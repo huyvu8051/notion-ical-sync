@@ -1380,6 +1380,15 @@ impl AppState {
             .await
         {
             Ok(r) if r.status().is_success() => r,
+            Ok(r) if r.status() == reqwest::StatusCode::NOT_FOUND => {
+                // Notion usually reports a deleted page as `in_trash`, but a
+                // hard delete 404s. Falling back to a full re-query would
+                // reach the same conclusion after fetching every row, so draw
+                // it here instead.
+                info!(calendar_id = cal.id, notion_page_id, "single page gone, dropping from cache");
+                self.drop_page_from_cache(cal.id, notion_page_id).await;
+                return true;
+            }
             Ok(r) => {
                 warn!(notion_url = %url, status = %r.status(), "<- Notion API error response (single page)");
                 return false;
@@ -1413,21 +1422,55 @@ impl AppState {
                 info!(calendar_id = cal.id, notion_page_id, "single page upserted");
             }
             _ => {
-                if let Err(e) = sqlx::query(
-                    "DELETE FROM calendar_page_state WHERE calendar_id = $1 AND notion_page_id = $2",
-                )
-                .bind(cal.id)
-                .bind(notion_page_id)
-                .execute(&self.db)
-                .await
-                {
-                    error!(calendar_id = cal.id, error = %e, "failed to drop page from cache");
+                if !self.drop_page_from_cache(cal.id, notion_page_id).await {
                     return false;
                 }
                 info!(calendar_id = cal.id, notion_page_id, archived, "single page removed from cache");
             }
         }
         true
+    }
+
+    async fn drop_page_from_cache(&self, calendar_id: i64, notion_page_id: &str) -> bool {
+        match sqlx::query(
+            "DELETE FROM calendar_page_state WHERE calendar_id = $1 AND notion_page_id = $2",
+        )
+        .bind(calendar_id)
+        .bind(notion_page_id)
+        .execute(&self.db)
+        .await
+        {
+            Ok(_) => true,
+            Err(e) => {
+                error!(calendar_id, error = %e, "failed to drop page from cache");
+                false
+            }
+        }
+    }
+
+    /// Handle a webhook that names the page it is about.
+    ///
+    /// Notion sends `entity.id` on every page event — verified against 112
+    /// production webhooks, where it was present in all of them — so a change
+    /// to one row costs one request instead of re-reading the whole data
+    /// source page by page. Falls back to the full re-query when the single
+    /// read fails, so a surprise never silently loses the update.
+    pub async fn refresh_page_by_data_source(&self, data_source_id: &str, page_id: &str) {
+        let Some(cal) = self.calendar_by_data_source_id(data_source_id).await else {
+            info!(
+                data_source_id,
+                "webhook event for untracked data source, ignoring"
+            );
+            return;
+        };
+        if self.refresh_single_page(&cal, page_id).await {
+            return;
+        }
+        warn!(
+            calendar_id = cal.id,
+            page_id, "single-page webhook refresh failed, falling back to full re-query"
+        );
+        self.refresh_by_data_source(data_source_id).await;
     }
 
     pub async fn refresh_by_data_source(&self, data_source_id: &str) {
