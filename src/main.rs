@@ -7,7 +7,7 @@ use tower_sessions::cookie::time::Duration as CookieDuration;
 use tower_sessions::cookie::SameSite;
 use tower_sessions::{Expiry, SessionManagerLayer};
 use tower_sessions_sqlx_store::PostgresStore;
-use tracing::info;
+use tracing::{error, info};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 const JOB_LOCK_REFRESH_ALL: i64 = 90001;
@@ -16,17 +16,76 @@ const JOB_LOCK_TRIAL_REMINDERS: i64 = 90002;
 const PERIODIC_REFRESH_INTERVAL: Duration = Duration::from_secs(600);
 const DAILY_TRIAL_REMINDER_INTERVAL: Duration = Duration::from_secs(86400);
 
-async fn advisory_lock(
+/// Claim the right to run a periodic job now, for the whole cluster.
+///
+/// Two things have to be true, and the advisory lock alone only gives the
+/// first: no other replica is running this job *at this moment*, and the job
+/// has not already run *this interval*. Without the second check each replica
+/// keeps its own schedule, so N replicas means N runs per interval — on
+/// production that had `refresh_all` sweeping every calendar twice as often as
+/// intended, at twice the Notion API cost.
+///
+/// The returned transaction holds the lock; commit it when the work is done.
+/// Dropping it instead rolls back the claim, so a panic mid-job does not block
+/// the next interval.
+async fn claim_job(
     pool: &sqlx::PgPool,
     key: i64,
+    job: &str,
+    interval: Duration,
 ) -> Option<sqlx::Transaction<'static, sqlx::Postgres>> {
-    let mut tx = pool.begin().await.ok()?;
-    let (locked,): (bool,) = sqlx::query_as("SELECT pg_try_advisory_xact_lock($1)")
+    let mut tx = match pool.begin().await {
+        Ok(tx) => tx,
+        Err(e) => {
+            // Never silent: a job that stops claiming stops running, and the
+            // only other trace would be an INFO line that reads like a normal
+            // skip.
+            error!(job, error = %e, "job claim failed: could not open transaction");
+            return None;
+        }
+    };
+    let locked: bool = match sqlx::query_scalar("SELECT pg_try_advisory_xact_lock($1)")
         .bind(key)
         .fetch_one(&mut *tx)
         .await
-        .ok()?;
-    locked.then_some(tx)
+    {
+        Ok(v) => v,
+        Err(e) => {
+            error!(job, error = %e, "job claim failed: advisory lock query errored");
+            return None;
+        }
+    };
+    if !locked {
+        return None;
+    }
+    // Ticks drift by milliseconds and replicas are offset by minutes, so
+    // require only most of the interval to have passed. Demanding the full
+    // interval would let jitter skip a tick entirely and halve the cadence.
+    let min_gap = match sqlx::postgres::types::PgInterval::try_from(interval.mul_f64(0.9)) {
+        Ok(v) => v,
+        Err(e) => {
+            error!(job, error = %e, "job claim failed: interval is not representable");
+            return None;
+        }
+    };
+    let claimed = match sqlx::query_scalar::<_, String>(
+        "INSERT INTO job_runs (job, last_started_at) VALUES ($1, now())
+         ON CONFLICT (job) DO UPDATE SET last_started_at = now()
+           WHERE job_runs.last_started_at < now() - $2::interval
+         RETURNING job",
+    )
+    .bind(job)
+    .bind(min_gap)
+    .fetch_optional(&mut *tx)
+    .await
+    {
+        Ok(v) => v,
+        Err(e) => {
+            error!(job, error = %e, "job claim failed: could not record the run");
+            return None;
+        }
+    };
+    claimed.map(|_| tx)
 }
 
 fn warn_if_unconfigured<T>(value: &Option<T>, message: &str) {
@@ -137,12 +196,19 @@ async fn run_periodic_refresh_job(state: AppState) {
     loop {
         ticker.tick().await;
         info!("refresh_all: polling tick fired");
-        match advisory_lock(&state.db, JOB_LOCK_REFRESH_ALL).await {
+        match claim_job(
+            &state.db,
+            JOB_LOCK_REFRESH_ALL,
+            "refresh_all",
+            PERIODIC_REFRESH_INTERVAL,
+        )
+        .await
+        {
             Some(lock) => {
                 state.refresh_all().await;
                 let _ = lock.commit().await;
             }
-            None => info!("refresh_all: tick skipped, another replica holds the lock"),
+            None => info!("refresh_all: tick skipped, already run this interval"),
         }
     }
 }
@@ -152,12 +218,19 @@ async fn run_daily_trial_reminder_job(state: AppState) {
     loop {
         ticker.tick().await;
         info!("trial_reminders: polling tick fired");
-        match advisory_lock(&state.db, JOB_LOCK_TRIAL_REMINDERS).await {
+        match claim_job(
+            &state.db,
+            JOB_LOCK_TRIAL_REMINDERS,
+            "trial_reminders",
+            DAILY_TRIAL_REMINDER_INTERVAL,
+        )
+        .await
+        {
             Some(lock) => {
                 billing::send_trial_reminders(&state).await;
                 let _ = lock.commit().await;
             }
-            None => info!("trial_reminders: tick skipped, another replica holds the lock"),
+            None => info!("trial_reminders: tick skipped, already run this interval"),
         }
     }
 }
