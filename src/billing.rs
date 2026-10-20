@@ -608,6 +608,12 @@ pub struct GrantLifetimeRequest {
     send_promo_email: bool,
     #[serde(default)]
     exclude_emails: Vec<String>,
+    /// Restrict the grant to these addresses. Without it the endpoint hits
+    /// every non-paying account at once — 51 of them when this was added —
+    /// which is right for a one-off promotion and wrong for thanking a single
+    /// person who reported a bug.
+    #[serde(default)]
+    only_emails: Vec<String>,
 }
 
 pub async fn grant_lifetime_to_non_paying_users(
@@ -645,6 +651,13 @@ pub async fn grant_lifetime_to_non_paying_users(
     });
     let rows: Vec<NonPayingUserRow> = rows
         .into_iter()
+        .filter(|r| {
+            opts.only_emails.is_empty()
+                || opts
+                    .only_emails
+                    .iter()
+                    .any(|e| e.eq_ignore_ascii_case(&r.email))
+        })
         .filter(|r| !opts.exclude_emails.iter().any(|e| e.eq_ignore_ascii_case(&r.email)))
         .collect();
 
