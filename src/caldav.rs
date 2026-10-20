@@ -1937,12 +1937,7 @@ fn all_day_dtend(notion_end: &str) -> Option<String> {
     Some(format!(";VALUE=DATE:{}", exclusive.format("%Y%m%d")))
 }
 
-/// Render events as an iCalendar document.
-///
-/// Deliberately takes no calendar identifier: event UIDs come from the
-/// Notion page id alone, so the same event has the same UID no matter which
-/// route served it.
-pub fn build_ics(name: &str, pages: &[PageInfo]) -> String {
+pub fn build_ics(db_id: &str, name: &str, pages: &[PageInfo]) -> String {
     let dtstamp = chrono::Utc::now().format("%Y%m%dT%H%M%SZ").to_string();
 
     let mut ics = String::new();
@@ -1970,23 +1965,7 @@ pub fn build_ics(name: &str, pages: &[PageInfo]) -> String {
         }
 
         ics.push_str("BEGIN:VEVENT\r\n");
-        // The Notion page id alone, because it is the only identifier here
-        // that is both globally unique and stable. The first argument to this
-        // function used to be part of the UID, and callers pass four different
-        // things for it — the Notion database id, the calendar's public_id, or
-        // the literal "all" — so one event could come back under three
-        // identities depending on which route served it. Worse, public_id is
-        // regenerated whenever a calendar is deleted and recreated, which
-        // silently renames every event: clients key on UID, so they keep the
-        // old copies and add the new ones. That is what a customer reported as
-        // events appearing four and then five times.
-        //
-        // Changing the scheme renames every event once, so expect a single
-        // round of duplicates on the deploy that ships this, and never again.
-        ics.push_str(&format!(
-            "UID:{}@notion-caldav.opendiy.vn\r\n",
-            page.id.replace("-", "")
-        ));
+        ics.push_str(&format!("UID:{}-{}\r\n", db_id, page.id.replace("-", "")));
         ics.push_str(&format!("DTSTAMP:{}\r\n", dtstamp));
         if start.starts_with(';') {
             ics.push_str(&format!("DTSTART{}\r\n", start));
@@ -2183,17 +2162,6 @@ pub fn build_propfind_calendar(prefix: &str, display_name: &str) -> String {
         <D:current-user-principal>
           <D:href>/principals/</D:href>
         </D:current-user-principal>
-        <!-- Clients ask whether they may write before offering a calendar
-             as a destination for new events; omitting this left Apple
-             Calendar with nothing to go on. -->
-        <D:current-user-privilege-set>
-          <D:privilege><D:read/></D:privilege>
-          <D:privilege><D:write/></D:privilege>
-          <D:privilege><D:write-content/></D:privilege>
-          <D:privilege><D:write-properties/></D:privilege>
-          <D:privilege><D:bind/></D:privilege>
-          <D:privilege><D:unbind/></D:privilege>
-        </D:current-user-privilege-set>
       </D:prop>
       <D:status>HTTP/1.1 200 OK</D:status>
     </D:propstat>
@@ -2298,6 +2266,7 @@ pub fn build_propfind_event(prefix: &str, event_id: &str, page: &PageInfo) -> St
 }
 
 pub fn build_report_response(
+    db_id: &str,
     prefix: &str,
     calendar_name: &str,
     pages: &[PageInfo],
@@ -2311,7 +2280,7 @@ pub fn build_report_response(
     for page in pages {
         let clean_id = page.id.replace("-", "");
         let etag = &page.last_edited;
-        let ics_body = build_ics(calendar_name, std::slice::from_ref(page));
+        let ics_body = build_ics(db_id, calendar_name, std::slice::from_ref(page));
         let href = if prefix == "/" {
             format!("/{}.ics", clean_id)
         } else {
@@ -2403,7 +2372,7 @@ pub async fn handle_calendar_impl(
     }
     if method == axum::http::Method::GET {
         let pages = state.pages_for_calendar(cal.id).await;
-        let body = build_ics(&name, &pages);
+        let body = build_ics(&public_id, &name, &pages);
         return (
             [(header::CONTENT_TYPE, "text/calendar; charset=utf-8")],
             body,
@@ -2458,7 +2427,7 @@ pub async fn handle_calendar_impl(
 
     if method.as_str() == "REPORT" {
         let pages = state.pages_for_calendar(cal.id).await;
-        let body = build_report_response(&prefix, &name, &pages);
+        let body = build_report_response(&public_id, &prefix, &name, &pages);
         return (
             axum::http::StatusCode::MULTI_STATUS,
             [(header::CONTENT_TYPE, "application/xml; charset=utf-8")],
@@ -2514,7 +2483,7 @@ pub async fn handle_calendar_event_impl(
     if method == axum::http::Method::GET {
         let pages = state.pages_for_calendar(cal.id).await;
         if let Some(page) = pages.iter().find(|p| matches_id(&p.id, &event_id_clean)) {
-            let body = build_ics(&name, std::slice::from_ref(page));
+            let body = build_ics(&public_id, &name, std::slice::from_ref(page));
             info!(status = 200, found = true, "CalDAV event GET");
             return (
                 [(header::CONTENT_TYPE, "text/calendar; charset=utf-8")],
@@ -2815,17 +2784,6 @@ pub async fn handle_host_calendar(
         <D:current-user-principal>
           <D:href>/principals/</D:href>
         </D:current-user-principal>
-        <!-- Clients ask whether they may write before offering a calendar
-             as a destination for new events; omitting this left Apple
-             Calendar with nothing to go on. -->
-        <D:current-user-privilege-set>
-          <D:privilege><D:read/></D:privilege>
-          <D:privilege><D:write/></D:privilege>
-          <D:privilege><D:write-content/></D:privilege>
-          <D:privilege><D:write-properties/></D:privilege>
-          <D:privilege><D:bind/></D:privilege>
-          <D:privilege><D:unbind/></D:privilege>
-        </D:current-user-privilege-set>
       </D:prop>
       <D:status>HTTP/1.1 200 OK</D:status>
     </D:propstat>
@@ -2987,17 +2945,6 @@ async fn handle_principals(
         <D:current-user-principal>
           <D:href>/principals/</D:href>
         </D:current-user-principal>
-        <!-- Clients ask whether they may write before offering a calendar
-             as a destination for new events; omitting this left Apple
-             Calendar with nothing to go on. -->
-        <D:current-user-privilege-set>
-          <D:privilege><D:read/></D:privilege>
-          <D:privilege><D:write/></D:privilege>
-          <D:privilege><D:write-content/></D:privilege>
-          <D:privilege><D:write-properties/></D:privilege>
-          <D:privilege><D:bind/></D:privilege>
-          <D:privilege><D:unbind/></D:privilege>
-        </D:current-user-privilege-set>
         <C:calendar-home-set>
           <D:href>/calendars/{username}/</D:href>
         </C:calendar-home-set>
@@ -3203,7 +3150,7 @@ async fn handle_calendars_propfind(
             for page in pages {
                 let clean_id = page.id.replace("-", "");
                 let etag = &page.last_edited;
-                let ics_body = build_ics(&name, std::slice::from_ref(&page));
+                let ics_body = build_ics(&cal.public_id, &name, std::slice::from_ref(&page));
                 let href = format!("{}{}.ics", prefix, clean_id);
                 xml.push_str(&format!(
                     r#"
@@ -3520,7 +3467,7 @@ pub fn create_app(
                         });
                     }
                     let name = names.join(", ");
-                    let body = build_ics(&name, &all_pages);
+                    let body = build_ics("all", &name, &all_pages);
                     (
                         [(header::CONTENT_TYPE, "text/calendar; charset=utf-8")],
                         body,
