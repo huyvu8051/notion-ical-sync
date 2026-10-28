@@ -1901,6 +1901,82 @@ impl AppState {
     }
 }
 
+/// The `<C:time-range>` of a calendar-query, as UTC instants. Both attributes
+/// are optional per RFC 4791 and an absent one means open-ended; `None` here
+/// means the request carried no range at all and every event qualifies.
+///
+/// Ignoring this filter is what put four copies of every event in Apple
+/// Calendar: it syncs a collection with several queries, one per window, and a
+/// server that answers each of them with the whole calendar is telling the
+/// client it found the same event in four different places.
+fn report_time_range(body: &str) -> Option<(Option<chrono::DateTime<chrono::Utc>>, Option<chrono::DateTime<chrono::Utc>>)> {
+    let at = body.find("time-range")?;
+    let tag = &body[at..][..body[at..].find('>')?];
+    let attr = |name: &str| -> Option<chrono::DateTime<chrono::Utc>> {
+        let needle = format!("{name}=\"");
+        let rest = &tag[tag.find(&needle)? + needle.len()..];
+        parse_ical_utc(&rest[..rest.find('"')?])
+    };
+    Some((attr("start"), attr("end")))
+}
+
+fn parse_ical_utc(value: &str) -> Option<chrono::DateTime<chrono::Utc>> {
+    let naive = chrono::NaiveDateTime::parse_from_str(value, "%Y%m%dT%H%M%SZ")
+        .ok()
+        .or_else(|| chrono::NaiveDateTime::parse_from_str(value, "%Y%m%dT%H%M%S").ok())
+        .or_else(|| {
+            chrono::NaiveDate::parse_from_str(value, "%Y%m%d")
+                .ok()?
+                .and_hms_opt(0, 0, 0)
+        })?;
+    Some(chrono::DateTime::from_naive_utc_and_offset(naive, chrono::Utc))
+}
+
+/// Notion hands over either an RFC 3339 instant or a bare date.
+fn parse_notion_dt(value: &str) -> Option<chrono::DateTime<chrono::Utc>> {
+    if value.contains('T') {
+        return chrono::DateTime::parse_from_rfc3339(value)
+            .ok()
+            .map(|dt| dt.with_timezone(&chrono::Utc));
+    }
+    let naive = chrono::NaiveDate::parse_from_str(value, "%Y-%m-%d")
+        .ok()?
+        .and_hms_opt(0, 0, 0)?;
+    Some(chrono::DateTime::from_naive_utc_and_offset(naive, chrono::Utc))
+}
+
+/// Whether a page overlaps the query's window. A page whose dates cannot be
+/// parsed is kept: dropping an event the client asked for is worse than
+/// sending one it did not.
+fn page_in_time_range(
+    page: &PageInfo,
+    range: &(Option<chrono::DateTime<chrono::Utc>>, Option<chrono::DateTime<chrono::Utc>>),
+) -> bool {
+    let Some(start) = parse_notion_dt(&page.start) else { return true };
+    let all_day = !page.start.contains('T');
+    let end = match page.end.as_deref().and_then(parse_notion_dt) {
+        // An all-day DTEND is the last day, which runs to the end of it.
+        Some(e) if all_day => e + chrono::Duration::days(1),
+        Some(e) => e,
+        None if all_day => start + chrono::Duration::days(1),
+        None => start,
+    };
+    let (range_start, range_end) = range;
+    if let Some(range_end) = range_end {
+        if start >= *range_end {
+            return false;
+        }
+    }
+    if let Some(range_start) = range_start {
+        // A zero-length event sitting exactly on the boundary is inside it.
+        let after = if end > start { end > *range_start } else { start >= *range_start };
+        if !after {
+            return false;
+        }
+    }
+    true
+}
+
 pub fn ics_dt(value: &str) -> String {
     if value.is_empty() {
         return String::new();
@@ -2334,7 +2410,7 @@ pub async fn handle_calendar_impl(
     state: AppState,
     public_id: String,
     prefix: String,
-    _body: String,
+    body: String,
 ) -> impl IntoResponse {
     let host = headers
         .get("host")
@@ -2426,12 +2502,22 @@ pub async fn handle_calendar_impl(
     }
 
     if method.as_str() == "REPORT" {
-        let pages = state.pages_for_calendar(cal.id).await;
-        let body = build_report_response(&public_id, &prefix, &name, &pages);
+        let mut pages = state.pages_for_calendar(cal.id).await;
+        let total = pages.len();
+        if let Some(range) = report_time_range(&body) {
+            pages.retain(|page| page_in_time_range(page, &range));
+            info!(
+                calendar = cal.id,
+                kept = pages.len(),
+                total,
+                "calendar-query time-range applied"
+            );
+        }
+        let xml = build_report_response(&public_id, &prefix, &name, &pages);
         return (
             axum::http::StatusCode::MULTI_STATUS,
             [(header::CONTENT_TYPE, "application/xml; charset=utf-8")],
-            body,
+            xml,
         )
             .into_response();
     }
@@ -2986,6 +3072,7 @@ async fn handle_calendars_propfind(
     State(state): State<AppState>,
     Path(_user): Path<String>,
     auth: Option<axum::Extension<AuthenticatedCaldavUser>>,
+    body: String,
 ) -> impl IntoResponse {
     let host = headers
         .get("host")
@@ -3146,7 +3233,10 @@ async fn handle_calendars_propfind(
             } else {
                 format!("/cal/{}/", cal.public_id)
             };
-            let pages = state.pages_for_calendar(cal.id).await;
+            let mut pages = state.pages_for_calendar(cal.id).await;
+            if let Some(range) = report_time_range(&body) {
+                pages.retain(|page| page_in_time_range(page, &range));
+            }
             for page in pages {
                 let clean_id = page.id.replace("-", "");
                 let etag = &page.last_edited;
