@@ -733,6 +733,31 @@ impl AppState {
         .map(|(inserted,)| inserted)
     }
 
+    /// A value that changes whenever this calendar's contents do, as RFC 6578
+    /// wants a DAV:sync-token to. Derived from the rows themselves rather than
+    /// stored, so it cannot drift out of step with them; the hash covers
+    /// deletions, which a max(last_edited) alone would miss.
+    pub async fn calendar_sync_token(&self, calendar_id: i64) -> String {
+        let digest: Option<String> = sqlx::query_scalar(
+            "SELECT md5(count(*)::text || coalesce(
+                        string_agg(cps.notion_page_id || ':' || cps.last_edited, ',' ORDER BY cps.notion_page_id),
+                        ''))
+             FROM calendar_page_state cps
+             JOIN calendars synced_calendar ON synced_calendar.id = cps.calendar_id
+             JOIN calendars requested_calendar ON requested_calendar.database_id = synced_calendar.database_id
+             WHERE requested_calendar.id = $1",
+        )
+        .bind(calendar_id)
+        .fetch_optional(&self.db)
+        .await
+        .ok()
+        .flatten();
+        format!(
+            "https://notion-caldav.opendiy.vn/ns/sync/{}",
+            digest.unwrap_or_else(|| "empty".to_string())
+        )
+    }
+
     pub async fn pages_for_calendar(&self, calendar_id: i64) -> Vec<PageInfo> {
         sqlx::query_as::<_, PageInfoRow>(
             "SELECT cps.notion_page_id, cps.title, cps.start_at, cps.end_at, cps.url, cps.last_edited,
@@ -1926,6 +1951,28 @@ fn report_kind(body: &str) -> &'static str {
     "unrecognised"
 }
 
+/// The DAV:sync-token a sync-collection carried. `Some("")` is the initial
+/// sync RFC 6578 defines as "return every member"; `None` means the body was
+/// not a sync-collection at all.
+fn sync_collection_token(body: &str) -> Option<String> {
+    if !body.contains("sync-collection") {
+        return None;
+    }
+    let Some(at) = body.find("sync-token") else {
+        return Some(String::new());
+    };
+    let after = &body[at..];
+    // <D:sync-token/> is the empty form, and so is <D:sync-token></D:sync-token>.
+    match (after.find('>'), after.find("/>")) {
+        (Some(open), Some(slash)) if slash + 1 == open => Some(String::new()),
+        (Some(open), _) => match after[open + 1..].find('<') {
+            Some(close) => Some(after[open + 1..open + 1 + close].trim().to_string()),
+            None => Some(String::new()),
+        },
+        _ => Some(String::new()),
+    }
+}
+
 fn multiget_page_ids(body: &str) -> Option<std::collections::HashSet<String>> {
     if !body.contains("multiget") {
         return None;
@@ -2263,7 +2310,7 @@ pub fn matches_id(page_id: &str, target_id: &str) -> bool {
     p_clean == t_clean
 }
 
-pub fn build_propfind_calendar(prefix: &str, display_name: &str) -> String {
+pub fn build_propfind_calendar(prefix: &str, display_name: &str, sync_token: &str) -> String {
     format!(
         r#"<?xml version="1.0" encoding="utf-8" ?>
 <D:multistatus xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:caldav">
@@ -2282,13 +2329,20 @@ pub fn build_propfind_calendar(prefix: &str, display_name: &str) -> String {
         <D:current-user-principal>
           <D:href>/principals/</D:href>
         </D:current-user-principal>
+        <D:supported-report-set>
+          <D:supported-report><D:report><D:sync-collection/></D:report></D:supported-report>
+          <D:supported-report><D:report><C:calendar-query/></D:report></D:supported-report>
+          <D:supported-report><D:report><C:calendar-multiget/></D:report></D:supported-report>
+        </D:supported-report-set>
+        <D:sync-token>{sync_token}</D:sync-token>
       </D:prop>
       <D:status>HTTP/1.1 200 OK</D:status>
     </D:propstat>
   </D:response>
 </D:multistatus>"#,
         prefix = prefix,
-        display_name = display_name
+        display_name = display_name,
+        sync_token = sync_token
     )
 }
 
@@ -2296,6 +2350,7 @@ pub fn build_propfind_calendar_with_events(
     prefix: &str,
     display_name: &str,
     pages: &[PageInfo],
+    sync_token: &str,
 ) -> String {
     let mut xml = String::new();
     xml.push_str(
@@ -2321,6 +2376,16 @@ pub fn build_propfind_calendar_with_events(
         <C:supported-calendar-component-set>
           <C:comp name="VEVENT"/>
         </C:supported-calendar-component-set>
+        <D:supported-report-set>
+          <D:supported-report><D:report><D:sync-collection/></D:report></D:supported-report>
+          <D:supported-report><D:report><C:calendar-query/></D:report></D:supported-report>
+          <D:supported-report><D:report><C:calendar-multiget/></D:report></D:supported-report>
+        </D:supported-report-set>
+        <D:sync-token>"#,
+    );
+    xml.push_str(sync_token);
+    xml.push_str(
+        r#"</D:sync-token>
       </D:prop>
       <D:status>HTTP/1.1 200 OK</D:status>
     </D:propstat>
@@ -2383,6 +2448,38 @@ pub fn build_propfind_event(prefix: &str, event_id: &str, page: &PageInfo) -> St
         href = href,
         etag = etag
     )
+}
+
+/// RFC 6578 3.2: a DAV:multistatus whose last child is the new DAV:sync-token.
+/// Changed members carry a propstat and no status; this server has no
+/// tombstones, so it never reports the 404 responses a deletion would need.
+pub fn build_sync_collection_response(prefix: &str, token: &str, pages: &[PageInfo]) -> String {
+    let mut xml = String::from(
+        r#"<?xml version="1.0" encoding="utf-8" ?>
+<D:multistatus xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:caldav">"#,
+    );
+    for page in pages {
+        let clean_id = page.id.replace('-', "");
+        let href = if prefix == "/" {
+            format!("/{}.ics", clean_id)
+        } else {
+            format!("{}{}.ics", prefix, clean_id)
+        };
+        xml.push_str(&format!(
+            r#"
+  <D:response>
+    <D:href>{href}</D:href>
+    <D:propstat>
+      <D:prop><D:getetag>"{etag}"</D:getetag></D:prop>
+      <D:status>HTTP/1.1 200 OK</D:status>
+    </D:propstat>
+  </D:response>"#,
+            href = href,
+            etag = page.last_edited
+        ));
+    }
+    xml.push_str(&format!("\n  <D:sync-token>{token}</D:sync-token>\n</D:multistatus>"));
+    xml
 }
 
 pub fn build_report_response(
@@ -2505,11 +2602,12 @@ pub async fn handle_calendar_impl(
             .get("depth")
             .and_then(|v| v.to_str().ok())
             .unwrap_or("0");
+        let sync_token = state.calendar_sync_token(cal.id).await;
         let body = if depth == "1" {
             let pages = state.pages_for_calendar(cal.id).await;
-            build_propfind_calendar_with_events(&prefix, &name, &pages)
+            build_propfind_calendar_with_events(&prefix, &name, &pages, &sync_token)
         } else {
-            build_propfind_calendar(&prefix, &name)
+            build_propfind_calendar(&prefix, &name, &sync_token)
         };
         return (
             axum::http::StatusCode::MULTI_STATUS,
@@ -2571,6 +2669,42 @@ pub async fn handle_calendar_impl(
             body = %body.chars().take(1200).collect::<String>().replace('\n', " "),
             "-> REPORT"
         );
+        if let Some(client_token) = sync_collection_token(&body) {
+            let token = state.calendar_sync_token(cal.id).await;
+            // RFC 6578 3.2: a token this server cannot compute a delta against
+            // is refused with DAV:valid-sync-token, and the client falls back
+            // to a full sync. Nothing here keeps tombstones, so any token but
+            // the current one is such a token -- saying otherwise would be
+            // telling the client that deleted events still exist.
+            if !client_token.is_empty() && client_token != token {
+                info!(calendar = cal.id, "<- sync-collection refused: token is not current");
+                return (
+                    axum::http::StatusCode::FORBIDDEN,
+                    [(header::CONTENT_TYPE, "application/xml; charset=utf-8")],
+                    r#"<?xml version="1.0" encoding="utf-8" ?>
+<D:error xmlns:D="DAV:"><D:valid-sync-token/></D:error>"#
+                        .to_string(),
+                )
+                    .into_response();
+            }
+            // An initial sync reports every member; a current token reports
+            // nothing, which is the whole point -- a poll that costs one small
+            // response instead of the entire calendar.
+            let members: &[PageInfo] = if client_token.is_empty() { &pages } else { &[] };
+            let xml = build_sync_collection_response(&prefix, &token, members);
+            info!(
+                calendar = cal.id,
+                initial = client_token.is_empty(),
+                returned = members.len(),
+                "<- sync-collection"
+            );
+            return (
+                axum::http::StatusCode::MULTI_STATUS,
+                [(header::CONTENT_TYPE, "application/xml; charset=utf-8")],
+                xml,
+            )
+                .into_response();
+        }
         if let Some(wanted) = multiget_page_ids(&body) {
             pages.retain(|page| wanted.contains(&page.id.replace('-', "")));
             info!(
