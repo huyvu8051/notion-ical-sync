@@ -1901,6 +1901,50 @@ impl AppState {
     }
 }
 
+/// The resources a `calendar-multiget` names, as the dashless page ids their
+/// hrefs end in. `None` when the body is not a multiget at all.
+///
+/// Answering a multiget with the whole calendar is what put four copies of
+/// every event in Apple Calendar: it fetches detail in batches, asking for a
+/// handful of hrefs at a time, and a server that replies with all 186 every
+/// time is telling the client it found 186 resources at each of those hrefs.
+/// The report a client asked for, by its root element. Guessing at this was
+/// how the server came to answer a multiget with the whole calendar.
+fn report_kind(body: &str) -> &'static str {
+    for (needle, name) in [
+        ("calendar-multiget", "calendar-multiget"),
+        ("calendar-query", "calendar-query"),
+        ("sync-collection", "sync-collection"),
+        ("free-busy-query", "free-busy-query"),
+        ("expand-property", "expand-property"),
+        ("principal-search-property-set", "principal-search-property-set"),
+    ] {
+        if body.contains(needle) {
+            return name;
+        }
+    }
+    "unrecognised"
+}
+
+fn multiget_page_ids(body: &str) -> Option<std::collections::HashSet<String>> {
+    if !body.contains("multiget") {
+        return None;
+    }
+    let mut ids = std::collections::HashSet::new();
+    let mut rest = body;
+    while let Some(at) = rest.find("href") {
+        let after = &rest[at..];
+        let Some(open) = after.find('>') else { break };
+        let Some(close) = after[open + 1..].find('<') else { break };
+        let href = after[open + 1..open + 1 + close].trim();
+        if let Some(id) = href.rsplit('/').next().and_then(|n| n.strip_suffix(".ics")) {
+            ids.insert(id.to_string());
+        }
+        rest = &after[open + 1 + close..];
+    }
+    Some(ids)
+}
+
 /// The `<C:time-range>` of a calendar-query, as UTC instants. Both attributes
 /// are optional per RFC 4791 and an absent one means open-ended; `None` here
 /// means the request carried no range at all and every event qualifies.
@@ -2501,10 +2545,42 @@ pub async fn handle_calendar_impl(
             .into_response();
     }
 
+    if method.as_str() == "PROPFIND" || method.as_str() == "PROPPATCH" {
+        info!(
+            calendar = cal.id,
+            method = %method,
+            depth = headers.get("depth").and_then(|v| v.to_str().ok()).unwrap_or("-"),
+            agent = headers.get("user-agent").and_then(|v| v.to_str().ok()).unwrap_or("-"),
+            body = %body.chars().take(600).collect::<String>().replace('\n', " "),
+            "-> collection request"
+        );
+    }
+
     if method.as_str() == "REPORT" {
         let mut pages = state.pages_for_calendar(cal.id).await;
         let total = pages.len();
-        if let Some(range) = report_time_range(&body) {
+        info!(
+            calendar = cal.id,
+            kind = report_kind(&body),
+            depth = headers.get("depth").and_then(|v| v.to_str().ok()).unwrap_or("-"),
+            agent = headers.get("user-agent").and_then(|v| v.to_str().ok()).unwrap_or("-"),
+            body_len = body.len(),
+            hrefs = body.matches("href").count(),
+            has_time_range = body.contains("time-range"),
+            cached = total,
+            body = %body.chars().take(1200).collect::<String>().replace('\n', " "),
+            "-> REPORT"
+        );
+        if let Some(wanted) = multiget_page_ids(&body) {
+            pages.retain(|page| wanted.contains(&page.id.replace('-', "")));
+            info!(
+                calendar = cal.id,
+                asked = wanted.len(),
+                kept = pages.len(),
+                total,
+                "calendar-multiget answered with the hrefs it asked for"
+            );
+        } else if let Some(range) = report_time_range(&body) {
             pages.retain(|page| page_in_time_range(page, &range));
             info!(
                 calendar = cal.id,
@@ -2514,6 +2590,14 @@ pub async fn handle_calendar_impl(
             );
         }
         let xml = build_report_response(&public_id, &prefix, &name, &pages);
+        info!(
+            calendar = cal.id,
+            kind = report_kind(&body),
+            returned = pages.len(),
+            cached = total,
+            bytes = xml.len(),
+            "<- REPORT"
+        );
         return (
             axum::http::StatusCode::MULTI_STATUS,
             [(header::CONTENT_TYPE, "application/xml; charset=utf-8")],
