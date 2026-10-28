@@ -2068,6 +2068,22 @@ fn page_in_time_range(
     true
 }
 
+/// RFC 9110 9.3.2: HEAD is GET without the message content, and carries the
+/// header fields GET would have. Content-Length therefore describes the body
+/// that was not sent, so a client can size the fetch before making it.
+fn ics_response(method: &axum::http::Method, body: String) -> axum::response::Response {
+    let len = body.len();
+    let body = if method == axum::http::Method::HEAD { String::new() } else { body };
+    (
+        [
+            (header::CONTENT_TYPE, "text/calendar; charset=utf-8".to_string()),
+            (header::CONTENT_LENGTH, len.to_string()),
+        ],
+        body,
+    )
+        .into_response()
+}
+
 pub fn ics_dt(value: &str) -> String {
     if value.is_empty() {
         return String::new();
@@ -2587,14 +2603,10 @@ pub async fn handle_calendar_impl(
     if method == axum::http::Method::OPTIONS {
         return axum::http::StatusCode::OK.into_response();
     }
-    if method == axum::http::Method::GET {
+    if method == axum::http::Method::GET || method == axum::http::Method::HEAD {
         let pages = state.pages_for_calendar(cal.id).await;
         let body = build_ics(&public_id, &name, &pages);
-        return (
-            [(header::CONTENT_TYPE, "text/calendar; charset=utf-8")],
-            body,
-        )
-            .into_response();
+        return ics_response(&method, body);
     }
 
     if method.as_str() == "PROPFIND" {
@@ -2784,16 +2796,12 @@ pub async fn handle_calendar_event_impl(
     if method == axum::http::Method::OPTIONS {
         return axum::http::StatusCode::OK.into_response();
     }
-    if method == axum::http::Method::GET {
+    if method == axum::http::Method::GET || method == axum::http::Method::HEAD {
         let pages = state.pages_for_calendar(cal.id).await;
         if let Some(page) = pages.iter().find(|p| matches_id(&p.id, &event_id_clean)) {
             let body = build_ics(&public_id, &name, std::slice::from_ref(page));
-            info!(status = 200, found = true, "CalDAV event GET");
-            return (
-                [(header::CONTENT_TYPE, "text/calendar; charset=utf-8")],
-                body,
-            )
-                .into_response();
+            info!(status = 200, found = true, method = %method, "CalDAV event GET");
+            return ics_response(&method, body);
         } else {
             info!(status = 404, found = false, "CalDAV event GET not found");
             return axum::http::StatusCode::NOT_FOUND.into_response();
@@ -2817,6 +2825,30 @@ pub async fn handle_calendar_event_impl(
 
     if method == axum::http::Method::PUT {
         let new_page = parse_ics_to_page_info(&body, &event_id_clean);
+        // RFC 4791 5.3.2.1: the PUT body must be valid iCalendar obeying 4.1.
+        // DTSTART is REQUIRED in a VEVENT with no METHOD (RFC 5545 3.6.1), and
+        // an empty start is exactly what parse_ics_to_page_info yields for a
+        // body with no VEVENT at all. Rejecting here keeps a malformed request
+        // from reaching Notion, where it came back as a 400 we relayed as 502 —
+        // a gateway error blaming upstream for the client's body.
+        if !body.contains("BEGIN:VCALENDAR") || new_page.start.is_empty() {
+            warn!(
+                status = 403,
+                bytes = body.len(),
+                "CalDAV PUT rejected: body is not a valid calendar object resource"
+            );
+            return (
+                axum::http::StatusCode::FORBIDDEN,
+                [(header::CONTENT_TYPE, "application/xml; charset=utf-8")],
+                concat!(
+                    "<?xml version=\"1.0\" encoding=\"utf-8\" ?>\n",
+                    "<D:error xmlns:D=\"DAV:\" xmlns:C=\"urn:ietf:params:xml:ns:caldav\">\n",
+                    "  <C:valid-calendar-data/>\n",
+                    "</D:error>\n"
+                ),
+            )
+                .into_response();
+        }
         let existing_id = state
             .pages_for_calendar(cal.id)
             .await
