@@ -5,10 +5,35 @@ resource "keycloak_realm" "notion_caldav_saas" {
   display_name = "Notion CalDAV SaaS"
 
   # Users sign themselves up through Keycloak — no admin-created accounts.
-  registration_allowed           = true
-  registration_email_as_username = false
+  registration_allowed = true
+
+  # The address is the identity. Signing up no longer asks for a username on
+  # top of an email, and logging in takes the address rather than something
+  # invented months ago and never typed since.
+  #
+  # The second flag is the one that was actually hurting: it was off, so an
+  # account could only be reached through its username. People who signed up
+  # in August are carrying names like "hllowrld" and "subz3r0", and forgetting
+  # one locked them out of a service they could still name the email for.
+  # Existing usernames are left alone — they keep working, and the address now
+  # works beside them.
+  registration_email_as_username = true
+  login_with_email_allowed       = true
+
+  # Required for the two above: an address cannot identify an account if two
+  # accounts can share it.
+  duplicate_emails_allowed = false
   reset_password_allowed         = true
-  verify_email                   = false # tighten once real email delivery is set up
+  # On since 2026-11-01, once the SMTP block below could actually deliver.
+  #
+  # This applies to every login, not only new ones, so the 40 accounts that
+  # existed at the time were marked emailVerified first — 33 of them real
+  # people who had been using the service for months. Switching it on without
+  # that would have put a wall between each of them and their own calendars
+  # until they went looking for an email, and some would simply have left.
+  # Those addresses are therefore trusted rather than proven; the point of
+  # this flag is the people who sign up from here on.
+  verify_email = true
 
   password_policy = "length(8)"
 
