@@ -254,6 +254,23 @@ pub async fn handle_paddle_webhook(
                 warn!("paddle webhook: transaction.completed missing custom_data.user_id/customer_id/subscription_id");
             }
         }
+        // Writes whatever status Paddle sends, which is also how a renewal
+        // lands: Paddle charges on its own and this is the only thing that
+        // hears about it. `transaction.completed` fires too but does nothing,
+        // because it needs custom_data.user_id and only a checkout carries
+        // that — which is the behaviour we want, since on a renewal it would
+        // reset the status to trialing and push the bill date backwards.
+        //
+        // TODO(past_due): a failed card is not confirmed to reach us. This
+        // writes `past_due` if Paddle sends it here, and `past_due` is not in
+        // the set effective_access counts as paying, so the account would drop
+        // to the free quota on its own. But whether Paddle emits
+        // subscription.updated for that transition is unverified, and the
+        // dedicated subscription.past_due event is not subscribed in the
+        // notification destination. Until both are checked, assume a declined
+        // renewal is invisible to us. Fixing it is one more event in the
+        // Paddle destination plus an arm here — and a decision about what the
+        // account should do in the days before Paddle gives up retrying.
         "subscription.updated" => {
             let customer_id = data.get("customer_id").and_then(|v| v.as_str());
             let status = data.get("status").and_then(|v| v.as_str());
@@ -473,15 +490,43 @@ pub async fn start_checkout(
         ""
     };
 
+    // This page exists only to open Paddle's overlay, so it needs a way back
+    // from every way the overlay can end. Closing it used to leave "Opening
+    // checkout…" on screen forever with nothing to click: the overlay was
+    // gone, the page underneath was blank, and the only exit was the back
+    // button.
+    //
+    // checkout.closed covers the close icon and Paddle.Checkout.close().
+    // completed is left to the successUrl Paddle already redirects to, so
+    // nothing here races it.
+    //
+    // The link is in the markup, not added by script. If Paddle.js fails to
+    // load at all — blocked, offline, CDN down — the callback never runs and
+    // the link is the only thing left.
     let html = format!(
         r#"<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><title>Opening checkout…</title>
 <script src="https://cdn.paddle.com/paddle/v2/paddle.js"></script>
+<style>
+  body {{ font-family: -apple-system, sans-serif; max-width: 420px; margin: 4rem auto; padding: 0 1.25rem; line-height: 1.5; }}
+  a {{ color: #2563eb; }}
+</style>
 </head><body>
-<p>Opening checkout…</p>
+<p id="status">Opening checkout…</p>
+<p><a href="/me">Back to your account</a></p>
 <script>
 {environment_js}
-Paddle.Initialize({{ token: {client_token} }});
+Paddle.Initialize({{
+  token: {client_token},
+  eventCallback: function (event) {{
+    if (event.name === "checkout.closed") {{
+      window.location.replace("/me");
+    }} else if (event.name === "checkout.error") {{
+      document.getElementById("status").textContent =
+        "Checkout could not be opened. Please try again, or use the link below.";
+    }}
+  }}
+}});
 Paddle.Checkout.open({checkout_config});
 </script>
 </body></html>"#,
