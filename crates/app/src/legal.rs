@@ -1,13 +1,19 @@
 use leptos::prelude::*;
 use leptos_router::components::A;
 
+/// Every legal page, so each one can link to the others without any of them
+/// holding a list of its siblings. Adding a fourth is one line here.
+const LEGAL_PAGES: [(&str, &str); 3] = [
+    ("/privacy", "Privacy Policy"),
+    ("/terms", "Terms of Service"),
+    ("/refund", "Refund Policy"),
+];
+
 #[component]
 fn LegalPage(
     title: &'static str,
     description: &'static str,
     path: &'static str,
-    other_href: &'static str,
-    other_label: &'static str,
     children: Children,
 ) -> impl IntoView {
     let page_title = format!("{title} — NotionCal");
@@ -24,8 +30,16 @@ fn LegalPage(
         <leptos_meta::Meta property="og:url" content=canonical_url/>
         <div id="legal-root" class="bg-background text-on-surface min-h-screen">
             <main class="max-w-[720px] mx-auto px-margin-mobile md:px-margin-desktop pt-[64px] pb-lg space-y-lg">
-                <div class="flex justify-end">
-                    <A href=other_href attr:class="text-label-md text-secondary hover:underline">{other_label}</A>
+                <div class="flex justify-end gap-6">
+                    {LEGAL_PAGES
+                        .iter()
+                        .filter(|(href, _)| *href != path)
+                        .map(|(href, label)| {
+                            view! {
+                                <A href=*href attr:class="text-label-md text-secondary hover:underline">{*label}</A>
+                            }
+                        })
+                        .collect_view()}
                 </div>
                 {children()}
             </main>
@@ -43,8 +57,6 @@ pub fn PrivacyRoutePage() -> impl IntoView {
             title="Privacy Policy"
             description="How NotionCal collects, stores, and uses your data when you sync a Notion database to a CalDAV calendar."
             path="/privacy"
-            other_href="/terms"
-            other_label="Terms of Service"
         >
             <h1 class="text-h1 font-semibold text-primary mb-1">"Privacy Policy"</h1>
             <p class="text-label-md text-on-surface-variant mb-xl">"Last updated: 2026-08-02"</p>
@@ -59,9 +71,13 @@ pub fn PrivacyRoutePage() -> impl IntoView {
                 <li><strong>"CalDAV credentials: "</strong>"we generate a random username/password per calendar so you can subscribe from Apple/Google Calendar or any CalDAV client. Only a salted hash (Argon2) of the password is stored — the plaintext is shown to you once, at creation time, and never again."</li>
             </ul>
 
+            <h2 class="text-h2 text-primary mt-xl mb-sm">"Payment data"</h2>
+            <p class="mb-lg">"Paddle.com is our payment provider and the merchant of record for every purchase. Your card details are entered on Paddle's checkout and are never sent to us or stored by us — we never see them. What we keep is what Paddle tells us afterwards: the customer and subscription identifiers it assigns you, your subscription status, and the date your free period started. That is enough to know whether your account is paid, and nothing more."</p>
+            <p class="mb-lg">"Paddle processes this data as its own controller under its "<a class="text-secondary underline" href="https://www.paddle.com/legal/privacy">"privacy policy"</a>"."</p>
+
             <h2 class="text-h2 text-primary mt-xl mb-sm">"What we don't collect"</h2>
             <ul class="list-disc pl-lg space-y-xs mb-lg">
-                <li>"No payment or billing information — the Service is free."</li>
+                <li>"No card numbers, bank details, or billing addresses — those stay with Paddle."</li>
                 <li>"No analytics or advertising trackers."</li>
                 <li>"No data is sold or shared with third parties for marketing."</li>
             </ul>
@@ -91,8 +107,6 @@ pub fn TermsRoutePage() -> impl IntoView {
             title="Terms of Service"
             description="The terms that apply when you use NotionCal to sync a Notion database with a CalDAV calendar app."
             path="/terms"
-            other_href="/privacy"
-            other_label="Privacy Policy"
         >
             <h1 class="text-h1 font-semibold text-primary mb-1">"Terms of Service"</h1>
             <p class="text-label-md text-on-surface-variant mb-xl">"Last updated: 2026-08-02"</p>
@@ -100,7 +114,11 @@ pub fn TermsRoutePage() -> impl IntoView {
             <p class="mb-lg">"By using NotionCal (\"the Service\"), you agree to these terms."</p>
 
             <h2 class="text-h2 text-primary mt-xl mb-sm">"The Service"</h2>
-            <p class="mb-lg">"The Service connects to a Notion workspace you authorize, and exposes the database(s) you choose as a CalDAV feed and a browser-based calendar view. It is provided free of charge, with no guaranteed uptime or support response time."</p>
+            <p class="mb-lg">"The Service connects to a Notion workspace you authorize, and exposes the database(s) you choose as a CalDAV feed and a browser-based calendar view. There is no guaranteed uptime or support response time."</p>
+
+            <h2 class="text-h2 text-primary mt-xl mb-sm">"Price and billing"</h2>
+            <p class="mb-lg">"The first six months are free and need no card. After that the Service costs $1 per year, billed annually and renewing automatically until you cancel. Paddle.com is the merchant of record: it takes the payment, issues the invoice, and handles tax."</p>
+            <p class="mb-lg">"You can cancel whenever you like, and what happens when you do — along with when a payment can be refunded — is set out in our "<A href="/refund" attr:class="text-secondary underline">"Refund Policy"</A>"."</p>
 
             <h2 class="text-h2 text-primary mt-xl mb-sm">"Your responsibilities"</h2>
             <ul class="list-disc pl-lg space-y-xs mb-lg">
@@ -123,6 +141,41 @@ pub fn TermsRoutePage() -> impl IntoView {
 
             <h2 class="text-h2 text-primary mt-xl mb-sm">"Contact"</h2>
             <p><a class="text-secondary underline" href="mailto:huyvu8051@gmail.com">"huyvu8051@gmail.com"</a></p>
+        </LegalPage>
+    }
+}
+
+#[component]
+pub fn RefundRoutePage() -> impl IntoView {
+    view! {
+        <LegalPage
+            title="Refund Policy"
+            description="When a NotionCal payment can be refunded, how to cancel a subscription, and what happens to your data afterwards."
+            path="/refund"
+        >
+            <h1 class="text-h1 font-semibold text-primary mb-1">"Refund Policy"</h1>
+            <p class="text-label-md text-on-surface-variant mb-xl">"Last updated: 2026-10-31"</p>
+
+            <p class="mb-lg">"NotionCal is free for its first six months and asks for no card during that time. After that it costs $1 per year. This page says when that payment can be given back and how to stop it recurring."</p>
+
+            <h2 class="text-h2 text-primary mt-xl mb-sm">"Refunds"</h2>
+            <p class="mb-lg">"Write to us within 30 days of a charge and we will refund it in full. We do not ask why. The charge is one dollar; a policy that made you argue for it would cost us both more than the dollar."</p>
+            <p class="mb-lg">"After 30 days we will still look at it — a renewal you did not expect, a year you could not use because the Service was broken — but outside that window a refund is a decision rather than a right."</p>
+
+            <h2 class="text-h2 text-primary mt-xl mb-sm">"Cancelling"</h2>
+            <p class="mb-lg">"You can cancel at any time, and cancelling is not the same as a refund. It stops the next renewal; the year you have already paid for runs to its end, and the Service keeps working until then. We do not refund part of a year on cancellation alone — ask for a refund instead if that is what you want, and if you are inside the 30 days you will get the whole dollar back."</p>
+            <p class="mb-lg">"There is no self-service cancel button yet. To cancel, email the address below from the account you signed up with, or use the manage-subscription link in the receipt Paddle emailed you. We will confirm by reply."</p>
+
+            <h2 class="text-h2 text-primary mt-xl mb-sm">"How to ask"</h2>
+            <p class="mb-lg">"Email "<a class="text-secondary underline" href="mailto:huyvu8051@gmail.com">"huyvu8051@gmail.com"</a>" from your account address, and say whether you want to cancel, to be refunded, or both. One person reads that inbox, so expect a reply within a few business days rather than within the hour."</p>
+            <p class="mb-lg">"Because Paddle.com is the merchant of record, the money itself is returned by Paddle to the card or account you paid with. That usually lands within 5-10 business days once the refund is issued, depending on your bank. You can also contact Paddle directly through "<a class="text-secondary underline" href="https://paddle.net">"paddle.net"</a>", which is where your receipt comes from."</p>
+
+            <h2 class="text-h2 text-primary mt-xl mb-sm">"Your data afterwards"</h2>
+            <p class="mb-lg">"A refund or a cancellation does not delete your account by itself — your calendars and connections stay as they are, and the Service falls back to the free limits. If you want everything removed, say so in the same email and we will delete the account along with its connections, calendars, and credentials, as described in our "<A href="/privacy" attr:class="text-secondary underline">"Privacy Policy"</A>"."</p>
+            <p class="mb-lg">"Revoking the Service's access from Notion's own \"Connections\" settings stops it reading your workspace immediately, whether or not you have asked us for anything."</p>
+
+            <h2 class="text-h2 text-primary mt-xl mb-sm">"If the Service shuts down"</h2>
+            <p>"If we discontinue NotionCal, we will refund the unused part of any year already paid for, without being asked."</p>
         </LegalPage>
     }
 }

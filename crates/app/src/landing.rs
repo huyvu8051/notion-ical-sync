@@ -31,8 +31,9 @@ const JSON_LD: &str = r#"{
   "description": "Sync your Notion database with Apple Calendar, Google Calendar, or any CalDAV app. Two-way editing, free for the first 6 months.",
   "offers": {
     "@type": "Offer",
-    "price": "0",
-    "priceCurrency": "USD"
+    "price": "1.00",
+    "priceCurrency": "USD",
+    "description": "Free for the first 6 months, then $1 per year."
   }
 }"#;
 

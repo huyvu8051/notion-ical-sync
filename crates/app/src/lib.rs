@@ -67,7 +67,7 @@ fn HomeStyleHeader() -> impl IntoView {
     let is_home_style_page = move || {
         matches!(
             location.pathname.get().as_str(),
-            "/" | "/privacy" | "/terms" | "/guide"
+            "/" | "/privacy" | "/terms" | "/refund" | "/guide"
         )
     };
     view! {
@@ -92,6 +92,7 @@ pub fn App() -> impl IntoView {
                 <Route path=StaticSegment("") view=landing::LandingRoutePage/>
                 <Route path=StaticSegment("privacy") view=legal::PrivacyRoutePage/>
                 <Route path=StaticSegment("terms") view=legal::TermsRoutePage/>
+                <Route path=StaticSegment("refund") view=legal::RefundRoutePage/>
                 <Route path=StaticSegment("guide") view=guide::GuideRoutePage/>
                 <Route path=(StaticSegment("connect"), StaticSegment("notion")) view=connect_notion::ConnectNotionRoutePage/>
                 <Route path=(StaticSegment("connect"), StaticSegment("notion"), StaticSegment("databases")) view=pick_databases::PickDatabasesRoutePage/>
