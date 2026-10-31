@@ -33,7 +33,8 @@ const JSON_LD: &str = r#"{
     "@type": "Offer",
     "price": "1.00",
     "priceCurrency": "USD",
-    "description": "Free for the first 6 months, then $1 per year."
+    "valueAddedTaxIncluded": false,
+    "description": "Free for the first 6 months, then $1 per year plus local tax."
   }
 }"#;
 
@@ -196,7 +197,7 @@ pub fn LandingPage() -> impl IntoView {
                     <div class="max-w-[1280px] mx-auto px-margin-desktop">
                         <div class="text-center mb-xl">
                             <h2 class="text-h1 text-primary">"Pricing"</h2>
-                            <p class="text-body-md text-on-surface-variant mt-2">"Free for 6 months, then just $1/year"</p>
+                            <p class="text-body-md text-on-surface-variant mt-2">"Free for 6 months, then just $1/year plus local tax"</p>
                         </div>
                         <div class="grid grid-cols-1 md:grid-cols-2 gap-gutter max-w-[720px] mx-auto">
                             <div class="bg-white p-lg hairline-border rounded-xl">
@@ -219,6 +220,13 @@ pub fn LandingPage() -> impl IntoView {
                                 <div class="absolute -top-3 right-lg bg-secondary text-on-primary text-[11px] uppercase tracking-wider font-bold px-3 py-1 rounded-full">"After 6 months"</div>
                                 <h3 class="text-h2 mb-1">"Upgrade"</h3>
                                 <p class="text-display mb-2">"$1"<span class="text-h3 opacity-70">"/year"</span></p>
+                                // Paddle is the merchant of record and adds
+                                // the buyer's local tax, so a Vietnamese card
+                                // is charged $1.25 against a page that says
+                                // $1. Saying so costs one line and stops the
+                                // checkout from being the first place they
+                                // find out.
+                                <p class="text-label-md opacity-70 mb-2">"Plus local tax where it applies — Paddle shows the exact total before you pay."</p>
                                 <p class="text-body-md opacity-80 mb-md">"Subscribe early and you'll still get your full 6 free months first — billing only starts once your trial ends."</p>
                                 <ul class="space-y-2">
                                     <li class="flex items-center gap-2 text-body-md opacity-90">

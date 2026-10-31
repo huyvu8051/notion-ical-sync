@@ -156,7 +156,7 @@ pub fn RefundRoutePage() -> impl IntoView {
             <h1 class="text-h1 font-semibold text-primary mb-1">"Refund Policy"</h1>
             <p class="text-label-md text-on-surface-variant mb-xl">"Last updated: 2026-10-31"</p>
 
-            <p class="mb-lg">"NotionCal is free for its first six months and asks for no card during that time. After that it costs $1 per year. This page says when that payment can be given back and how to stop it recurring."</p>
+            <p class="mb-lg">"NotionCal is free for its first six months and asks for no card during that time. After that it costs $1 per year, plus whatever sales tax or VAT applies where you live — Paddle is the merchant of record and adds it, so the total on your receipt can be higher than a dollar. This page says when that payment can be given back and how to stop it recurring."</p>
 
             <h2 class="text-h2 text-primary mt-xl mb-sm">"Refunds"</h2>
             <p class="mb-lg">"Write to us within 30 days of a charge and we will refund it in full. We do not ask why. The charge is one dollar; a policy that made you argue for it would cost us both more than the dollar."</p>
