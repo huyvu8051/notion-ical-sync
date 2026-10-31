@@ -104,3 +104,99 @@ resource "keycloak_oidc_google_identity_provider" "google" {
     prompt = "select_account"
   }
 }
+
+# The registration form, declared rather than clicked.
+#
+# Keycloak 26 builds that form from this profile: a field appears only when
+# the person filling it in is allowed to edit the attribute. So first and last
+# name are not removed here — they are simply no longer editable by the user,
+# which takes them off the form while leaving them writable by an admin.
+#
+# That distinction is the whole point. Deleting the attributes would be the
+# obvious move and the wrong one: this realm has no unmanagedAttributePolicy,
+# so an attribute nobody declares is an attribute Keycloak rejects — and 43 of
+# the accounts here sign in through Google, which sends given_name and
+# family_name on every login.
+#
+# Username is absent from the form for a different reason: the realm sets
+# registration_email_as_username, so Keycloak fills it from the address.
+resource "keycloak_realm_user_profile" "notion_caldav_saas" {
+  realm_id = keycloak_realm.notion_caldav_saas.id
+
+  attribute {
+    name         = "username"
+    display_name = "$${username}"
+
+    permissions {
+      view = ["admin", "user"]
+      edit = ["admin", "user"]
+    }
+
+    validator {
+      name = "length"
+      config = {
+        min = 3
+        max = 255
+      }
+    }
+    validator { name = "username-prohibited-characters" }
+    validator { name = "up-username-not-idn-homograph" }
+  }
+
+  attribute {
+    name           = "email"
+    display_name   = "$${email}"
+    required_for_roles = ["user"]
+
+    permissions {
+      view = ["admin", "user"]
+      edit = ["admin", "user"]
+    }
+
+    validator { name = "email" }
+    validator {
+      name   = "length"
+      config = { max = 255 }
+    }
+  }
+
+  # No required_for_roles and no "user" in edit: off the form, still set by
+  # the Google login that supplies them.
+  attribute {
+    name         = "firstName"
+    display_name = "$${firstName}"
+
+    permissions {
+      view = ["admin", "user"]
+      edit = ["admin"]
+    }
+
+    validator {
+      name   = "length"
+      config = { max = 255 }
+    }
+    validator { name = "person-name-prohibited-characters" }
+  }
+
+  attribute {
+    name         = "lastName"
+    display_name = "$${lastName}"
+
+    permissions {
+      view = ["admin", "user"]
+      edit = ["admin"]
+    }
+
+    validator {
+      name   = "length"
+      config = { max = 255 }
+    }
+    validator { name = "person-name-prohibited-characters" }
+  }
+
+  group {
+    name                = "user-metadata"
+    display_header      = "User metadata"
+    display_description = "Attributes, which refer to user metadata"
+  }
+}
