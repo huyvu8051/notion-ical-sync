@@ -164,7 +164,8 @@ pub fn RefundRoutePage() -> impl IntoView {
 
             <h2 class="text-h2 text-primary mt-xl mb-sm">"Cancelling"</h2>
             <p class="mb-lg">"You can cancel at any time, and cancelling is not the same as a refund. It stops the next renewal; the year you have already paid for runs to its end, and the Service keeps working until then. We do not refund part of a year on cancellation alone — ask for a refund instead if that is what you want, and if you are inside the 30 days you will get the whole dollar back."</p>
-            <p class="mb-lg">"There is no self-service cancel button yet. To cancel, email the address below from the account you signed up with, or use the manage-subscription link in the receipt Paddle emailed you. We will confirm by reply."</p>
+            <p class="mb-lg">"To cancel, open "<A href="/me" attr:class="text-secondary underline">"your account"</A>" and use the \"Manage or cancel\" link beside your subscription. That opens Paddle\'s own portal, where cancelling takes one more click and takes effect at the end of the year you have paid for. The \"Manage subscription\" link in any receipt Paddle emailed you, and "<a class="text-secondary underline" href="https://paddle.net">"paddle.net"</a>", reach the same place."</p>
+            <p class="mb-lg">"If none of those work for you, email the address below from the account you signed up with and we will do it by hand."</p>
 
             <h2 class="text-h2 text-primary mt-xl mb-sm">"How to ask"</h2>
             <p class="mb-lg">"Email "<a class="text-secondary underline" href="mailto:huyvu8051@gmail.com">"huyvu8051@gmail.com"</a>" from your account address, and say whether you want to cancel, to be refunded, or both. One person reads that inbox, so expect a reply within a few business days rather than within the hour."</p>

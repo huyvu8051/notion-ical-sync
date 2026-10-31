@@ -3906,6 +3906,7 @@ pub fn create_app(
                 .delete(crate::api::webview_events::handle_delete_event),
         )
         .route("/billing/checkout", get(crate::billing::start_checkout))
+        .route("/billing/manage", get(crate::billing::manage_subscription))
         .layer(oidc_login_service);
 
     Router::new()

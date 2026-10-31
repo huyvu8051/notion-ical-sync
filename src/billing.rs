@@ -2,7 +2,7 @@ use axum::{
     body::Bytes,
     extract::State,
     http::{HeaderMap, StatusCode},
-    response::{Html, IntoResponse},
+    response::{Html, IntoResponse, Redirect},
     Json,
 };
 use axum_oidc::{EmptyAdditionalClaims, OidcClaims};
@@ -457,6 +457,88 @@ Paddle.Checkout.open({checkout_config});
     );
 
     Html(html).into_response()
+}
+
+/// Sends a subscriber to Paddle's own portal to change or cancel.
+///
+/// Paddle hosts the cancellation flow, so there is nothing to build here
+/// beyond getting the customer through the door. What this does buy is the
+/// door being visible: before it, a paying customer could see "Subscribed --
+/// $1/year" on their account page and no way at all to stop renewing, which
+/// is the shape that turns a one-dollar cancellation into a chargeback.
+///
+/// A portal *session* rather than the pregenerated `management_urls` on the
+/// subscription: the session link signs the customer in, while the
+/// pregenerated one makes them prove who they are by email first. They have
+/// already proved it to us -- they are holding a Keycloak session, and the
+/// customer id is read from their own row -- so asking twice buys nothing.
+///
+/// The link is minted per click and expires on its own, which is why this is
+/// a redirect rather than an href rendered into the page.
+pub async fn manage_subscription(
+    State(state): State<AppState>,
+    claims: OidcClaims<EmptyAdditionalClaims>,
+) -> axum::response::Response {
+    let Some(paddle) = state.paddle.as_ref() else {
+        return crate::error_page::error_page(crate::error_page::OauthError::BillingNotConfigured)
+            .into_response();
+    };
+    let sub = claims.subject().as_str();
+    let email = claims.email().map(|e| e.as_str()).unwrap_or("").to_string();
+    let Ok(user_id) = find_or_create_user(&state, sub, &email).await else {
+        return crate::error_page::error_page(crate::error_page::OauthError::Generic)
+            .into_response();
+    };
+
+    let row: Option<(Option<String>, Option<String>)> = sqlx::query_as(
+        "SELECT billing_customer_id, billing_subscription_id FROM users WHERE id = $1",
+    )
+    .bind(user_id)
+    .fetch_optional(&state.db)
+    .await
+    .ok()
+    .flatten();
+    // Nothing to manage is not an error -- it is someone who has not
+    // subscribed arriving at the link anyway. Send them where they came from.
+    let Some((Some(customer_id), subscription_id)) = row else {
+        return Redirect::to("/me").into_response();
+    };
+
+    let url = format!("{}/customers/{}/portal-sessions", paddle.api_base, customer_id);
+    let body = match subscription_id.as_deref() {
+        Some(id) => serde_json::json!({ "subscription_ids": [id] }),
+        None => serde_json::json!({}),
+    };
+    info!(user_id, "-> Paddle API request (create customer portal session)");
+    let resp = state.client.post(&url).bearer_auth(&paddle.api_key).json(&body).send().await;
+    let json = match resp {
+        Ok(r) if r.status().is_success() => r.json::<serde_json::Value>().await.ok(),
+        Ok(r) => {
+            warn!(user_id, status = %r.status(), "paddle portal session rejected");
+            None
+        }
+        Err(e) => {
+            warn!(user_id, "paddle portal session failed: {e}");
+            None
+        }
+    };
+
+    // Deep-link to the subscription if Paddle gave us one, else the portal's
+    // front page -- both let them cancel, the first just lands closer.
+    let target = json.as_ref().and_then(|j| {
+        j.pointer("/data/urls/subscriptions/0/cancel_subscription")
+            .or_else(|| j.pointer("/data/urls/general/overview"))
+            .and_then(|v| v.as_str())
+            .map(str::to_string)
+    });
+    match target {
+        Some(target) => Redirect::to(&target).into_response(),
+        // Paddle is the only thing that can produce this link, so when it
+        // will not, say so rather than bouncing the customer back to the page
+        // they just left with nothing changed and no explanation.
+        None => crate::error_page::error_page(crate::error_page::OauthError::TryAgain)
+            .into_response(),
+    }
 }
 
 pub async fn send_trial_reminders(state: &AppState) {

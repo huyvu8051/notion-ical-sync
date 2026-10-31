@@ -23,6 +23,10 @@ pub struct MePageData {
     pub email: String,
     pub billing_status_text: String,
     pub billing_cta_href: Option<String>,
+    /// Set for anyone currently paying. Points at `/billing/manage`, which
+    /// mints a fresh Paddle portal link and redirects -- the link is
+    /// short-lived, so it cannot be rendered straight into the page.
+    pub billing_manage_href: Option<String>,
     pub just_connected_a_calendar: bool,
     pub already_connected_names: Vec<String>,
     pub calendars: Vec<CalendarCardData>,
@@ -154,7 +158,7 @@ async fn load_me_data() -> Result<MePageData, ServerFnError> {
     let email = claims.email().map(|e| e.as_str()).unwrap_or("").to_string();
     let user_id = resolve_user_id(&pool, &claims).await?;
 
-    let (billing_status_text, billing_cta_href) = {
+    let (billing_status_text, billing_cta_href, billing_manage_href) = {
         let row: Option<(DateTime<Utc>, String)> =
             sqlx::query_as("SELECT trial_started_at, subscription_status FROM users WHERE id = $1")
                 .bind(user_id)
@@ -168,7 +172,7 @@ async fn load_me_data() -> Result<MePageData, ServerFnError> {
         let lifetime_free = subscription_status == "lifetime_free";
 
         let (status_text, show_cta) = if paying {
-            ("Subscribed — $1/year".to_string(), false)
+            ("Subscribed — $1/year, renews automatically.".to_string(), false)
         } else if lifetime_free {
             ("Lifetime access".to_string(), false)
         } else {
@@ -196,7 +200,9 @@ async fn load_me_data() -> Result<MePageData, ServerFnError> {
             }
         };
         let cta_href = (show_cta && paddle_configured).then(|| "/billing/checkout".to_string());
-        (status_text, cta_href)
+        // Only for someone who actually has a subscription to manage.
+        let manage_href = (paying && paddle_configured).then(|| "/billing/manage".to_string());
+        (status_text, cta_href, manage_href)
     };
 
     let calendars: Vec<(String, String, String)> = sqlx::query_as(
@@ -270,6 +276,7 @@ async fn load_me_data() -> Result<MePageData, ServerFnError> {
         email,
         billing_status_text,
         billing_cta_href,
+        billing_manage_href,
         just_connected_a_calendar,
         already_connected_names,
         calendars: cards,
@@ -342,6 +349,9 @@ pub fn MePage(data: MePageData) -> impl IntoView {
                         {data.billing_status_text}
                         {data.billing_cta_href.map(|href| view! {
                             " "<a href=href class="text-secondary hover:underline font-medium">"Upgrade for $1/year"</a>
+                        })}
+                        {data.billing_manage_href.map(|href| view! {
+                            " "<a href=href class="text-secondary hover:underline font-medium">"Manage or cancel"</a>
                         })}
                     </p>
                 </div>
