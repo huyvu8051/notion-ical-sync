@@ -19,3 +19,6 @@ terraform/.terraform/
 terraform/*.tfstate
 terraform/*.tfstate.*
 terraform/terraform.tfvars
+
+# Local dev Postgres (scripts/dev.sh)
+.devdb/
