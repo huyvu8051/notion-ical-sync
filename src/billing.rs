@@ -342,6 +342,22 @@ pub async fn handle_paddle_webhook(
     StatusCode::OK
 }
 
+/// TODO(unverified): nobody has watched this land on live Paddle yet. The
+/// design is ported from Stripe, where `subscription_data[trial_end]` did it
+/// at checkout; whether Paddle accepts a *shortened* trial via next_billed_at
+/// is the open question. The `<- Paddle: next_billed_at now=` line below
+/// reads the stored date back out of the response rather than inferring it
+/// from a 200, so one real subscribe answers it.
+///
+/// What to look for: subscribe, and the logged date must be six months from
+/// the account's own signup — not six months from today. They differ whenever
+/// someone subscribes after signing up, which is almost everyone.
+///
+/// If it fails there is a `warn!` and nothing else: no retry, no alert. The
+/// customer then keeps Paddle's flat six months counted from the day they
+/// subscribed, which is longer than we promised rather than shorter, so it
+/// errs in their favour — but silently.
+///
 /// Our trial length is dynamic (6 months from each user's own signup date),
 /// but Paddle prices only support a fixed trial length for everyone. The
 /// price is configured with a generous flat trial as an upper bound, and
