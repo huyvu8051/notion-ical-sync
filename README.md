@@ -60,11 +60,6 @@ stopping the boot.
 | `MAPBOX_ACCESS_TOKEN` | the event location field is plain text with no autocomplete |
 | `CALDAV_ALLOW_WRITES` | CalDAV writes are rejected with 403 |
 
-`CALDAV_PASSWORD_ENC_KEY` is still in `.env` and in the production sealed
-secret, and nothing reads it. It went dead when CalDAV passwords moved to
-show-once plus an Argon2 hash — there is no longer a stored password to
-decrypt. Safe to drop from both.
-
 ## Health Check
 
 The `/health` endpoint returns a JSON response specifying the system status and the CalDAV writes permission flag:

@@ -10,7 +10,6 @@ Setup: see `README.md` for the podman containers, then:
 NOTION_API_BASE_URL=http://localhost:3001 \
 NOTION_OAUTH_CLIENT_ID=mock-client-id \
 NOTION_OAUTH_CLIENT_SECRET=mock-client-secret \
-CALDAV_PASSWORD_ENC_KEY=<32-byte base64> \
 cargo run
 # separate terminal:
 cargo run --bin mock_notion
@@ -54,7 +53,6 @@ a second test user, or a physical/simulated CalDAV client).
 | 12 | Lang toggle on `/me` | Click VI/EN in header | Switches language, stays on `/me` | ✅ |
 | 13 | Calendar card renders | With ≥1 calendar | Shows name, ACTIVE badge, CalDAV URL row, username row | ✅ |
 | 14 | Copy-to-clipboard | Click copy icon next to CalDAV URL | Icon flashes a checkmark, value copied | ✅ click handled without JS error (clipboard content not independently verified — `navigator.clipboard.readText()` triggers a permission prompt that hangs browser automation) |
-| 15 | Show password (unconfigured) | `CALDAV_PASSWORD_ENC_KEY` unset, click "Show password" | Error page: reveal not configured | ⏭️ (tested with key set instead) |
 | 16 | Show password (configured) | Key set, click "Show password" | Redirects to `/me`, one-shot password banner shown, password row appears | ✅ |
 | 17 | Regenerate password | Click "Regenerate password" once (arms), click again within 3s | New password shown once in success banner; old password now invalid for CalDAV | ✅ (done via a direct fetch to the endpoint — the arm/confirm UI itself is timing-sensitive under automation, see note below) |
 | 18 | Regenerate confirm timeout | Click "Regenerate password" once, wait >3s | Reverts to unarmed label, no action taken | ⏭️ not exercised this pass |

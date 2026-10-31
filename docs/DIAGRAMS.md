@@ -229,7 +229,7 @@ flowchart TB
             Pod2["Pod"]
         end
         PG[("Postgres pod<br/>notion-caldav-saas-db")]
-        Secrets["Sealed Secrets<br/>ADMIN_SECRET, CALDAV_PASSWORD_ENC_KEY, ..."]
+        Secrets["Sealed Secrets<br/>ADMIN_SECRET, PADDLE_API_KEY, ..."]
     end
 
     Cloudflare["Cloudflare<br/>tunnel + edge cache"]
