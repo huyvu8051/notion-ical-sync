@@ -546,6 +546,20 @@ pub async fn manage_subscription(
     let resp = state.client.post(&url).bearer_auth(&paddle.api_key).json(&body).send().await;
     let json = match resp {
         Ok(r) if r.status().is_success() => r.json::<serde_json::Value>().await.ok(),
+        Ok(r) if r.status() == reqwest::StatusCode::NOT_FOUND => {
+            // Paddle has never heard of this customer. On this account that
+            // means a billing id left over from the Stripe era, which the
+            // column rename in migration 0013 carried across untouched.
+            warn!(
+                user_id,
+                customer_id,
+                "paddle does not know this customer -- stale billing id, not a Paddle one?"
+            );
+            return crate::error_page::error_page(
+                crate::error_page::OauthError::SubscriptionNotAtPaddle,
+            )
+            .into_response();
+        }
         Ok(r) => {
             warn!(user_id, status = %r.status(), "paddle portal session rejected");
             None

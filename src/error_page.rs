@@ -53,6 +53,11 @@ pub(crate) enum OauthError {
     CalendarNotFound,
     FailedToDeleteCalendar,
     BillingNotConfigured,
+    /// Paddle does not recognise the subscription on this account. Its own
+    /// variant rather than Generic, because the one thing the person needs
+    /// to know is that nothing is wrong with their calendars and nobody is
+    /// about to charge them.
+    SubscriptionNotAtPaddle,
 }
 
 impl OauthError {
@@ -75,6 +80,7 @@ impl OauthError {
             Self::CalendarNotFound => "This calendar wasn't found.".to_string(),
             Self::FailedToDeleteCalendar => "Failed to delete this calendar.".to_string(),
             Self::BillingNotConfigured => "Billing isn't configured on this server.".to_string(),
+            Self::SubscriptionNotAtPaddle => "We can't open the subscription portal for this account — our payment provider doesn't recognise the subscription on file. This is on our side, not yours: your calendars keep working and nothing will be charged. Email huyvu8051@gmail.com and we'll sort it out.".to_string(),
         }
     }
 }
