@@ -8,6 +8,7 @@ pub mod guide;
 pub mod landing;
 pub mod legal;
 pub mod me;
+pub mod not_found;
 pub mod page_shell;
 pub mod pick_databases;
 pub mod sync_log;
@@ -94,6 +95,10 @@ pub fn App() -> impl IntoView {
                 <Route path=StaticSegment("terms") view=legal::TermsRoutePage/>
                 <Route path=StaticSegment("refund") view=legal::RefundRoutePage/>
                 <Route path=StaticSegment("guide") view=guide::GuideRoutePage/>
+                // Rendered by the axum fallback for any unknown path, which
+                // keeps the address the visitor typed. Reachable directly too;
+                // that costs nothing and makes the page easy to look at.
+                <Route path=StaticSegment("404") view=not_found::NotFoundRoutePage/>
                 <Route path=(StaticSegment("connect"), StaticSegment("notion")) view=connect_notion::ConnectNotionRoutePage/>
                 <Route path=(StaticSegment("connect"), StaticSegment("notion"), StaticSegment("databases")) view=pick_databases::PickDatabasesRoutePage/>
                 <Route path=StaticSegment("me") view=me::MeRoutePage/>

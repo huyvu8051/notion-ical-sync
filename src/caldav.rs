@@ -3537,6 +3537,44 @@ async fn handle_calendars_propfind(
     axum::http::StatusCode::METHOD_NOT_ALLOWED.into_response()
 }
 
+/// Renders the 404 page for a request that matched nothing we meant to serve.
+///
+/// Renders rather than redirects, so the address bar keeps whatever the
+/// visitor actually typed — a redirect to /404 would hide the typo, which is
+/// the one piece of information that tells them what went wrong.
+///
+/// The Leptos router picks the page by path, so the request is rewritten to
+/// /404 on its way in and the status is set to 404 on its way out.
+async fn render_not_found(
+    state: &AppState,
+    mut request: axum::extract::Request,
+) -> axum::response::Response {
+    *request.uri_mut() = axum::http::Uri::from_static("/404");
+    let leptos_options = state.leptos_options.clone();
+    let db = state.db.clone();
+    let client = state.client.clone();
+    // The same wrapper types the real routes provide. Nothing on this page
+    // reads them, but the shell is shared and a context of the wrong type is
+    // indistinguishable from a missing one.
+    let notion_api_base_url =
+        app::page_shell::NotionApiBaseUrl(state.notion_api_base_url.clone());
+    let mapbox_token = app::page_shell::MapboxToken(state.mapbox_token.clone());
+    let paddle_configured = app::page_shell::PaddleConfigured(state.paddle.is_some());
+    let handler = leptos_axum::render_app_to_stream_with_context(
+        move || {
+            leptos::prelude::provide_context(db.clone());
+            leptos::prelude::provide_context(client.clone());
+            leptos::prelude::provide_context(notion_api_base_url.clone());
+            leptos::prelude::provide_context(mapbox_token.clone());
+            leptos::prelude::provide_context(paddle_configured.clone());
+        },
+        move || app::shell(leptos_options.clone()),
+    );
+    let mut response = handler(request).await.into_response();
+    *response.status_mut() = axum::http::StatusCode::NOT_FOUND;
+    response
+}
+
 async fn auth_middleware(
     State(state): State<AppState>,
     headers: axum::http::HeaderMap,
@@ -3570,10 +3608,35 @@ async fn auth_middleware(
 
     let start = std::time::Instant::now();
 
-    let is_landing_page_request = (method == axum::http::Method::GET
-        || method == axum::http::Method::HEAD)
-        && path == "/"
-        && get_public_id_for_host(&headers, &state).await.is_none();
+    // Whether this host is one a calendar is published on. Everything below
+    // turns on it: the same URL means a CalDAV request on a calendar host and
+    // a mistyped address on the main site.
+    let host_serves_a_calendar = get_public_id_for_host(&headers, &state).await.is_some();
+    let reading = method == axum::http::Method::GET || method == axum::http::Method::HEAD;
+
+    // `/{event_id}` is the host-addressed CalDAV route, so it matches every
+    // single-segment URL on the site -- /pricing, /login, /docs, anything a
+    // visitor guesses. On a host with no calendar behind it that route cannot
+    // be what was meant, and answering 401 told people who mistyped an
+    // address to go find a CalDAV password. Let it through to its handler,
+    // which already returns 404, and render the page for it below.
+    //
+    // Narrow on purpose. A calendar host still gets its 401, and so does
+    // /cal/{public_id} on any host -- that one is a real feed URL people
+    // paste into a browser, and it has to ask for credentials rather than
+    // serve someone else's calendar.
+    let matched = request
+        .extensions()
+        .get::<axum::extract::MatchedPath>()
+        .map(|m| m.as_str().to_string());
+    let is_host_event_route =
+        matches!(matched.as_deref(), Some("/{event_id}") | Some("/{event_id}/"));
+    if reading && !host_serves_a_calendar && is_host_event_route {
+        info!(path = %path, "not a calendar host and not a known page: 404");
+        return render_not_found(&state, request).await;
+    }
+
+    let is_landing_page_request = reading && path == "/" && !host_serves_a_calendar;
     let is_bypass = method == axum::http::Method::OPTIONS || is_landing_page_request;
 
     if is_bypass {
@@ -4004,6 +4067,16 @@ pub fn create_app(
         )
         .route("/logout", get(crate::session::logout))
         .merge(caldav_routes)
+        // Anything that matched no route above. Without this axum answers a
+        // bare 404 with an empty body, which renders as a blank white page
+        // and leaves a visitor with nowhere to click.
+        .fallback({
+            let state = state.clone();
+            move |request: axum::extract::Request| {
+                let state = state.clone();
+                async move { render_not_found(&state, request).await }
+            }
+        })
         .layer(oidc_auth_service)
         .layer(axum::Extension(app_config))
         .with_state(state)
