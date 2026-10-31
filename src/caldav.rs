@@ -14,7 +14,7 @@ use sqlx::PgPool;
 use std::{collections::HashMap, time::Duration};
 use tower_http::cors::CorsLayer;
 use tower_http::trace::{DefaultMakeSpan, TraceLayer};
-use tracing::{error, info, warn};
+use tracing::{debug, error, info, warn};
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct PageInfo {
@@ -3578,6 +3578,21 @@ async fn render_not_found(
     response
 }
 
+/// Whether a path is a bundle or a file served off disk rather than a page.
+///
+/// Used only to pick a log level. `LOG_ALL_REQUESTS=1` turns them back up for
+/// the rare case where a missing asset is the thing being chased.
+fn is_static_asset(path: &str) -> bool {
+    if std::env::var("LOG_ALL_REQUESTS").is_ok() {
+        return false;
+    }
+    path.starts_with("/pkg/")
+        || path.starts_with("/assets/")
+        || path.starts_with("/static/")
+        || path == "/favicon.ico"
+        || path == "/favicon.svg"
+}
+
 async fn auth_middleware(
     State(state): State<AppState>,
     headers: axum::http::HeaderMap,
@@ -4087,7 +4102,15 @@ pub fn create_app(
             TraceLayer::new_for_http()
                 .make_span_with(DefaultMakeSpan::new().include_headers(false))
                 .on_request(|request: &axum::http::Request<axum::body::Body>, _span: &tracing::Span| {
-                    info!(method = %request.method(), uri = %request.uri(), "request started");
+                    // Static assets are logged at debug. Every page load pulls
+                    // the wasm bundle, its loader and the stylesheet, so at
+                    // info they outnumber the request you are actually reading
+                    // the log for by four to one.
+                    if is_static_asset(request.uri().path()) {
+                        debug!(method = %request.method(), uri = %request.uri(), "request started");
+                    } else {
+                        info!(method = %request.method(), uri = %request.uri(), "request started");
+                    }
                 })
                 .on_response(
                     |response: &axum::http::Response<axum::body::Body>, latency: std::time::Duration, _span: &tracing::Span| {

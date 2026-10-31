@@ -197,7 +197,22 @@ pub async fn handle_paddle_webhook(
         .and_then(|v| v.as_str())
         .unwrap_or("unknown");
     let data = json.get("data").cloned().unwrap_or_default();
-    info!(event_type, "-> Paddle webhook event verified");
+    // One line carrying everything needed to tie a webhook to a user without
+    // opening the database: which event, which Paddle ids, and the user id we
+    // put in custom_data at checkout. A webhook that arrives but changes
+    // nothing is the failure that looks like success, and these are the
+    // fields that tell the two apart.
+    info!(
+        event_type,
+        customer_id = data.get("customer_id").and_then(|v| v.as_str()).unwrap_or("-"),
+        subscription_id = data.get("subscription_id").and_then(|v| v.as_str()).unwrap_or("-"),
+        status = data.get("status").and_then(|v| v.as_str()).unwrap_or("-"),
+        custom_user_id = data
+            .pointer("/custom_data/user_id")
+            .and_then(|v| v.as_str())
+            .unwrap_or("-"),
+        "<- Paddle webhook verified"
+    );
 
     match event_type {
         "transaction.completed" => {
@@ -221,6 +236,7 @@ pub async fn handle_paddle_webhook(
                 {
                     warn!("paddle webhook: failed to link customer/subscription to user {}: {}", user_id, e);
                 } else {
+                    info!(user_id, customer_id, subscription_id, "DB: user linked, subscription_status=trialing");
                     if let Err(e) =
                         defer_subscription_to_trial_end(&state, paddle, user_id, subscription_id)
                             .await
@@ -300,7 +316,10 @@ pub async fn handle_paddle_webhook(
                 }
             }
         }
-        _ => {}
+        // Not an error: Paddle sends whatever the destination subscribes to,
+        // and only three are acted on. Logged so that "the webhook arrived and
+        // nothing happened" is a sentence the log can finish.
+        other => info!(event_type = other, "Paddle webhook: no handler, ignored"),
     }
 
     StatusCode::OK
@@ -336,7 +355,11 @@ async fn defer_subscription_to_trial_end(
         "next_billed_at": next_billed_at.to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
         "proration_billing_mode": "do_not_bill",
     });
-    info!(subscription_id, "-> Paddle API request (defer next_billed_at to trial end)");
+    info!(
+        subscription_id,
+        next_billed_at = %next_billed_at.to_rfc3339(),
+        "-> Paddle API request (defer next_billed_at to trial end)"
+    );
     let resp = state
         .client
         .patch(&url)
@@ -351,6 +374,16 @@ async fn defer_subscription_to_trial_end(
         let text = resp.text().await.unwrap_or_default();
         return Err(format!("Paddle subscription update failed ({status}): {text}"));
     }
+    // Reading back what Paddle stored rather than trusting the 200. This call
+    // is the whole of "you keep your free months after subscribing", and the
+    // only way to see whether it landed is the date that came back.
+    let stored = resp
+        .json::<serde_json::Value>()
+        .await
+        .ok()
+        .and_then(|j| j.pointer("/data/next_billed_at").and_then(|v| v.as_str()).map(str::to_string))
+        .unwrap_or_else(|| "(not in response)".to_string());
+    info!(subscription_id, next_billed_at = %stored, "<- Paddle: next_billed_at now");
     Ok(())
 }
 
@@ -525,6 +558,9 @@ pub async fn manage_subscription(
 
     // Deep-link to the subscription if Paddle gave us one, else the portal's
     // front page -- both let them cancel, the first just lands closer.
+    if json.is_some() {
+        info!(user_id, "<- Paddle: portal session created");
+    }
     let target = json.as_ref().and_then(|j| {
         j.pointer("/data/urls/subscriptions/0/cancel_subscription")
             .or_else(|| j.pointer("/data/urls/general/overview"))
