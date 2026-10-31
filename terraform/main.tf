@@ -11,6 +11,29 @@ resource "keycloak_realm" "notion_caldav_saas" {
   verify_email                   = false # tighten once real email delivery is set up
 
   password_policy = "length(8)"
+
+  # Keycloak sends its own mail and knows nothing about the Resend API the
+  # app uses — this is a second path to the same provider, over SMTP. Without
+  # it, anything Keycloak wants to email (verification, password reset) fails
+  # at the login screen with no way for the person to recover.
+  #
+  # Same sender as the app's own mail, so a password reset and a receipt
+  # arrive from one address rather than two.
+  smtp_server {
+    host              = "smtp.resend.com"
+    port              = "587"
+    starttls          = true
+    from              = var.smtp_from
+    from_display_name = "NotionCal"
+    reply_to          = var.smtp_reply_to
+
+    auth {
+      # Resend's SMTP takes the literal username "resend" and an API key as
+      # the password.
+      username = "resend"
+      password = var.smtp_password
+    }
+  }
 }
 
 resource "keycloak_openid_client" "app" {

@@ -39,3 +39,21 @@ variable "google_oauth_client_secret" {
   type        = string
   sensitive   = true
 }
+
+variable "smtp_from" {
+  description = "Address Keycloak sends from. Must be on a domain verified with Resend."
+  type        = string
+  default     = "notioncal-app@mail.opendiy.vn"
+}
+
+variable "smtp_reply_to" {
+  description = "Where a reply to a Keycloak email goes — a mailbox a person actually reads, unlike the sender."
+  type        = string
+  default     = "huyvu8051@gmail.com"
+}
+
+variable "smtp_password" {
+  description = "Resend API key, used as the SMTP password. Never committed: pass it as TF_VAR_smtp_password."
+  type        = string
+  sensitive   = true
+}
