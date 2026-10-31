@@ -20,5 +20,5 @@ terraform/*.tfstate
 terraform/*.tfstate.*
 terraform/terraform.tfvars
 
-# Local dev Postgres (scripts/dev.sh)
+# Throwaway dev Postgres (scripts/leptos-watch-with-db.sh)
 .devdb/

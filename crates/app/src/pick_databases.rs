@@ -328,7 +328,7 @@ pub fn PickDatabasesPage(data: PickDatabasesPageData) -> impl IntoView {
                     <h1 class="text-h1 text-primary mb-sm">"Pick a database to sync"</h1>
                     <p class="text-on-surface-variant text-body-lg">
                         "No databases found that you've granted access to. "
-                        <a class="text-secondary underline" href="/connect/notion/start">"Grant more access on Notion"</a>
+                        <a class="text-secondary underline" href="/connect/notion/start" rel="external">"Grant more access on Notion"</a>
                         "."
                     </p>
                 </main>
@@ -420,7 +420,7 @@ pub fn PickDatabasesPage(data: PickDatabasesPageData) -> impl IntoView {
                         <input type="hidden" name="connection_id" value=connection_id/>
                         <div class="space-y-md">{rows}</div>
                         <div class="mt-xl text-center">
-                            <a class="text-on-surface-variant hover:text-primary transition-colors text-label-md" href="/connect/notion/start">"Don't see the database you need? Grant more access on Notion"</a>
+                            <a class="text-on-surface-variant hover:text-primary transition-colors text-label-md" href="/connect/notion/start" rel="external">"Don't see the database you need? Grant more access on Notion"</a>
                         </div>
                         <crate::page_shell::PageFooter/>
                         <div class="fixed bottom-0 left-0 right-0 bg-white/80 backdrop-blur-md border-t border-outline-variant py-md z-40">

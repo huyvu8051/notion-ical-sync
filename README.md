@@ -12,30 +12,37 @@ Sync Notion databases to CalDAV / iCal clients.
 ## Running it locally
 
 ```sh
-./scripts/dev.sh
+cargo leptos watch
 ```
 
 Then http://127.0.0.1:8080.
 
-That is the only way, and it is deliberately the only way. `cargo leptos
-watch` is what actually serves the app — it builds the wasm hydrate bundle as
-well as the server binary, which a bare `cargo run --bin notion-ical-sync`
-does not, so a page served that way renders and then never comes alive. The
-script exists to hand `cargo leptos watch` a database and nothing else.
+That is the whole of it, and it has to stay the whole of it. `cargo leptos
+watch` builds the wasm hydrate bundle as well as the server binary; a bare
+`cargo run --bin notion-ical-sync` does not, so pages served that way render
+and then never come alive — they look right and are subtly dead.
 
-Postgres lives in `.devdb/` at the repo root (gitignored) rather than a
-Homebrew service: nothing registers to start at login, nothing collides with a
-system Postgres on 5432, and `rm -rf .devdb` is a full reset. Migrations run
-themselves on startup, so there is no separate migrate step.
+It needs no arguments because the defaults already fit: `main.rs` loads `.env`
+through dotenvy, and `DATABASE_URL` falls back to
+`postgres://biolink:biolink@localhost:5433/notion_saas` when unset. Migrations
+run themselves on startup.
 
 Everything optional is unset, and the app says so on boot — one warning per
 integration, naming the variables it wants. Notion OAuth, Paddle, email and
-tracing all degrade to a not-configured page or a no-op rather than failing to
-start, so the parts you are not working on stay out of the way.
+tracing each degrade to a not-configured page or a no-op rather than failing
+to start, so the parts you are not working on stay out of the way.
 
-`assets/style-auth-a.css` is committed, so Tailwind does not need rebuilding
-unless you write a class name that is not already used somewhere. See
-`tailwind/README.md` for that.
+To leave your working data alone — seeding rows to exercise a code path,
+testing a migration, wanting a first-run account —
+`./scripts/leptos-watch-with-db.sh` runs the same command against a throwaway
+Postgres in `.devdb/`. That is the only reason to use it; for everything else
+the bare command above is the way.
+
+`assets/style-auth-a.css` is committed but stale, and the Docker build
+regenerates it, so production can have utility classes the local file lacks —
+a new arbitrary value like `pt-[96px]` will look right deployed and do nothing
+here. Rebuild it when a page looks wrong locally and right in production; see
+`tailwind/README.md`.
 
 ## Environment Variables
 

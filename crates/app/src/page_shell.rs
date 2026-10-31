@@ -179,7 +179,7 @@ pub fn HomeHeader(#[prop(optional)] email: Option<String>) -> impl IntoView {
                         Some(email) => view! {
                             <div class="flex items-center space-x-md">
                                 <span class="text-on-surface-variant font-label-md text-label-md">{email}</span>
-                                <a class="flex items-center justify-center w-8 h-8 hover:bg-surface-container-low transition-colors duration-200 rounded" href="/logout" title="Log out">
+                                <a class="flex items-center justify-center w-8 h-8 hover:bg-surface-container-low transition-colors duration-200 rounded" href="/logout" rel="external" title="Log out">
                                     <span class="material-symbols-outlined !text-[20px]">"logout"</span>
                                 </a>
                             </div>

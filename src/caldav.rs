@@ -3540,16 +3540,19 @@ async fn handle_calendars_propfind(
 /// Renders the 404 page for a request that matched nothing we meant to serve.
 ///
 /// Renders rather than redirects, so the address bar keeps whatever the
-/// visitor actually typed — a redirect to /404 would hide the typo, which is
+/// visitor actually typed -- a redirect to /404 would hide the typo, which is
 /// the one piece of information that tells them what went wrong.
 ///
-/// The Leptos router picks the page by path, so the request is rewritten to
-/// /404 on its way in and the status is set to 404 on its way out.
+/// The path is left exactly as it came in. The Leptos router finds no route
+/// for it and falls back to the same page the browser will fall back to when
+/// it hydrates, so the two agree by construction. Rewriting the path to /404
+/// here is what made them disagree, and a disagreement between them is an
+/// infinite reload: server draws /404's page at /pricing, client hydrates,
+/// sees /pricing is unrouted, reloads.
 async fn render_not_found(
     state: &AppState,
-    mut request: axum::extract::Request,
+    request: axum::extract::Request,
 ) -> axum::response::Response {
-    *request.uri_mut() = axum::http::Uri::from_static("/404");
     let leptos_options = state.leptos_options.clone();
     let db = state.db.clone();
     let client = state.client.clone();

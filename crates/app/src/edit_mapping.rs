@@ -206,7 +206,7 @@ pub fn EditMappingPage(data: EditMappingPageData) -> impl IntoView {
                     <pre class="bg-surface-container-low border border-outline-variant rounded p-md text-label-sm overflow-x-auto">{error}</pre>
                     <p class="text-on-surface-variant text-body-md mt-md">
                         "This usually means the database is no longer shared with the integration, or it was deleted. "
-                        <a class="text-secondary underline" href="/connect/notion/start">"Re-grant access on Notion"</a>
+                        <a class="text-secondary underline" href="/connect/notion/start" rel="external">"Re-grant access on Notion"</a>
                         " and try again."
                     </p>
                 </main>

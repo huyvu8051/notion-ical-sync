@@ -347,11 +347,15 @@ pub fn MePage(data: MePageData) -> impl IntoView {
                 <div class="flex items-center gap-sm p-md bg-surface-container-low border border-outline-variant rounded-lg">
                     <p class="text-on-surface-variant text-body-md">
                         {data.billing_status_text}
+                        // rel="external" on both: these are server endpoints,
+                        // not pages. Without it the router swallows the click,
+                        // finds no route, and shows the not-found page instead
+                        // of letting the request reach Paddle.
                         {data.billing_cta_href.map(|href| view! {
-                            " "<a href=href class="text-secondary hover:underline font-medium">"Upgrade for $1/year"</a>
+                            " "<a href=href rel="external" class="text-secondary hover:underline font-medium">"Upgrade for $1/year"</a>
                         })}
                         {data.billing_manage_href.map(|href| view! {
-                            " "<a href=href class="text-secondary hover:underline font-medium">"Manage or cancel"</a>
+                            " "<a href=href rel="external" class="text-secondary hover:underline font-medium">"Manage or cancel"</a>
                         })}
                     </p>
                 </div>

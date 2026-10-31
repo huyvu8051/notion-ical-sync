@@ -19,19 +19,24 @@ pub fn NotFoundRoutePage() -> impl IntoView {
         // whatever the visitor mistyped.
         <leptos_meta::Meta name="robots" content="noindex"/>
         <div id="not-found-root" class="bg-background text-on-surface min-h-screen flex flex-col">
-            <main class="flex-1 max-w-[720px] w-full mx-auto px-margin-mobile md:px-margin-desktop pt-[96px] pb-lg">
+            // pt-[64px] like the legal pages, not an arbitrary value of its
+            // own -- the committed stylesheet is stale and only carries the
+            // classes already in use, so a new one renders as nothing here
+            // and correctly in production, which is a difference nobody
+            // should have to discover twice.
+            <main class="flex-1 max-w-[720px] w-full mx-auto px-margin-mobile md:px-margin-desktop pt-[64px] pb-lg">
                 <p class="text-label-md text-on-surface-variant mb-sm">"404"</p>
                 <h1 class="text-h1 font-semibold text-primary mb-md">"This page does not exist"</h1>
                 <p class="mb-xl text-on-surface-variant">
                     "The address may have a typo in it, or it may be a link to something we have since moved. Nothing is wrong with your account."
                 </p>
                 <div class="flex flex-wrap gap-sm">
-                    <A href="/" attr:class="bg-primary text-on-primary px-md h-10 font-label-md text-label-md flex items-center justify-center hover:opacity-90 transition-all active:scale-95">
+                    <A href="/" attr:class="bg-primary text-on-primary px-md h-10 text-label-md flex items-center justify-center hover:opacity-90 transition-all active:scale-95">
                         "Back to the home page"
                     </A>
                     // Someone signed in who mistypes is far more likely to
                     // want their calendars than the sales pitch.
-                    <A href="/me" attr:class="bg-surface border border-outline-variant text-primary px-md h-10 font-label-md text-label-md flex items-center justify-center hover:border-outline transition-all active:scale-95">
+                    <A href="/me" attr:class="bg-surface border border-outline-variant text-primary px-md h-10 text-label-md flex items-center justify-center hover:border-outline transition-all active:scale-95">
                         "Your calendars"
                     </A>
                 </div>

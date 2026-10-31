@@ -42,24 +42,26 @@ pub fn shell(options: LeptosOptions) -> impl IntoView {
     }
 }
 
+/// What the client shows for a path this router has no route for.
+///
+/// It used to hard-reload, from when pages were being moved into Leptos one
+/// at a time and a client-side navigation could land on one the server knew
+/// and this router did not. Every page is in the table above now, and the
+/// only paths left outside it are action endpoints -- /billing/*, /logout,
+/// /connect/notion/start -- which are reached by a plain anchor and a full
+/// page load anyway.
+///
+/// Keeping the reload once the server started rendering 404s was an infinite
+/// loop: the server answers /pricing with this page, the client hydrates,
+/// sees /pricing still matches nothing, reloads /pricing, and round it goes.
+/// 233 requests in twelve seconds, invisible from the outside because every
+/// pass drew the same page.
+///
+/// So the client now renders what the server rendered. The two agree, and
+/// nothing reloads.
 #[component]
 fn NotYetMigratedFallback() -> impl IntoView {
-    #[cfg(feature = "hydrate")]
-    {
-        let location = leptos_router::hooks::use_location();
-        Effect::new(move |_| {
-            let pathname = location.pathname.get();
-            let search = location.search.get();
-            let path = if search.is_empty() {
-                pathname
-            } else {
-                format!("{pathname}?{search}")
-            };
-            if let Some(window) = web_sys::window() {
-                let _ = window.location().replace(&path);
-            }
-        });
-    }
+    view! { <not_found::NotFoundRoutePage/> }
 }
 
 #[component]

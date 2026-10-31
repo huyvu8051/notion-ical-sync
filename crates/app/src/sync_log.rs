@@ -203,7 +203,7 @@ pub fn SyncLogPage(data: SyncLogPageData) -> impl IntoView {
                     "If a column was renamed or removed in Notion, "
                     <a class="text-secondary underline" href=mapping_href>"update the column mapping"</a>
                     ". If the database was unshared, "
-                    <a class="text-secondary underline" href="/connect/notion/start">"re-grant access on Notion"</a>
+                    <a class="text-secondary underline" href="/connect/notion/start" rel="external">"re-grant access on Notion"</a>
                     "."
                 </p>
             </div>
