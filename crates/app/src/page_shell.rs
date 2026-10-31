@@ -162,7 +162,9 @@ pub fn HomeHeader(#[prop(optional)] email: Option<String>) -> impl IntoView {
     view! {
         <header class="fixed top-0 left-0 right-0 z-50 glass-header border-b border-outline-variant">
             <div class="max-w-[1280px] mx-auto w-full px-margin-desktop h-[64px] flex justify-between items-center">
-                <div class="flex items-center gap-8">
+                // shrink-0: the logo keeps its size so the email beside it is
+                // what gives way when the bar runs out of room.
+                <div class="flex items-center gap-8 shrink-0">
                     <a class="text-h2 font-bold text-primary flex items-center gap-2" href="/">
                         <span class="material-symbols-outlined text-primary !text-[24px]">"calendar_month"</span>
                         "NotionCal"
@@ -174,12 +176,21 @@ pub fn HomeHeader(#[prop(optional)] email: Option<String>) -> impl IntoView {
                         </nav>
                     })}
                 </div>
-                <div class="flex items-center gap-4">
+                // min-w-0 twice, and it is not decoration: a flex item will not
+                // shrink below its own content unless its min-width is zero, so
+                // without these the email simply widens the bar and pushes the
+                // logout button off the right edge of a phone. With them the
+                // address is the thing that gives, down to an ellipsis.
+                <div class="flex items-center gap-4 min-w-0">
                     {match email {
                         Some(email) => view! {
-                            <div class="flex items-center space-x-md">
-                                <span class="text-on-surface-variant font-label-md text-label-md">{email}</span>
-                                <a class="flex items-center justify-center w-8 h-8 hover:bg-surface-container-low transition-colors duration-200 rounded" href="/logout" rel="external" title="Log out">
+                            <div class="flex items-center space-x-md min-w-0">
+                                // The full address in a tooltip, since the
+                                // visible one may be cut.
+                                <span class="text-on-surface-variant text-label-md truncate" title=email.clone()>{email.clone()}</span>
+                                // shrink-0 so the way out is never the thing
+                                // that gets squeezed away.
+                                <a class="shrink-0 flex items-center justify-center w-8 h-8 hover:bg-surface-container-low transition-colors duration-200 rounded" href="/logout" rel="external" title="Log out">
                                     <span class="material-symbols-outlined !text-[20px]">"logout"</span>
                                 </a>
                             </div>

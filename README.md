@@ -38,11 +38,17 @@ testing a migration, wanting a first-run account —
 Postgres in `.devdb/`. That is the only reason to use it; for everything else
 the bare command above is the way.
 
-`assets/style-auth-a.css` is committed but stale, and the Docker build
-regenerates it, so production can have utility classes the local file lacks —
-a new arbitrary value like `pt-[96px]` will look right deployed and do nothing
-here. Rebuild it when a page looks wrong locally and right in production; see
-`tailwind/README.md`.
+`assets/` is gitignored and the stylesheet in it is generated, not tracked.
+The Docker build regenerates it from scratch, so production always has every
+utility class the code uses — while the local copy is whatever you last built,
+possibly months ago. A class that is new to the codebase therefore works in
+production and does nothing on your machine until you rebuild:
+
+```sh
+cd tailwind && npx tailwindcss@3.4.17 -c auth-a.config.js -i input.css -o ../assets/style-auth-a.css --minify
+```
+
+Worth knowing before you conclude a style change had no effect.
 
 ## Environment Variables
 
