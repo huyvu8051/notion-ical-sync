@@ -8,7 +8,7 @@ use axum::{
 use axum_oidc::{EmptyAdditionalClaims, OidcClaims};
 use chrono::{DateTime, Months, Utc};
 use hmac::{Hmac, Mac};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use sha2::Sha256;
 use tracing::{error, info, warn};
 
@@ -463,6 +463,23 @@ struct CheckoutUserRow {
     trial_started_at: DateTime<Utc>,
 }
 
+/// Serialises a value as JSON that is safe to drop inside a `<script>` block.
+///
+/// `serde_json` leaves `<` alone, so an email of the shape
+/// `a</script><img src=x onerror=...>@b.com` would close the script tag and
+/// have everything after it parsed as markup. Keycloak validating the address
+/// is the only thing standing in the way, which is not where this should
+/// rest.
+///
+/// `<` can only ever appear inside a string value -- no JSON structural
+/// character is `<` -- so rewriting every one of them to the `\u003c` escape
+/// leaves the parsed value identical and takes `<!--` with it.
+fn script_json<T: Serialize>(value: &T) -> String {
+    serde_json::to_string(value)
+        .unwrap_or_else(|_| "null".to_string())
+        .replace('<', "\\u003c")
+}
+
 /// Paddle Billing checkout is opened client-side via Paddle.js (there's no
 /// pure server-side "create a session, redirect to a hosted page" flow like
 /// Stripe Checkout) — so this renders a tiny page that loads Paddle.js and
@@ -546,8 +563,8 @@ Paddle.Initialize({{
 Paddle.Checkout.open({checkout_config});
 </script>
 </body></html>"#,
-        client_token = serde_json::to_string(&paddle.client_token).unwrap_or_default(),
-        checkout_config = checkout_config,
+        client_token = script_json(&paddle.client_token),
+        checkout_config = script_json(&checkout_config),
     );
 
     Html(html).into_response()
