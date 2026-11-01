@@ -2215,6 +2215,30 @@ pub fn escape_ics(s: &str) -> String {
         .replace('\n', "\\n")
 }
 
+/// The inverse of [`all_day_dtend`]: RFC 5545's all-day `DTEND` is exclusive,
+/// Notion's range end is inclusive, so a date coming back in has to lose the
+/// day that going out gained it. Without this an all-day event grew by a day
+/// every time a client wrote it back — measured, not feared: Notion's
+/// 2026-11-14 went out as DTEND 20261115 and returned as 2026-11-15.
+///
+/// A client that sends `DTEND` equal to `DTSTART` is describing a zero-length
+/// all-day event, which Notion cannot express; clamping to the start keeps it
+/// a one-day event rather than a backwards range.
+fn all_day_end_from_dtend(dtend: &str, dtstart: &str) -> String {
+    let Ok(exclusive) = chrono::NaiveDate::parse_from_str(dtend, "%Y-%m-%d") else {
+        return dtend.to_string();
+    };
+    let Some(inclusive) = exclusive.pred_opt() else {
+        return dtend.to_string();
+    };
+    if let Ok(start) = chrono::NaiveDate::parse_from_str(dtstart, "%Y-%m-%d") {
+        if inclusive < start {
+            return dtstart.to_string();
+        }
+    }
+    inclusive.format("%Y-%m-%d").to_string()
+}
+
 pub fn parse_ics_date(s: &str) -> String {
     let s = s.trim();
     if s.len() >= 15 && s.contains('T') {
@@ -2241,6 +2265,7 @@ pub fn parse_ics_to_page_info(ics_content: &str, default_id: &str) -> PageInfo {
     let mut title = "(untitled)".to_string();
     let mut start = "".to_string();
     let mut end = None;
+    let mut end_is_all_day = false;
     let mut notes = None;
     let mut location = None;
     let mut priority = None;
@@ -2278,7 +2303,10 @@ pub fn parse_ics_to_page_info(ics_content: &str, default_id: &str) -> PageInfo {
         } else if let Some(rest) = line.strip_prefix("DTEND:") {
             end = Some(parse_ics_date(rest));
         } else if let Some(rest) = line.strip_prefix("DTEND;VALUE=DATE:") {
+            // Converted after the loop: DTEND can precede DTSTART in the
+            // body, and the conversion needs the start to clamp against.
             end = Some(parse_ics_date(rest));
+            end_is_all_day = true;
         } else if let Some(rest) = line.strip_prefix("DESCRIPTION:") {
             let text = unescape(rest);
             if !text.is_empty() {
@@ -2299,6 +2327,13 @@ pub fn parse_ics_to_page_info(ics_content: &str, default_id: &str) -> PageInfo {
             };
         } else if let Some(rest) = line.strip_prefix("UID:") {
             uid = rest.to_string();
+        }
+    }
+
+    // DTEND for an all-day event is exclusive; Notion's end is inclusive.
+    if end_is_all_day {
+        if let Some(e) = end.take() {
+            end = Some(all_day_end_from_dtend(&e, &start));
         }
     }
 
