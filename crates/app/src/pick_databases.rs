@@ -321,14 +321,45 @@ pub fn PickDatabasesRoutePage() -> impl IntoView {
 #[component]
 pub fn PickDatabasesPage(data: PickDatabasesPageData) -> impl IntoView {
     if data.candidates.is_empty() {
+        // Nothing to pick is not the same as nothing to do. This used to offer
+        // only a link back to Notion, which asked the user to build the right
+        // columns by hand from a schema the app had never shown them.
+        let connection_id = data.connection_id;
+        // Creating a second calendar on purpose is a real thing to want, so
+        // this does not try to be idempotent -- it only stops one impatient
+        // double-click from becoming two empty databases. The create takes a
+        // Notion round trip, which is long enough for the second click to
+        // land.
+        let submitting = RwSignal::new(false);
         return view! {
             <div id="pick-databases-root" class="pt-[64px]">
                 <crate::page_shell::HomeHeader email=data.email/>
                 <main class="flex-grow flex flex-col items-center justify-center px-margin-mobile text-center">
                     <h1 class="text-h1 text-primary mb-sm">"Pick a database to sync"</h1>
-                    <p class="text-on-surface-variant text-body-lg">
-                        "No databases found that you've granted access to. "
-                        <a class="text-secondary underline" href="/connect/notion/start" rel="external">"Grant more access on Notion"</a>
+                    <p class="text-on-surface-variant text-body-lg mb-lg">
+                        "No databases found that you've granted access to."
+                    </p>
+                    <form
+                        method="post"
+                        action="/connect/notion/databases/create"
+                        on:submit=move |_| submitting.set(true)
+                    >
+                        <input type="hidden" name="connection_id" value=connection_id/>
+                        <button
+                            type="submit"
+                            disabled=move || submitting.get()
+                            class="px-lg h-[40px] bg-primary text-white text-label-md rounded hover:opacity-90 disabled:opacity-60"
+                        >
+                            {move || if submitting.get() {
+                                "Creating it in Notion…"
+                            } else {
+                                "Create a calendar database for me"
+                            }}
+                        </button>
+                    </form>
+                    <p class="text-on-surface-variant text-body-md mt-md">
+                        "Already have one? "
+                        <a class="text-secondary underline" href="/connect/notion/start" rel="external">"Grant access to it on Notion"</a>
                         "."
                     </p>
                 </main>
