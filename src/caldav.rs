@@ -2084,6 +2084,26 @@ fn ics_response(method: &axum::http::Method, body: String) -> axum::response::Re
         .into_response()
 }
 
+/// Notion's half of a date property, rendered as an ICS date or UTC instant.
+///
+/// The `Err` arm cannot fire on anything Notion actually sends, and that is
+/// worth writing down because the API reference reads as though it can. A date
+/// whose time zone the user picked by name is documented as
+/// `{"start": "2026-11-10T09:00:00", "time_zone": "America/New_York"}` -- but
+/// that is the shape the API *accepts*. What it *returns* is always
+/// `time_zone: null`, with the zone already resolved into an offset:
+/// `2026-11-10T09:00:00.000-05:00`. Across a DST boundary it hands back two
+/// different offsets for a single range (`-05:00` start, `-04:00` end on
+/// 2027-03-14). Measured against a live workspace, not inferred -- every date
+/// shape the Notion UI can express came back either offset-bearing or
+/// date-only. That is why nothing in this crate reads `time_zone`: there is
+/// never anything in it.
+///
+/// If that contract ever changes, this arm fails the wrong way: it staples `Z`
+/// onto a local wall-clock time and calls it UTC, moving the event by the
+/// length of the offset it threw away. `parse_notion_dt` meets the same string
+/// and returns `None`, which only costs the time-range filter a page it cannot
+/// place. Worth keeping in mind before trusting this arm as a safety net.
 pub fn ics_dt(value: &str) -> String {
     if value.is_empty() {
         return String::new();
