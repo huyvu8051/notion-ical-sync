@@ -119,7 +119,14 @@ impl MockPage {
         );
         properties.insert(
             cols.date.to_string(),
-            json!({ "type": "date", "date": { "start": self.start, "end": self.end } }),
+            // `time_zone` is always present and always null on the real API:
+            // a zone the user picked by name is resolved into an offset on
+            // `start`/`end` before it ever leaves Notion. Emitting the key
+            // keeps the mock honest for anything that starts reading it.
+            json!({
+                "type": "date",
+                "date": { "start": self.start, "end": self.end, "time_zone": Value::Null },
+            }),
         );
         // Present but always empty, so a calendar pointed at it syncs nothing —
         // the symptom 35% of production calendars were showing.
