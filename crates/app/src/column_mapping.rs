@@ -16,6 +16,23 @@ use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
 use tracing::{debug, warn};
 
+/// Every `Priority` option this app creates, paired with the iCalendar
+/// PRIORITY value it reads back as.
+///
+/// One list instead of two, because the schema we hand Notion and the parser
+/// that reads it back are the same fact stated twice. An option the parser
+/// does not recognise is a column that looks configured and syncs nothing,
+/// and nothing would have caught the drift.
+pub const PRIORITY_OPTIONS: [(&str, u8); 3] = [("High", 1), ("Medium", 5), ("Low", 9)];
+
+/// The same bargain for `Repeat`: option name paired with the RRULE it means.
+pub const REPEAT_OPTIONS: [(&str, &str); 4] = [
+    ("Daily", "FREQ=DAILY"),
+    ("Weekly", "FREQ=WEEKLY"),
+    ("Monthly", "FREQ=MONTHLY"),
+    ("Yearly", "FREQ=YEARLY"),
+];
+
 /// A calendar field that can be backed by a Notion property.
 ///
 /// The date property is deliberately absent: it is mandatory, lives in its own
@@ -116,6 +133,35 @@ impl Field {
         }
     }
 
+    /// The Notion property type to create for this field when the app builds
+    /// the database itself.
+    ///
+    /// Deliberately narrower than [`Field::accepts_type`]: that one says what
+    /// an existing column of the user's may be, which is a question with
+    /// several right answers. This one is the single type we pick when there
+    /// is no column yet and nobody to ask.
+    pub fn create_type(self) -> &'static str {
+        match self {
+            Field::Title => "title",
+            Field::Location | Field::Notes => "rich_text",
+            Field::Priority | Field::Repeat => "select",
+            Field::Busy => "checkbox",
+            Field::Reminder | Field::TravelMinutes => "number",
+            Field::Attendees => "people",
+        }
+    }
+
+    /// The column name the app gives this field in a database it creates.
+    ///
+    /// The legacy English name on purpose, and not only for familiarity: a
+    /// database named this way is read correctly by the pre-mapping guess in
+    /// [`ColumnMapping::name_for`], so it still syncs if its mapping row is
+    /// ever lost. Localising the names would be friendlier and would give that
+    /// up, so it waits for someone to decide the trade is worth it.
+    pub fn created_name(self) -> &'static str {
+        self.legacy_names()[0]
+    }
+
     /// Notion property types this field can read from, used both to filter the
     /// dropdown and to reject a mapping that points at an unusable column.
     pub fn accepts_type(self, notion_type: &str) -> bool {
@@ -142,6 +188,64 @@ pub fn schema_from_pairs(pairs: &[(String, String)]) -> HashMap<String, (String,
         .iter()
         .map(|(name, notion_type)| (name.to_lowercase(), (name.clone(), notion_type.clone())))
         .collect()
+}
+
+/// The date column of a database the app creates.
+///
+/// Not a [`Field`] -- the enum's doc explains why the date property is kept
+/// out -- but a calendar without it syncs nothing, so a created database is
+/// not finished until this exists.
+pub const CREATED_DATE_PROPERTY: &str = "Date";
+
+/// `initial_data_source.properties` for a database the app creates, built from
+/// [`Field::ALL`] rather than written out by hand.
+///
+/// The point of generating it: a field added to the enum shows up here with no
+/// further edit, so the schema cannot fall behind the mapping UI that reads
+/// it. A hand-written copy would drift the first time someone adds a field and
+/// nothing would fail loudly enough to notice.
+pub fn notion_property_schema() -> serde_json::Value {
+    fn select_with(options: impl Iterator<Item = &'static str>) -> serde_json::Value {
+        let options: Vec<_> = options
+            .map(|name| serde_json::json!({ "name": name }))
+            .collect();
+        serde_json::json!({ "select": { "options": options } })
+    }
+
+    let mut props = serde_json::Map::new();
+    props.insert(
+        CREATED_DATE_PROPERTY.to_string(),
+        serde_json::json!({ "date": {} }),
+    );
+    for field in Field::ALL {
+        let body = match field {
+            Field::Priority => select_with(PRIORITY_OPTIONS.iter().map(|(name, _)| *name)),
+            Field::Repeat => select_with(REPEAT_OPTIONS.iter().map(|(name, _)| *name)),
+            other => {
+                let mut body = serde_json::Map::new();
+                body.insert(other.create_type().to_string(), serde_json::json!({}));
+                serde_json::Value::Object(body)
+            }
+        };
+        props.insert(field.created_name().to_string(), body);
+    }
+    serde_json::Value::Object(props)
+}
+
+/// The mapping that matches [`notion_property_schema`] exactly.
+///
+/// Marked `configured`, because it is: the app chose every one of these names
+/// when it created the columns, so there is nothing left to ask the user and
+/// the mapping step can be skipped entirely for such a calendar.
+pub fn mapping_for_created_schema() -> ColumnMapping {
+    let mut mapping = ColumnMapping {
+        configured: true,
+        ..ColumnMapping::default()
+    };
+    for field in Field::ALL {
+        mapping.set(field, Some(field.created_name().to_string()));
+    }
+    mapping
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]

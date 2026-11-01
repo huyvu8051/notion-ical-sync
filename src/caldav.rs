@@ -1,4 +1,6 @@
-use app::column_mapping::{ColumnMapping, Field};
+use app::column_mapping::{
+    notion_property_schema, ColumnMapping, Field, PRIORITY_OPTIONS, REPEAT_OPTIONS,
+};
 
 use argon2::password_hash::PasswordVerifier;
 use axum::{
@@ -126,21 +128,37 @@ fn extract_number_property(props: &serde_json::Value, name: &str) -> Option<i64>
 }
 
 fn map_priority(select_name: &str) -> Option<u8> {
-    match select_name.to_lowercase().as_str() {
-        "high" => Some(1),
-        "medium" => Some(5),
-        "low" => Some(9),
-        _ => None,
-    }
+    PRIORITY_OPTIONS
+        .iter()
+        .find(|(name, _)| name.eq_ignore_ascii_case(select_name))
+        .map(|(_, value)| *value)
 }
 
+/// The reverse, for writing back. iCalendar PRIORITY is 1-9 and the column has
+/// three options, so each option owns a band rather than a single number.
 fn priority_number_to_select_name(n: u8) -> Option<&'static str> {
-    match n {
-        1..=3 => Some("High"),
-        4..=6 => Some("Medium"),
-        7..=9 => Some("Low"),
-        _ => None,
-    }
+    let band = match n {
+        1..=3 => 0,
+        4..=6 => 1,
+        7..=9 => 2,
+        _ => return None,
+    };
+    Some(PRIORITY_OPTIONS[band].0)
+}
+
+/// Where a database the app creates should live.
+pub enum DatabaseParent<'a> {
+    /// Top level of the workspace, owned by the authorising user.
+    Workspace,
+    /// Inside a page the user has granted the connection.
+    Page(&'a str),
+}
+
+/// What survives from a `POST /v1/databases` -- the two ids every later call
+/// is addressed to.
+pub struct CreatedDatabase {
+    pub database_id: String,
+    pub data_source_id: String,
 }
 
 #[derive(Default)]
@@ -184,13 +202,10 @@ fn extract_busy(props: &serde_json::Value, names: &[&str]) -> Option<bool> {
 }
 
 fn map_repeat_to_rrule(select_name: &str) -> Option<String> {
-    match select_name.to_lowercase().as_str() {
-        "daily" => Some("FREQ=DAILY".to_string()),
-        "weekly" => Some("FREQ=WEEKLY".to_string()),
-        "monthly" => Some("FREQ=MONTHLY".to_string()),
-        "yearly" => Some("FREQ=YEARLY".to_string()),
-        _ => None,
-    }
+    REPEAT_OPTIONS
+        .iter()
+        .find(|(name, _)| name.eq_ignore_ascii_case(select_name))
+        .map(|(_, rrule)| rrule.to_string())
 }
 
 fn extract_attendees(props: &serde_json::Value, name: &str) -> Vec<String> {
@@ -1792,6 +1807,102 @@ impl AppState {
             .map(|s| s.to_string());
         info!(status = %resp_status, page_id = ?page_id, "<- Notion API response (create event)");
         page_id.ok_or_else(|| "Notion response missing page id".to_string())
+    }
+
+    /// Creates a calendar database with this app's schema, under `parent`.
+    ///
+    /// Callers pick the parent because the choice is not free. A workspace
+    /// parent is the whole point of the feature -- a user who has granted no
+    /// pages has nowhere to put a database, which is exactly the dead end this
+    /// removes -- and Notion allows it for a public integration holding
+    /// `insert_content`, which this app is. Its own error message says so:
+    /// "use a public integration with `insert_content` capability".
+    ///
+    /// That was read off the API, not run against it: the probe behind this
+    /// feature could only hold an internal token, which Notion refuses for
+    /// workspace parents by design. So a caller that cannot afford to be wrong
+    /// should be ready to retry under [`DatabaseParent::Page`].
+    pub async fn notion_create_calendar_database(
+        &self,
+        notion_token: &str,
+        title: &str,
+        parent: DatabaseParent<'_>,
+    ) -> Result<CreatedDatabase, String> {
+        let parent = match parent {
+            DatabaseParent::Workspace => {
+                serde_json::json!({ "type": "workspace", "workspace": true })
+            }
+            DatabaseParent::Page(page_id) => {
+                serde_json::json!({ "type": "page_id", "page_id": page_id })
+            }
+        };
+        self.post_new_database(notion_token, title, parent).await
+    }
+
+    async fn post_new_database(
+        &self,
+        notion_token: &str,
+        title: &str,
+        parent: serde_json::Value,
+    ) -> Result<CreatedDatabase, String> {
+        let body = serde_json::json!({
+            "parent": parent,
+            "title": [{ "type": "text", "text": { "content": title } }],
+            "initial_data_source": { "properties": notion_property_schema() },
+        });
+
+        let url = format!("{}/v1/databases", self.notion_api_base_url);
+        info!(notion_method = "POST", notion_url = %url, title, "-> Notion API request (create calendar database)");
+        let resp = self
+            .client
+            .post(&url)
+            .header("Authorization", format!("Bearer {}", notion_token))
+            .header("Notion-Version", "2025-09-03")
+            .header("Content-Type", "application/json")
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| {
+                error!(error = %e, "<- Notion API request failed (transport)");
+                format!("Request failed: {}", e)
+            })?;
+
+        let status = resp.status();
+        if !status.is_success() {
+            let txt = resp.text().await.unwrap_or_default();
+            error!(status = %status, body = %txt, "<- Notion API error response (create calendar database)");
+            return Err(format!("Notion error {}: {}", status, txt));
+        }
+
+        let data: serde_json::Value = resp
+            .json()
+            .await
+            .map_err(|e| format!("Parse failed: {}", e))?;
+        let database_id = data
+            .get("id")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default()
+            .to_string();
+        // The data source is created alongside the database and is what every
+        // later query and write is addressed to, so a response without one is
+        // not a usable calendar even though a database now exists.
+        let data_source_id = data
+            .get("data_sources")
+            .and_then(|v| v.as_array())
+            .and_then(|arr| arr.first())
+            .and_then(|ds| ds.get("id"))
+            .and_then(|v| v.as_str())
+            .unwrap_or_default()
+            .to_string();
+        if database_id.is_empty() || data_source_id.is_empty() {
+            error!(body = %data, "<- Notion created a database without usable ids");
+            return Err("Notion response missing database or data source id".to_string());
+        }
+        info!(status = %status, database_id, data_source_id, "<- Notion API response (create calendar database)");
+        Ok(CreatedDatabase {
+            database_id,
+            data_source_id,
+        })
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -4009,6 +4120,10 @@ pub fn create_app(
         .route(
             "/connect/notion/databases",
             get(leptos_login_required_page()).post(crate::pages::pick_databases::create_calendars),
+        )
+        .route(
+            "/connect/notion/databases/create",
+            post(crate::pages::pick_databases::create_standard_database),
         )
         .route(
             "/oauth/notion/callback",
