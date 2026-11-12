@@ -315,8 +315,18 @@ fn seed_pages() -> Vec<MockPage> {
     // size a user reported (185 dated rows). Spread over consecutive days so
     // that a client reading only the first page keeps the newest dates and
     // appears to start partway through the calendar.
+    // Overridable because 185 rows is the bug report, not the ceiling. The
+    // largest database in production is 2843 rows, which is what makes
+    // refresh_db's memory behaviour visible at all -- the query holds every
+    // row as serde_json::Value before parsing any of it. Set
+    // MOCK_NOTION_BULK_ROWS to reproduce that locally. Default unchanged, so
+    // every other use of this mock behaves exactly as before.
+    let bulk_rows: usize = std::env::var("MOCK_NOTION_BULK_ROWS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(183);
     let mut day = chrono::NaiveDate::from_ymd_opt(2026, 1, 5).expect("valid seed date");
-    for i in 0..183 {
+    for i in 0..bulk_rows {
         pages.push(MockPage {
             id: format!("mock-page-de-bulk-{i:03}"),
             data_source_id: DE_DB.data_source_id.to_string(),

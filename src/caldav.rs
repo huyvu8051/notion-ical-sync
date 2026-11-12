@@ -1144,9 +1144,41 @@ impl AppState {
 
         // Walk every page of results, not just the first. A database with more
         // than 100 dated rows otherwise loses everything past the first page.
-        let mut rows: Vec<serde_json::Value> = Vec::new();
+        //
+        // Each page is converted to PageInfo as it arrives rather than
+        // collected into one Vec<serde_json::Value> and parsed afterwards.
+        // The raw form is the expensive one: every Notion page is a
+        // serde_json::Value tree, a BTreeMap per object with the property
+        // names re-allocated for every row, and holding all of them at once
+        // is what made this function's peak scale with database size. The
+        // largest database in production is 2843 rows and cost +57MB in
+        // twenty seconds; the parsed PageInfo it becomes is fourteen small
+        // fields. Now at most one page -- 100 rows -- of raw JSON is alive
+        // at a time, and it is dropped at the end of each iteration.
+        let mut events = Vec::new();
+        let mut total_rows = 0usize;
+        let mut skipped_no_date = 0usize;
         let mut cursor: Option<String> = None;
         let mut pages_fetched = 0usize;
+
+        // Logged before the loop, not after it: pages are converted as they
+        // arrive now, so by the time the query finishes the mapping has
+        // already been applied to every one of them.
+        info!(
+            notion_url = %url,
+            date_property,
+            title = mapping.name_for(Field::Title).unwrap_or("<none>"),
+            location = mapping.name_for(Field::Location).unwrap_or("<none>"),
+            notes = mapping.name_for(Field::Notes).unwrap_or("<none>"),
+            priority = mapping.name_for(Field::Priority).unwrap_or("<none>"),
+            busy = mapping.name_for(Field::Busy).unwrap_or("<none>"),
+            reminder = mapping.name_for(Field::Reminder).unwrap_or("<none>"),
+            travel_minutes = mapping.name_for(Field::TravelMinutes).unwrap_or("<none>"),
+            repeat = mapping.name_for(Field::Repeat).unwrap_or("<none>"),
+            attendees = mapping.name_for(Field::Attendees).unwrap_or("<none>"),
+            configured = mapping.configured,
+            "reading pages with column mapping"
+        );
 
         loop {
             let mut body = serde_json::json!({
@@ -1214,10 +1246,21 @@ impl AppState {
                 has_more = data.has_more,
                 "<- Notion API response"
             );
-            rows.extend(data.results);
+            // Read the cursor fields before consuming `results` below --
+            // iterating it moves the field out of `data`.
+            let has_more = data.has_more;
+            let next_cursor = data.next_cursor;
 
-            match data.next_cursor {
-                Some(next) if data.has_more => cursor = Some(next),
+            total_rows += data.results.len();
+            for page in data.results {
+                match page_to_event(&page, date_property, mapping) {
+                    Some(ev) => events.push(ev),
+                    None => skipped_no_date += 1,
+                }
+            }
+
+            match next_cursor {
+                Some(next) if has_more => cursor = Some(next),
                 _ => break,
             }
 
@@ -1225,7 +1268,7 @@ impl AppState {
                 warn!(
                     notion_url = %url,
                     pages_fetched,
-                    rows = rows.len(),
+                    rows = total_rows,
                     "stopping pagination at the page cap; some rows may be missing"
                 );
                 break;
@@ -1235,34 +1278,10 @@ impl AppState {
         info!(
             notion_url = %url,
             pages_fetched,
-            total_rows = rows.len(),
+            total_rows,
             "<- Notion query complete"
         );
 
-        info!(
-            notion_url = %url,
-            date_property,
-            title = mapping.name_for(Field::Title).unwrap_or("<none>"),
-            location = mapping.name_for(Field::Location).unwrap_or("<none>"),
-            notes = mapping.name_for(Field::Notes).unwrap_or("<none>"),
-            priority = mapping.name_for(Field::Priority).unwrap_or("<none>"),
-            busy = mapping.name_for(Field::Busy).unwrap_or("<none>"),
-            reminder = mapping.name_for(Field::Reminder).unwrap_or("<none>"),
-            travel_minutes = mapping.name_for(Field::TravelMinutes).unwrap_or("<none>"),
-            repeat = mapping.name_for(Field::Repeat).unwrap_or("<none>"),
-            attendees = mapping.name_for(Field::Attendees).unwrap_or("<none>"),
-            configured = mapping.configured,
-            "reading pages with column mapping"
-        );
-
-        let mut events = Vec::new();
-        let mut skipped_no_date = 0usize;
-        for page in rows {
-            match page_to_event(&page, date_property, mapping) {
-                Some(ev) => events.push(ev),
-                None => skipped_no_date += 1,
-            }
-        }
 
         if skipped_no_date > 0 {
             info!(
