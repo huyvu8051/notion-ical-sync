@@ -24,8 +24,23 @@ and then never come alive — they look right and are subtly dead.
 
 It needs no arguments because the defaults already fit: `main.rs` loads `.env`
 through dotenvy, and `DATABASE_URL` falls back to
-`postgres://biolink:biolink@localhost:5433/notion_saas` when unset. Migrations
-run themselves on startup.
+`postgres://notion-caldav-saas:notion-caldav-saas@localhost:5433/notion-caldav-saas`
+when unset. Migrations run themselves on startup.
+
+That fallback used to name a different project -- `biolink:biolink` on a
+`notion_saas` database, neither of which belongs to this app. If your local
+Postgres on :5433 still only has the old role, either put a `DATABASE_URL` in
+`.env` or create the new one once:
+
+```sh
+psql -h localhost -p 5433 -U postgres -c 'CREATE ROLE "notion-caldav-saas" LOGIN PASSWORD '"'"'notion-caldav-saas'"'"';'
+psql -h localhost -p 5433 -U postgres -c 'CREATE DATABASE "notion-caldav-saas" OWNER "notion-caldav-saas";'
+```
+
+The quotes are not optional: the hyphens make it a quoted identifier
+everywhere. The name matches the Kubernetes namespace and the role in the
+shared Postgres cluster, which is the point -- one name for this app in every
+environment.
 
 Everything optional is unset, and the app says so on boot — one warning per
 integration, naming the variables it wants. Notion OAuth, Paddle, email and

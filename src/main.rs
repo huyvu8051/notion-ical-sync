@@ -251,8 +251,22 @@ async fn main() -> anyhow::Result<()> {
          (signature can't be verified) until it's configured",
     );
 
-    let database_url = env::var("DATABASE_URL")
-        .unwrap_or_else(|_| "postgres://biolink:biolink@localhost:5433/notion_saas".to_string());
+    // The local-development fallback. It used to read
+    // postgres://biolink:biolink@localhost:5433/notion_saas -- another
+    // project's credentials, and not even this project's database name,
+    // inherited from whatever was copied when this repo was started.
+    //
+    // It was harmless in production, where DATABASE_URL always comes from the
+    // sealed secret and this branch never runs, and harmless if that secret
+    // ever went missing, because localhost:5433 is nothing inside the pod. It
+    // stops being harmless once this app shares a Postgres cluster with
+    // biolink: a `biolink` role and database exist there, so anyone correcting
+    // the host without correcting the credentials would point one project at
+    // another's data. Naming it after itself removes that possibility.
+    let database_url = env::var("DATABASE_URL").unwrap_or_else(|_| {
+        "postgres://notion-caldav-saas:notion-caldav-saas@localhost:5433/notion-caldav-saas"
+            .to_string()
+    });
     let pool = sqlx::postgres::PgPoolOptions::new()
         .max_connections(10)
         .connect(&database_url)
