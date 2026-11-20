@@ -14,11 +14,11 @@ RUN cargo chef cook --release --recipe-path recipe.json
 COPY . .
 RUN cargo build --release --bin notion-ical-sync
 
-# mock_notion ships as its own image (the `mock` stage below) for staging
-# -- never the production one. Built here, not a separate stage, so it
-# reuses this stage's already-cooked dependency cache instead of paying
-# for a second `cargo chef cook`.
-RUN cargo build --release --bin mock_notion
+# Both ship in the `mock` stage below, for staging only -- never the
+# production image. Built here, not a separate stage, so they reuse this
+# stage's already-cooked dependency cache instead of paying for a second
+# `cargo chef cook`.
+RUN cargo build --release --bin mock_notion --bin mock_resend
 
 # Builds crates/app to WASM for client-side hydration — every page's Shell
 # is server-rendered via leptos_axum::render_app_to_stream (see crates/app/
@@ -70,6 +70,9 @@ ENTRYPOINT ["notion-ical-sync"]
 FROM debian:bookworm-slim AS mock
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates && rm -rf /var/lib/apt/lists/*
 COPY --from=builder /app/target/release/mock_notion /usr/local/bin/mock_notion
+COPY --from=builder /app/target/release/mock_resend /usr/local/bin/mock_resend
 WORKDIR /
-EXPOSE 3001
+EXPOSE 3001 3002
+# Default to mock_notion -- the mock_resend Deployment overrides this with
+# its own `command` in k8s, same image either way.
 ENTRYPOINT ["mock_notion"]

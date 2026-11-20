@@ -9,6 +9,7 @@ const RESEND_API_URL: &str = "https://api.resend.com/emails";
 pub struct EmailConfig {
     pub api_key: String,
     pub from: String,
+    pub api_url: String,
 }
 
 impl EmailConfig {
@@ -16,6 +17,13 @@ impl EmailConfig {
         Some(Self {
             api_key: std::env::var("RESEND_API_KEY").ok()?,
             from: std::env::var("EMAIL_FROM").ok()?,
+            // Same pattern as NOTION_API_BASE_URL in main.rs: a stand-in
+            // for staging's load/regression tests, so they never send real
+            // email through the real account (spam risk, quota) and don't
+            // need a real RESEND_API_KEY at all -- mock_resend accepts any
+            // bearer token.
+            api_url: std::env::var("RESEND_API_URL")
+                .unwrap_or_else(|_| RESEND_API_URL.to_string()),
         })
     }
 }
@@ -28,7 +36,7 @@ pub async fn send_email(
 ) -> Result<(), String> {
     let client = reqwest::Client::new();
     let resp = client
-        .post(RESEND_API_URL)
+        .post(&cfg.api_url)
         .bearer_auth(&cfg.api_key)
         .json(&serde_json::json!({
             "from": cfg.from,
