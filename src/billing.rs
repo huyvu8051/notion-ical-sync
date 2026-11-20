@@ -98,7 +98,7 @@ pub struct PaddleConfig {
     pub webhook_secret: String,
     pub price_id: String,
     pub client_token: String,
-    pub api_base: &'static str,
+    pub api_base: String,
 }
 
 impl PaddleConfig {
@@ -107,11 +107,21 @@ impl PaddleConfig {
         let webhook_secret = std::env::var("PADDLE_WEBHOOK_SECRET").ok()?;
         let price_id = std::env::var("PADDLE_PRICE_ID").ok()?;
         let client_token = std::env::var("PADDLE_CLIENT_TOKEN").ok()?;
-        let api_base = if api_key.starts_with("pdl_sdbx_") {
-            "https://sandbox-api.paddle.com"
-        } else {
-            "https://api.paddle.com"
-        };
+        // PADDLE_API_BASE_URL overrides the key-prefix-derived default --
+        // same pattern as NOTION_API_BASE_URL/RESEND_API_URL, for staging's
+        // mock-paddle. Only covers the server-to-server calls below
+        // (portal sessions, cancel, defer-to-trial-end); the checkout
+        // flow itself is client-side Paddle.js loaded straight from
+        // Paddle's own CDN and always talks to real Paddle (sandbox or
+        // live per is_sandbox() below) -- nothing server-side can
+        // intercept that.
+        let api_base = std::env::var("PADDLE_API_BASE_URL").unwrap_or_else(|_| {
+            if api_key.starts_with("pdl_sdbx_") {
+                "https://sandbox-api.paddle.com".to_string()
+            } else {
+                "https://api.paddle.com".to_string()
+            }
+        });
         Some(Self {
             api_key,
             webhook_secret,
