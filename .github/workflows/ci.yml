@@ -35,7 +35,23 @@ jobs:
         with:
           context: .
           file: ./Dockerfile
+          # Explicit, not implicit -- Docker builds the Dockerfile's LAST
+          # stage when --target is unset, and the `mock` stage added below
+          # is now last. Without this, the next push would have quietly
+          # shipped mock_notion as :latest instead of the real app.
+          target: runtime
           push: true
           tags: ghcr.io/huyvu8051/notion-ical-sync:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Build and push mock_notion (staging only, see Dockerfile)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          target: mock
+          push: true
+          tags: ghcr.io/huyvu8051/notion-ical-sync-mock:latest
           cache-from: type=gha
           cache-to: type=gha,mode=max

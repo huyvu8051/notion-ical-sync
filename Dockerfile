@@ -14,6 +14,12 @@ RUN cargo chef cook --release --recipe-path recipe.json
 COPY . .
 RUN cargo build --release --bin notion-ical-sync
 
+# mock_notion ships as its own image (the `mock` stage below) for staging
+# -- never the production one. Built here, not a separate stage, so it
+# reuses this stage's already-cooked dependency cache instead of paying
+# for a second `cargo chef cook`.
+RUN cargo build --release --bin mock_notion
+
 # Builds crates/app to WASM for client-side hydration — every page's Shell
 # is server-rendered via leptos_axum::render_app_to_stream (see crates/app/
 # src/lib.rs), then this bundle hydrates it in the browser. Separate cargo
@@ -45,7 +51,7 @@ COPY crates ./crates
 RUN mkdir -p /assets && cd tailwind && \
     npx tailwindcss -c auth-a.config.js -i input.css -o /assets/style-auth-a.css --minify
 
-FROM debian:bookworm-slim
+FROM debian:bookworm-slim AS runtime
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates && rm -rf /var/lib/apt/lists/*
 COPY --from=builder /app/target/release/notion-ical-sync /usr/local/bin/notion-ical-sync
 COPY --from=wasm-builder /app/pkg /pkg
@@ -54,3 +60,16 @@ COPY static /static
 WORKDIR /
 EXPOSE 8080
 ENTRYPOINT ["notion-ical-sync"]
+
+# Selected via `docker build --target mock` -- a stand-in Notion API for
+# staging's load/regression tests, so they never touch the real Notion API
+# (rate limits, and writing test data into a real connected workspace).
+# No WASM/Tailwind/static assets: it's a pure JSON API, nothing it serves
+# is a browser page. Pointed at by setting NOTION_API_BASE_URL on the real
+# app (src/main.rs already supports this -- it was built for exactly this).
+FROM debian:bookworm-slim AS mock
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates && rm -rf /var/lib/apt/lists/*
+COPY --from=builder /app/target/release/mock_notion /usr/local/bin/mock_notion
+WORKDIR /
+EXPOSE 3001
+ENTRYPOINT ["mock_notion"]
