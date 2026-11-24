@@ -9,8 +9,9 @@
 //! makes the right one reachable.
 
 use axum::http::StatusCode;
-use axum::extract::{Path, Query, State};
-use axum::response::{Html, IntoResponse, Redirect};
+use axum::extract::{Path, Query, Request, State};
+use axum::middleware::Next;
+use axum::response::{Html, IntoResponse, Redirect, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use serde_json::{json, Value};
@@ -205,6 +206,52 @@ struct MockState {
     /// trashed and a deleted database, and only `GET /v1/data_sources/{id}`
     /// separates them. Reproducing that asymmetry is the whole point.
     unavailable: std::collections::HashMap<String, Availability>,
+    /// How many requests this process has served, and to what. The suite's
+    /// only way to answer "194 webhooks caused how many calls to Notion?" --
+    /// coalescing, backoff and sync-loop behaviour are all statements about
+    /// this number, and none of them are observable from the app's own HTTP
+    /// surface.
+    requests_total: u64,
+    by_path: std::collections::HashMap<String, u64>,
+    /// Armed faults, consumed as requests match them.
+    faults: Vec<Fault>,
+    /// While > 0, `query` claims there is always another page and hands back
+    /// a cursor that does not advance, so the caller's own page cap is the
+    /// only thing that ends the loop. Decremented per request.
+    cursor_stuck: u32,
+}
+
+/// One injected fault. Consumed `times` times against paths starting with
+/// `path_prefix`, then dropped.
+///
+/// A prefix rather than an exact path on purpose: making `/v1/pages/` fail
+/// while `/v1/data_sources/` keeps answering is how you check that a
+/// single-page refresh failure really does fall back to the full re-query,
+/// instead of both paths dying together and the fallback never being proven.
+#[derive(Clone, Debug)]
+struct Fault {
+    kind: FaultKind,
+    times: u32,
+    path_prefix: String,
+}
+
+#[derive(Clone, Debug)]
+enum FaultKind {
+    /// Answer with this status instead of handling the request.
+    /// `retry_after` fills in the header real Notion may or may not send on a
+    /// 429 -- which it is decides whether a backoff can be informed or has to
+    /// guess, and that is worth being able to test both ways.
+    Status {
+        code: u16,
+        retry_after: Option<String>,
+    },
+    /// Handle the request, but only after waiting. Below the app's 30s reqwest
+    /// timeout this is the slow path; above it, the timeout path. They are
+    /// different code paths in the app and both need exercising.
+    Delay { ms: u64 },
+    /// Answer 200 with a body that is not valid JSON, for the `Parse failed`
+    /// branch -- which currently has no retry of any kind.
+    Garbage,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -418,6 +465,240 @@ async fn get_data_source(
 /// Test hook with no Notion counterpart: flip a data source into the trash,
 /// delete it, or restore it, so the sync loop's reaction can be exercised
 /// without hand-editing a real workspace.
+/// Counts every request and applies any armed fault before the real handler
+/// sees it.
+///
+/// Deliberately skips `/v1/_test/*`: a forced 429 that also blocked
+/// `/v1/_test/reset` could only be undone by restarting the pod, which is a
+/// fine way to lose an afternoon.
+async fn control_layer(State(state): State<SharedState>, req: Request, next: Next) -> Response {
+    let path = req.uri().path().to_string();
+    if path.starts_with("/v1/_test/") || path == "/status" || path == "/" {
+        return next.run(req).await;
+    }
+
+    // Lock scoped so it is released before any await below -- holding the
+    // mutex across a 10s injected delay would serialise the whole mock and
+    // turn a one-request delay into a global stall.
+    let fault = {
+        let mut st = state.lock().await;
+        st.requests_total += 1;
+        *st.by_path.entry(normalise_path(&path)).or_insert(0) += 1;
+        take_fault(&mut st, &path)
+    };
+
+    match fault {
+        Some(FaultKind::Status { code, retry_after }) => {
+            let status = StatusCode::from_u16(code).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
+            let body = json!({
+                "object": "error",
+                "status": code,
+                "code": "injected_by_mock",
+                "message": format!("mock-notion injected HTTP {code}"),
+            });
+            let mut res = (status, Json(body)).into_response();
+            if let Some(value) = retry_after {
+                if let Ok(header) = value.parse() {
+                    res.headers_mut()
+                        .insert(axum::http::header::RETRY_AFTER, header);
+                }
+            }
+            tracing::warn!(%path, code, "mock: injected status");
+            res
+        }
+        Some(FaultKind::Garbage) => {
+            tracing::warn!(%path, "mock: injected malformed JSON");
+            (
+                StatusCode::OK,
+                [(axum::http::header::CONTENT_TYPE, "application/json")],
+                "{\"results\": [ truncated and not valid json",
+            )
+                .into_response()
+        }
+        Some(FaultKind::Delay { ms }) => {
+            tracing::warn!(%path, ms, "mock: injected delay");
+            tokio::time::sleep(std::time::Duration::from_millis(ms)).await;
+            next.run(req).await
+        }
+        None => next.run(req).await,
+    }
+}
+
+fn take_fault(st: &mut MockState, path: &str) -> Option<FaultKind> {
+    let idx = st
+        .faults
+        .iter()
+        .position(|f| path.starts_with(&f.path_prefix) && f.times > 0)?;
+    let kind = st.faults[idx].kind.clone();
+    st.faults[idx].times -= 1;
+    if st.faults[idx].times == 0 {
+        st.faults.remove(idx);
+    }
+    Some(kind)
+}
+
+/// Collapse ids out of the path so the counter groups by endpoint instead of
+/// fragmenting across every page id a test invents.
+fn normalise_path(path: &str) -> String {
+    let segs: Vec<&str> = path.trim_matches('/').split('/').collect();
+    match segs.as_slice() {
+        ["v1", "pages"] => "/v1/pages".to_string(),
+        ["v1", "pages", _] => "/v1/pages/*".to_string(),
+        ["v1", "data_sources", _] => "/v1/data_sources/*".to_string(),
+        ["v1", "data_sources", _, "query"] => "/v1/data_sources/*/query".to_string(),
+        ["v1", "databases", _] => "/v1/databases/*".to_string(),
+        _ => path.to_string(),
+    }
+}
+
+async fn test_stats(State(state): State<SharedState>) -> impl IntoResponse {
+    let st = state.lock().await;
+    Json(json!({
+        "requests_total": st.requests_total,
+        "by_path": st.by_path,
+        "faults_armed": st.faults.len(),
+        "cursor_stuck": st.cursor_stuck,
+        "pages": st.pages.len(),
+    }))
+}
+
+/// Clears counters and faults, but NOT `pages`: the seeded databases are the
+/// fixture every group shares, and several groups upsert pages into them.
+async fn test_reset(State(state): State<SharedState>) -> impl IntoResponse {
+    let mut st = state.lock().await;
+    st.requests_total = 0;
+    st.by_path.clear();
+    st.faults.clear();
+    st.cursor_stuck = 0;
+    st.unavailable.clear();
+    tracing::info!("mock: control state reset");
+    (StatusCode::OK, "reset\n")
+}
+
+fn arm(st: &mut MockState, kind: FaultKind, body: &Value) -> String {
+    let times = body.get("times").and_then(|v| v.as_u64()).unwrap_or(1) as u32;
+    let path_prefix = body
+        .get("path_prefix")
+        .and_then(|v| v.as_str())
+        .unwrap_or("/v1/")
+        .to_string();
+    let described = format!("{kind:?} x{times} on {path_prefix}");
+    st.faults.push(Fault {
+        kind,
+        times,
+        path_prefix,
+    });
+    tracing::info!(fault = %described, "mock: fault armed");
+    described
+}
+
+async fn test_respond(
+    State(state): State<SharedState>,
+    Json(body): Json<Value>,
+) -> impl IntoResponse {
+    let Some(code) = body.get("status").and_then(|v| v.as_u64()) else {
+        return (StatusCode::BAD_REQUEST, "need {\"status\": <u16>}\n").into_response();
+    };
+    let kind = FaultKind::Status {
+        code: code as u16,
+        retry_after: body
+            .get("retry_after")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string()),
+    };
+    let mut st = state.lock().await;
+    let described = arm(&mut st, kind, &body);
+    (StatusCode::OK, format!("{described}\n")).into_response()
+}
+
+async fn test_delay(State(state): State<SharedState>, Json(body): Json<Value>) -> impl IntoResponse {
+    let Some(ms) = body.get("ms").and_then(|v| v.as_u64()) else {
+        return (StatusCode::BAD_REQUEST, "need {\"ms\": <u64>}\n").into_response();
+    };
+    let mut st = state.lock().await;
+    let described = arm(&mut st, FaultKind::Delay { ms }, &body);
+    (StatusCode::OK, format!("{described}\n")).into_response()
+}
+
+async fn test_garbage(
+    State(state): State<SharedState>,
+    Json(body): Json<Value>,
+) -> impl IntoResponse {
+    let mut st = state.lock().await;
+    let described = arm(&mut st, FaultKind::Garbage, &body);
+    (StatusCode::OK, format!("{described}\n"))
+}
+
+async fn test_cursor_stuck(
+    State(state): State<SharedState>,
+    Json(body): Json<Value>,
+) -> impl IntoResponse {
+    let times = body.get("times").and_then(|v| v.as_u64()).unwrap_or(200) as u32;
+    let mut st = state.lock().await;
+    st.cursor_stuck = times;
+    tracing::info!(times, "mock: cursor pinned, will not advance");
+    (StatusCode::OK, format!("cursor stuck for {times} requests\n"))
+}
+
+/// Upsert one page's content and, independently, its `last_edited`.
+///
+/// Upsert rather than update because tests address pages by ids they invent,
+/// and because setting content and timestamp separately is the only way to
+/// reproduce two edits inside one minute -- the case that matters if Notion
+/// really does round `last_edited_time` down to the minute.
+async fn test_set_page(
+    State(state): State<SharedState>,
+    Path(id): Path<String>,
+    Json(body): Json<Value>,
+) -> impl IntoResponse {
+    let mut st = state.lock().await;
+    let str_field = |key: &str| {
+        body.get(key)
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string())
+    };
+
+    if let Some(page) = st.pages.iter_mut().find(|p| p.id == id) {
+        if let Some(v) = str_field("title") {
+            page.title = v;
+        }
+        if let Some(v) = str_field("last_edited") {
+            page.last_edited = v;
+        }
+        if let Some(v) = str_field("start") {
+            page.start = v;
+        }
+        if let Some(v) = body.get("archived").and_then(|v| v.as_bool()) {
+            page.archived = v;
+        }
+        tracing::info!(page = %id, "mock: page updated");
+        return (StatusCode::OK, format!("updated {id}\n"));
+    }
+
+    let data_source_id = str_field("data_source_id").unwrap_or_else(|| EN_DB.data_source_id.to_string());
+    st.pages.push(MockPage {
+        id: id.clone(),
+        data_source_id,
+        title: str_field("title").unwrap_or_else(|| "mock page".to_string()),
+        start: str_field("start").unwrap_or_else(|| "2026-11-24T09:00:00.000Z".to_string()),
+        end: None,
+        archived: body
+            .get("archived")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false),
+        location: None,
+        notes: None,
+        priority: None,
+        busy: None,
+        reminder: None,
+        travel_time: None,
+        last_edited: str_field("last_edited")
+            .unwrap_or_else(|| "2026-11-24T09:00:00.000Z".to_string()),
+    });
+    tracing::info!(page = %id, "mock: page created");
+    (StatusCode::OK, format!("created {id}\n"))
+}
+
 async fn set_availability(
     State(state): State<SharedState>,
     Path((id, how)): Path<(String, String)>,
@@ -458,7 +739,7 @@ async fn query_data_source(
         .and_then(|v| v.as_bool())
         .unwrap_or(false);
 
-    let state = state.lock().await;
+    let mut state = state.lock().await;
     if state.unavailable.contains_key(&id) {
         return object_not_found(&id).into_response();
     }
@@ -519,8 +800,17 @@ async fn query_data_source(
     let total = matching.len();
     let end = (start + page_size).min(total);
     let results: Vec<Value> = matching[start.min(total)..end].to_vec();
-    let has_more = end < total;
-    let next_cursor = has_more.then(|| end.to_string());
+    let mut has_more = end < total;
+    let mut next_cursor = has_more.then(|| end.to_string());
+
+    // Hand back the cursor we were given, not the next one, so the caller
+    // paginates forever unless its own page cap stops it. That cap
+    // (MAX_QUERY_PAGES) has never been exercised; this is what exercises it.
+    if state.cursor_stuck > 0 {
+        state.cursor_stuck -= 1;
+        has_more = true;
+        next_cursor = Some(start.to_string());
+    }
 
     tracing::info!(
         data_source_id = %id,
@@ -807,7 +1097,11 @@ async fn main() {
     let state: SharedState = Arc::new(Mutex::new(MockState {
         pages: seed_pages(),
         next_id: 0,
-            unavailable: std::collections::HashMap::new(),
+        unavailable: std::collections::HashMap::new(),
+        requests_total: 0,
+        by_path: std::collections::HashMap::new(),
+        faults: Vec::new(),
+        cursor_stuck: 0,
     }));
 
     let app = Router::new()
@@ -822,6 +1116,17 @@ async fn main() {
         .route("/v1/databases/{id}", get(get_database))
         .route("/v1/pages", post(create_page))
         .route("/v1/pages/{id}", get(get_page).patch(patch_page))
+        .route("/v1/_test/stats", get(test_stats))
+        .route("/v1/_test/reset", post(test_reset))
+        .route("/v1/_test/respond", post(test_respond))
+        .route("/v1/_test/delay", post(test_delay))
+        .route("/v1/_test/garbage", post(test_garbage))
+        .route("/v1/_test/cursor_stuck", post(test_cursor_stuck))
+        .route("/v1/_test/page/{id}", post(test_set_page))
+        .layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            control_layer,
+        ))
         .with_state(state);
 
     let addr: std::net::SocketAddr = format!("0.0.0.0:{port}").parse().unwrap();
