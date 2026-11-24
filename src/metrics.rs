@@ -186,7 +186,8 @@ impl InflightGuard {
         // callback would not exist yet and the first burst would go
         // unobserved.
         let _ = instruments();
-        INFLIGHT.fetch_add(1, Ordering::Relaxed);
+        let after = INFLIGHT.fetch_add(1, Ordering::Relaxed) + 1;
+        tracing::info!(after, thread = ?std::thread::current().id(), "inflight +1");
         Self(())
     }
 }
@@ -199,7 +200,8 @@ impl Default for InflightGuard {
 
 impl Drop for InflightGuard {
     fn drop(&mut self) {
-        INFLIGHT.fetch_sub(1, Ordering::Relaxed);
+        let after = INFLIGHT.fetch_sub(1, Ordering::Relaxed) - 1;
+        tracing::info!(after, thread = ?std::thread::current().id(), "inflight -1");
     }
 }
 
