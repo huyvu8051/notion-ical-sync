@@ -56,6 +56,25 @@ pub async fn handle_notion_webhook(
         return "ignored";
     }
 
+    // The payload shape itself, captured verbatim. Nothing else in this
+    // service records it: the four fields pulled out below are all that ever
+    // reached a log line, and `body` is dropped at the end of this function,
+    // so there has never been a way to answer "what does a
+    // `data_source.schema_updated` event actually look like" without waiting
+    // for one to arrive and reading it live. Off by default (it is one log
+    // line per webhook, ~1400/day, and it duplicates what the fields below
+    // already say); set NOTION_WEBHOOK_LOG_RAW_BODY=true for as long as it
+    // takes to collect the shapes you need, then unset it.
+    //
+    // Deliberately after signature verification: an unverified body is
+    // attacker-controlled and does not belong in the log store.
+    if std::env::var("NOTION_WEBHOOK_LOG_RAW_BODY").as_deref() == Ok("true") {
+        info!(
+            raw_body = %String::from_utf8_lossy(&body),
+            "notion webhook raw body"
+        );
+    }
+
     let event_type = json
         .get("type")
         .and_then(|v| v.as_str())
