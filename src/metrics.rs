@@ -21,12 +21,12 @@
 //! - `webhook_inflight` — work accepted but not finished. A SIGKILL loses
 //!   exactly this much: 20 of 20 in a controlled experiment. The gauge makes
 //!   the exposure visible before something kills the pod rather than after.
-//!   Caveat worth knowing before reading it: the gauge is sampled on the
-//!   15-second export interval, and processing normally completes in about a
-//!   millisecond, so it reads 0 unless the upstream is slow. It only becomes
-//!   informative when work is genuinely slow — which is exactly the situation
-//!   where the exposure matters, so that is a reasonable thing for it to be
-//!   blind to.
+//!   It reads 0 almost always, and that is correct rather than broken: guard
+//!   lifetimes measured from the logs have a median of 0.9ms and a peak
+//!   concurrency of 1, so there is genuinely nothing in flight at a 15-second
+//!   sampling instant. A long investigation treated this as a bug; it was
+//!   not. What was broken was the histogram below, whose constant 2.5 made
+//!   the upstream look slow when it was not.
 //! - `sync_cycle_duration_seconds` / `sync_calendars_total{result}` — the
 //!   periodic pull, which holds a database transaction open for its whole
 //!   duration.
@@ -82,21 +82,7 @@ fn instruments() -> &'static Instruments {
                 "Webhooks acknowledged but not yet finished processing. Everything counted here \
                  is lost if the process dies.",
             )
-            .with_callback(|observer| {
-                let v = INFLIGHT.load(Ordering::Relaxed);
-                // Temporary, and the whole point of the current build: the
-                // gauge exports 0 while work is demonstrably in flight, the
-                // callback is confirmed to run (the SDK logs
-                // MeterProviderInvokingObservableCallbacks count=1 every
-                // interval), and every other hypothesis has been eliminated.
-                // Logging the value the callback actually sees splits the two
-                // remaining possibilities in one run: a non-zero log beside a
-                // zero series means the loss is downstream of observe(); a
-                // zero log means the atomic itself is wrong and the guard is
-                // not doing what it reads as doing.
-                tracing::info!(inflight = v, "observable gauge callback");
-                observer.observe(v, &[]);
-            })
+            .with_callback(|observer| observer.observe(INFLIGHT.load(Ordering::Relaxed), &[]))
             .build();
         Instruments {
             webhook_received: meter
@@ -113,10 +99,27 @@ fn instruments() -> &'static Instruments {
                 .f64_histogram("notioncal.notion.request.duration")
                 .with_unit("s")
                 .with_description("Latency of Notion API calls")
+                // Explicit boundaries, because the OTel defaults are
+                // [0, 5, 10, 25, 50, 75, 100, 250, 500, ...] and are meant for
+                // MILLISECONDS. Recording seconds against them puts every real
+                // observation into the single (0, 5] bucket, and
+                // histogram_quantile then linearly interpolates to exactly
+                // 2.5 — forever, for any input. That constant was read as
+                // "upstream latency is 2.5s, the injection is working" and
+                // used to validate several load tests. It measured nothing.
+                // The giveaway was that it was 2.5000 every single time.
+                .with_boundaries(vec![
+                    0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0,
+                ])
                 .build(),
             sync_cycle_duration: meter
                 .f64_histogram("notioncal.sync.cycle.duration")
                 .with_unit("s")
+                // Same reason as above, shifted up: a pull cycle on production
+                // runs 130-200s.
+                .with_boundaries(vec![
+                    0.1, 0.5, 1.0, 5.0, 10.0, 30.0, 60.0, 120.0, 180.0, 300.0, 600.0,
+                ])
                 .with_description(
                     "Duration of a full refresh_all cycle. A database transaction is held open \
                      for all of it.",
@@ -186,8 +189,7 @@ impl InflightGuard {
         // callback would not exist yet and the first burst would go
         // unobserved.
         let _ = instruments();
-        let after = INFLIGHT.fetch_add(1, Ordering::Relaxed) + 1;
-        tracing::info!(after, thread = ?std::thread::current().id(), "inflight +1");
+        INFLIGHT.fetch_add(1, Ordering::Relaxed);
         Self(())
     }
 }
@@ -200,8 +202,7 @@ impl Default for InflightGuard {
 
 impl Drop for InflightGuard {
     fn drop(&mut self) {
-        let after = INFLIGHT.fetch_sub(1, Ordering::Relaxed) - 1;
-        tracing::info!(after, thread = ?std::thread::current().id(), "inflight -1");
+        INFLIGHT.fetch_sub(1, Ordering::Relaxed);
     }
 }
 
