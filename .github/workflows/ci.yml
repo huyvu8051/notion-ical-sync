@@ -68,9 +68,14 @@ jobs:
   # Tagged with the branch name, so staging can point at exactly this build
   # (see argocd/manifests/notion-caldav-saas-stg/mocks.yaml in the infra repo)
   # and :latest keeps meaning "what is on main".
+  #
+  # Triggered by hand, not by pushing: the `push` filter at the top of this
+  # file only matches main, so a branch push starts no workflow at all and an
+  # event_name condition here would never be evaluated. Run it with
+  #   gh workflow run ci.yml --ref <branch>
   build-mock-branch:
     name: Build & Push mock image (branch)
-    if: github.event_name == 'push' && github.ref != 'refs/heads/main'
+    if: github.ref != 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:
       packages: write
