@@ -49,8 +49,14 @@ tower-sessions-sqlx-store = { git = "https://github.com/maxcountryman/tower-sess
 argon2 = "0.5"
 base64 = "0.22"
 opentelemetry = "0.33"
-opentelemetry_sdk = { version = "0.33", default-features = false, features = ["trace", "logs", "internal-logs", "rt-tokio", "experimental_trace_batch_span_processor_with_async_runtime", "experimental_logs_batch_log_processor_with_async_runtime"] }
-opentelemetry-otlp = { version = "0.33", default-features = false, features = ["http-proto", "reqwest-client", "reqwest-rustls", "trace", "logs", "internal-logs"] }
+# `metrics` + the async-runtime periodic reader for the same reason the trace
+# and log processors use their async-runtime variants: the default reader
+# spawns a plain std::thread with no Tokio reactor, and the reqwest client
+# under the OTLP exporter panics ("there is no reactor running") the moment it
+# tries to do I/O from there. Note the feature is spelled `periodicreader`,
+# not `periodic_reader`.
+opentelemetry_sdk = { version = "0.33", default-features = false, features = ["trace", "logs", "metrics", "internal-logs", "rt-tokio", "experimental_trace_batch_span_processor_with_async_runtime", "experimental_logs_batch_log_processor_with_async_runtime", "experimental_metrics_periodicreader_with_async_runtime"] }
+opentelemetry-otlp = { version = "0.33", default-features = false, features = ["http-proto", "reqwest-client", "reqwest-rustls", "trace", "logs", "metrics", "internal-logs"] }
 opentelemetry-appender-tracing = "0.33"
 opentelemetry-semantic-conventions = "0.33"
 tracing-opentelemetry = "0.34"

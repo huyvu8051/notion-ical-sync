@@ -3,6 +3,7 @@ use hmac::{Hmac, Mac};
 use sha2::Sha256;
 use tracing::{info, warn};
 
+use crate::metrics::{self, WebhookOutcome};
 use crate::AppState;
 
 type HmacSha256 = Hmac<Sha256>;
@@ -16,6 +17,7 @@ pub async fn handle_notion_webhook(
         Ok(v) => v,
         Err(e) => {
             warn!(error = %e, "notion webhook: invalid JSON body");
+            metrics::webhook_received("unparseable", WebhookOutcome::DroppedInvalidJson);
             return "ignored";
         }
     };
@@ -25,11 +27,13 @@ pub async fn handle_notion_webhook(
             verification_token,
             "notion webhook verification handshake received"
         );
+        metrics::webhook_received("verification", WebhookOutcome::Handshake);
         return "ok";
     }
 
     let Some(webhook_secret) = state.webhook_secret.as_deref() else {
         warn!("notion webhook: NOTION_WEBHOOK_SECRET not configured, dropping unverifiable event");
+        metrics::webhook_received("unknown", WebhookOutcome::NoSecretConfigured);
         return "ignored";
     };
 
@@ -40,11 +44,13 @@ pub async fn handle_notion_webhook(
 
     let Some(signature_hex) = signature_header else {
         warn!("notion webhook: missing X-Notion-Signature header");
+        metrics::webhook_received("unknown", WebhookOutcome::DroppedUnverified);
         return "ignored";
     };
 
     let Ok(expected_signature) = hex_decode(signature_hex) else {
         warn!("notion webhook: malformed signature header");
+        metrics::webhook_received("unknown", WebhookOutcome::DroppedUnverified);
         return "ignored";
     };
 
@@ -53,6 +59,7 @@ pub async fn handle_notion_webhook(
     mac.update(&body);
     if mac.verify_slice(&expected_signature).is_err() {
         warn!("notion webhook: signature verification failed, dropping event");
+        metrics::webhook_received("unknown", WebhookOutcome::DroppedUnverified);
         return "ignored";
     }
 
@@ -105,22 +112,52 @@ pub async fn handle_notion_webhook(
         "notion webhook event verified"
     );
 
-    if let Some(data_source_id) = data_source_id {
-        tokio::spawn(async move {
-            // A page event names its page, so read that one row rather than
-            // re-querying every row in the data source. Anything else — a
-            // view or schema change — says nothing about which rows moved, so
-            // it still needs the full re-query.
-            match entity_id.filter(|_| entity_type == "page") {
-                Some(page_id) => {
-                    state
-                        .refresh_page_by_data_source(&data_source_id, &page_id)
-                        .await
-                }
-                None => state.refresh_by_data_source(&data_source_id).await,
+    let Some(data_source_id) = data_source_id else {
+        // Acknowledged with 200 and then discarded: there is no data source to
+        // refresh and nothing retries it, because Notion already had its 200.
+        // 2.9% of production page events arrive this way (69 of ~2400 over 48
+        // hours). It is invisible in production because the ten-minute poll
+        // re-reads everything eventually; this counter is what makes it
+        // visible without reading the logs.
+        warn!(
+            event_type = %event_type,
+            entity_id = entity_id.as_deref(),
+            entity_type = %entity_type,
+            "notion webhook: no data_source_id, event dropped"
+        );
+        metrics::webhook_received(&event_type, WebhookOutcome::DroppedNoDataSource);
+        return "ignored";
+    };
+
+    let page_event = entity_id.clone().filter(|_| entity_type == "page");
+    metrics::webhook_received(
+        &event_type,
+        if page_event.is_some() {
+            WebhookOutcome::HandledPage
+        } else {
+            WebhookOutcome::HandledDataSource
+        },
+    );
+
+    tokio::spawn(async move {
+        // Held for the lifetime of the spawned work, so `webhook.inflight`
+        // measures exactly what a SIGKILL would destroy. Dropped on panic as
+        // well as on completion -- a gauge that only ever rises is worse than
+        // no gauge.
+        let _inflight = metrics::InflightGuard::new();
+        // A page event names its page, so read that one row rather than
+        // re-querying every row in the data source. Anything else — a
+        // view or schema change — says nothing about which rows moved, so
+        // it still needs the full re-query.
+        match page_event {
+            Some(page_id) => {
+                state
+                    .refresh_page_by_data_source(&data_source_id, &page_id)
+                    .await
             }
-        });
-    }
+            None => state.refresh_by_data_source(&data_source_id).await,
+        }
+    });
 
     "ok"
 }

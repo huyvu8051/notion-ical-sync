@@ -8,6 +8,7 @@ pub mod caldav;
 pub mod crypto;
 pub mod email;
 pub mod error_page;
+pub mod metrics;
 pub mod pages;
 pub mod session;
 pub mod webhook;

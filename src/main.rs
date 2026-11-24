@@ -106,6 +106,7 @@ fn build_env_filter() -> tracing_subscriber::EnvFilter {
 struct OtelGuard {
     tracer_provider: opentelemetry_sdk::trace::SdkTracerProvider,
     logger_provider: opentelemetry_sdk::logs::SdkLoggerProvider,
+    meter_provider: opentelemetry_sdk::metrics::SdkMeterProvider,
 }
 
 impl Drop for OtelGuard {
@@ -115,6 +116,9 @@ impl Drop for OtelGuard {
         }
         if let Err(e) = self.logger_provider.shutdown() {
             eprintln!("failed to shut down OTel logger provider: {e}");
+        }
+        if let Err(e) = self.meter_provider.shutdown() {
+            eprintln!("failed to shut down OTel meter provider: {e}");
         }
     }
 }
@@ -138,8 +142,19 @@ fn init_tracing() -> Option<OtelGuard> {
         return None;
     };
 
+    // Honours the standard OTEL_SERVICE_NAME, falling back to the name this
+    // was hardcoded to. It was hardcoded, and staging runs the same image, so
+    // a staging load test's spans landed in production's own
+    // traces_spanmetrics_* series and in production's traces -- a 194
+    // webhook/minute burst against staging silently corrupted production's
+    // RED metrics. Set OTEL_SERVICE_NAME on any non-production deployment.
+    let service_name =
+        env::var("OTEL_SERVICE_NAME").unwrap_or_else(|_| "notion-caldav-saas".to_string());
+    if service_name != "notion-caldav-saas" {
+        tracing::info!(service_name, "OTel resource service.name overridden");
+    }
     let resource = opentelemetry_sdk::Resource::builder()
-        .with_service_name("notion-caldav-saas")
+        .with_service_name(service_name)
         .build();
 
     // Must use the async-runtime-integrated processors (spawn their export
@@ -174,8 +189,35 @@ fn init_tracing() -> Option<OtelGuard> {
     .build();
     let logger_provider = opentelemetry_sdk::logs::SdkLoggerProvider::builder()
         .with_log_processor(log_processor)
-        .with_resource(resource)
+        .with_resource(resource.clone())
         .build();
+    // Same async-runtime variant as the span and log processors above, for
+    // the same reason: the default periodic reader spawns a plain
+    // std::thread with no Tokio reactor, and the reqwest client underneath
+    // the OTLP exporter panics the moment it tries to do I/O there.
+    //
+    // 15s rather than the 60s default: a load test is minutes long, and a
+    // minute-granularity export turns a one-minute burst into a single
+    // data point.
+    let metric_exporter = opentelemetry_otlp::MetricExporter::builder()
+        .with_http()
+        .build()
+        .expect("failed to build OTLP metric exporter");
+    let metric_reader =
+        opentelemetry_sdk::metrics::periodic_reader_with_async_runtime::PeriodicReader::builder(
+            metric_exporter,
+            opentelemetry_sdk::runtime::Tokio,
+        )
+        .with_interval(Duration::from_secs(15))
+        .build();
+    let meter_provider = opentelemetry_sdk::metrics::SdkMeterProvider::builder()
+        .with_reader(metric_reader)
+        .with_resource(resource.clone())
+        .build();
+    // Installed globally so src/metrics.rs can reach it without threading a
+    // Meter through AppState and every call site.
+    opentelemetry::global::set_meter_provider(meter_provider.clone());
+
     let otel_log_layer = OpenTelemetryTracingBridge::new(&logger_provider);
 
     tracing_subscriber::registry()
@@ -188,6 +230,7 @@ fn init_tracing() -> Option<OtelGuard> {
     Some(OtelGuard {
         tracer_provider,
         logger_provider,
+        meter_provider,
     })
 }
 

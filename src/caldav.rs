@@ -1098,14 +1098,23 @@ impl AppState {
     /// there.
     async fn probe_source_state(&self, ds_id: &str, notion_token: &str) -> SourceState {
         let url = format!("{}/v1/data_sources/{}", self.notion_api_base_url, ds_id);
-        let resp = match self
+        let started = std::time::Instant::now();
+        let sent = self
             .client
             .get(&url)
             .bearer_auth(notion_token)
             .header("Notion-Version", "2025-09-03")
             .send()
-            .await
-        {
+            .await;
+        crate::metrics::notion_request(
+            "get_data_source",
+            match &sent {
+                Ok(r) => crate::metrics::status_class(r.status().as_u16()),
+                Err(_) => "transport_error",
+            },
+            started.elapsed().as_secs_f64(),
+        );
+        let resp = match sent {
             Ok(r) => r,
             Err(e) => {
                 error!(notion_url = %url, error = %e, "source state probe failed (transport)");
@@ -1196,6 +1205,7 @@ impl AppState {
             }
 
             info!(notion_method = "POST", notion_url = %url, page = pages_fetched + 1, "-> Notion API request");
+            let started = std::time::Instant::now();
             let resp = self
                 .client
                 .post(&url)
@@ -1207,10 +1217,20 @@ impl AppState {
                 .await
                 .map_err(|e| {
                     error!(notion_url = %url, error = %e, "<- Notion API request failed (transport)");
+                    crate::metrics::notion_request(
+                        "query",
+                        "transport_error",
+                        started.elapsed().as_secs_f64(),
+                    );
                     RefreshError::Other(format!("Request failed: {}", e))
                 })?;
 
             let resp_status = resp.status();
+            crate::metrics::notion_request(
+                "query",
+                crate::metrics::status_class(resp_status.as_u16()),
+                started.elapsed().as_secs_f64(),
+            );
             if !resp_status.is_success() {
                 let txt = resp.text().await.unwrap_or_default();
                 error!(notion_url = %url, status = %resp_status, body = %txt, "<- Notion API error response");
@@ -1349,6 +1369,7 @@ impl AppState {
     }
 
     pub async fn refresh_all(&self) {
+        let cycle_started = std::time::Instant::now();
         let calendars = self.all_calendars().await;
         info!(
             calendar_count = calendars.len(),
@@ -1412,9 +1433,19 @@ impl AppState {
                 }
             }
         }
+        let cycle_seconds = cycle_started.elapsed().as_secs_f64();
+        crate::metrics::sync_cycle(
+            cycle_seconds,
+            succeeded as u64,
+            failed as u64,
+            skipped as u64,
+        );
         info!(
             succeeded,
-            failed, skipped, "refresh_all: pull cycle completed"
+            failed,
+            skipped,
+            cycle_seconds,
+            "refresh_all: pull cycle completed"
         );
     }
 
@@ -1430,14 +1461,24 @@ impl AppState {
     /// caller can fall back to a full refresh rather than leave a stale cache.
     pub async fn refresh_single_page(&self, cal: &CalendarRow, notion_page_id: &str) -> bool {
         let url = format!("{}/v1/pages/{}", self.notion_api_base_url, notion_page_id);
-        let resp = match self
+        let started = std::time::Instant::now();
+        let outcome = |r: &Result<reqwest::Response, reqwest::Error>| match r {
+            Ok(resp) => crate::metrics::status_class(resp.status().as_u16()),
+            Err(_) => "transport_error",
+        };
+        let sent = self
             .client
             .get(&url)
             .header("Authorization", format!("Bearer {}", cal.notion_access_token))
             .header("Notion-Version", "2025-09-03")
             .send()
-            .await
-        {
+            .await;
+        crate::metrics::notion_request(
+            "get_page",
+            outcome(&sent),
+            started.elapsed().as_secs_f64(),
+        );
+        let resp = match sent {
             Ok(r) if r.status().is_success() => r,
             Ok(r) if r.status() == reqwest::StatusCode::NOT_FOUND => {
                 // Notion usually reports a deleted page as `in_trash`, but a
