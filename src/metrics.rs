@@ -82,7 +82,21 @@ fn instruments() -> &'static Instruments {
                 "Webhooks acknowledged but not yet finished processing. Everything counted here \
                  is lost if the process dies.",
             )
-            .with_callback(|observer| observer.observe(INFLIGHT.load(Ordering::Relaxed), &[]))
+            .with_callback(|observer| {
+                let v = INFLIGHT.load(Ordering::Relaxed);
+                // Temporary, and the whole point of the current build: the
+                // gauge exports 0 while work is demonstrably in flight, the
+                // callback is confirmed to run (the SDK logs
+                // MeterProviderInvokingObservableCallbacks count=1 every
+                // interval), and every other hypothesis has been eliminated.
+                // Logging the value the callback actually sees splits the two
+                // remaining possibilities in one run: a non-zero log beside a
+                // zero series means the loss is downstream of observe(); a
+                // zero log means the atomic itself is wrong and the guard is
+                // not doing what it reads as doing.
+                tracing::info!(inflight = v, "observable gauge callback");
+                observer.observe(v, &[]);
+            })
             .build();
         Instruments {
             webhook_received: meter
