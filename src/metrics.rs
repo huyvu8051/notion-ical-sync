@@ -21,9 +21,21 @@
 //! - `webhook_inflight` — work accepted but not finished. A SIGKILL loses
 //!   exactly this much: 20 of 20 in a controlled experiment. The gauge makes
 //!   the exposure visible before something kills the pod rather than after.
+//!   Caveat worth knowing before reading it: the gauge is sampled on the
+//!   15-second export interval, and processing normally completes in about a
+//!   millisecond, so it reads 0 almost all of the time. It only becomes
+//!   informative when work is genuinely slow — which is exactly the situation
+//!   where the exposure matters, so this is a reasonable thing for it to be
+//!   blind to.
 //! - `sync_cycle_duration_seconds` / `sync_calendars_total{result}` — the
 //!   periodic pull, which holds a database transaction open for its whole
 //!   duration.
+//!
+//! One mapping to keep in mind when querying these: OpenTelemetry puts the
+//! resource's `service.name` onto Prometheus's `job` label. There is no
+//! `service_name` label on the individual series — that only appears on
+//! `target_info` — so filtering a dashboard by environment means
+//! `job="notion-caldav-saas-stg"`, not `service_name=`.
 //!
 //! Instruments are created once behind a `OnceLock` rather than threaded
 //! through `AppState`: they are needed in `webhook.rs` and in several places
