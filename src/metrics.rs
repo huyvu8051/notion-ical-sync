@@ -23,9 +23,9 @@
 //!   the exposure visible before something kills the pod rather than after.
 //!   Caveat worth knowing before reading it: the gauge is sampled on the
 //!   15-second export interval, and processing normally completes in about a
-//!   millisecond, so it reads 0 almost all of the time. It only becomes
+//!   millisecond, so it reads 0 unless the upstream is slow. It only becomes
 //!   informative when work is genuinely slow — which is exactly the situation
-//!   where the exposure matters, so this is a reasonable thing for it to be
+//!   where the exposure matters, so that is a reasonable thing for it to be
 //!   blind to.
 //! - `sync_cycle_duration_seconds` / `sync_calendars_total{result}` — the
 //!   periodic pull, which holds a database transaction open for its whole
@@ -45,13 +45,23 @@
 //! (local development) — the calls become cheap no-ops rather than needing a
 //! feature flag.
 
-use opentelemetry::metrics::{Counter, Histogram, UpDownCounter};
+use opentelemetry::metrics::{Counter, Histogram};
 use opentelemetry::{global, KeyValue};
+use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::OnceLock;
+
+/// Backing store for the in-flight gauge.
+///
+/// An UpDownCounter was the obvious choice and did not work: under a six
+/// minute ramp to 60 webhooks/second with 1.5s of upstream latency -- roughly
+/// 85 tasks in flight at any moment -- it exported zero on every single
+/// collection. Rather than keep guessing at temporality semantics, this is an
+/// ObservableGauge reading an AtomicI64, which is unambiguous: whatever the
+/// counter says at collection time is what gets exported.
+static INFLIGHT: AtomicI64 = AtomicI64::new(0);
 
 pub struct Instruments {
     webhook_received: Counter<u64>,
-    webhook_inflight: UpDownCounter<i64>,
     notion_requests: Counter<u64>,
     notion_duration: Histogram<f64>,
     sync_cycle_duration: Histogram<f64>,
@@ -64,18 +74,21 @@ static INSTRUMENTS: OnceLock<Instruments> = OnceLock::new();
 fn instruments() -> &'static Instruments {
     INSTRUMENTS.get_or_init(|| {
         let meter = global::meter("notion-ical-sync");
+        // Observed, not pushed: the callback runs at collection time and
+        // reports the instantaneous depth.
+        let _ = meter
+            .i64_observable_gauge("notioncal.webhook.inflight")
+            .with_description(
+                "Webhooks acknowledged but not yet finished processing. Everything counted here \
+                 is lost if the process dies.",
+            )
+            .with_callback(|observer| observer.observe(INFLIGHT.load(Ordering::Relaxed), &[]))
+            .build();
         Instruments {
             webhook_received: meter
                 .u64_counter("notioncal.webhook.received")
                 .with_description(
                     "Notion webhooks received, by event type and what the service did with it",
-                )
-                .build(),
-            webhook_inflight: meter
-                .i64_up_down_counter("notioncal.webhook.inflight")
-                .with_description(
-                    "Webhooks acknowledged but not yet finished processing. Everything counted \
-                     here is lost if the process dies.",
                 )
                 .build(),
             notion_requests: meter
@@ -154,7 +167,12 @@ pub struct InflightGuard(());
 
 impl InflightGuard {
     pub fn new() -> Self {
-        instruments().webhook_inflight.add(1, &[]);
+        // Touch the instruments so the observable gauge is registered even if
+        // this is the first metric activity in the process; without it the
+        // callback would not exist yet and the first burst would go
+        // unobserved.
+        let _ = instruments();
+        INFLIGHT.fetch_add(1, Ordering::Relaxed);
         Self(())
     }
 }
@@ -167,7 +185,7 @@ impl Default for InflightGuard {
 
 impl Drop for InflightGuard {
     fn drop(&mut self) {
-        instruments().webhook_inflight.add(-1, &[]);
+        INFLIGHT.fetch_sub(1, Ordering::Relaxed);
     }
 }
 
