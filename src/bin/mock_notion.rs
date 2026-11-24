@@ -215,10 +215,69 @@ struct MockState {
     by_path: std::collections::HashMap<String, u64>,
     /// Armed faults, consumed as requests match them.
     faults: Vec<Fault>,
+    /// Token bucket, when armed. Notion documents an average of three
+    /// requests per second; the real ceiling is therefore the app's own
+    /// amplification multiplied by its webhook rate, and no amount of local
+    /// speed changes it. Without this the mock answers everything and a load
+    /// test measures the app's headroom rather than a rate it could actually
+    /// sustain.
+    ///
+    /// Off by default so existing runs keep their meaning; arm it explicitly
+    /// (`/v1/_test/rate_limit`) for a realistic test.
+    rate_limit: Option<RateLimit>,
     /// While > 0, `query` claims there is always another page and hands back
     /// a cursor that does not advance, so the caller's own page cap is the
     /// only thing that ends the loop. Decremented per request.
     cursor_stuck: u32,
+}
+
+/// A token bucket, refilled continuously rather than on a fixed window.
+///
+/// A fixed window would let a caller spend the whole allowance in the first
+/// millisecond of each second and then be refused for the rest of it, which
+/// produces a very different (and tidier) 429 pattern than the real thing.
+#[derive(Clone, Debug)]
+struct RateLimit {
+    /// Sustained rate, requests per second.
+    rps: f64,
+    /// How much may be spent at once before the sustained rate binds.
+    burst: f64,
+    tokens: f64,
+    last_refill: std::time::Instant,
+    /// Counted so a test can assert on how much was actually refused rather
+    /// than inferring it from the app's behaviour.
+    refused: u64,
+}
+
+impl RateLimit {
+    fn new(rps: f64, burst: f64) -> Self {
+        Self {
+            rps,
+            burst,
+            tokens: burst,
+            last_refill: std::time::Instant::now(),
+            refused: 0,
+        }
+    }
+
+    /// Returns `Err(retry_after_seconds)` when the bucket is empty.
+    fn take(&mut self) -> Result<(), u64> {
+        let now = std::time::Instant::now();
+        let elapsed = now.duration_since(self.last_refill).as_secs_f64();
+        self.last_refill = now;
+        self.tokens = (self.tokens + elapsed * self.rps).min(self.burst);
+
+        if self.tokens >= 1.0 {
+            self.tokens -= 1.0;
+            Ok(())
+        } else {
+            self.refused += 1;
+            // Seconds until one token exists again, rounded up, floored at 1 --
+            // Notion sends Retry-After in whole seconds.
+            let wait = ((1.0 - self.tokens) / self.rps).ceil().max(1.0);
+            Err(wait as u64)
+        }
+    }
 }
 
 /// One injected fault. Consumed `times` times against paths starting with
@@ -480,12 +539,35 @@ async fn control_layer(State(state): State<SharedState>, req: Request, next: Nex
     // Lock scoped so it is released before any await below -- holding the
     // mutex across a 10s injected delay would serialise the whole mock and
     // turn a one-request delay into a global stall.
-    let fault = {
+    // Rate limit is evaluated before injected faults, and counted either way:
+    // a refused request still reached the API, which is what the app's own
+    // amplification metric is comparing against.
+    let (fault, limited) = {
         let mut st = state.lock().await;
         st.requests_total += 1;
         *st.by_path.entry(normalise_path(&path)).or_insert(0) += 1;
-        take_fault(&mut st, &path)
+        let limited = match st.rate_limit.as_mut() {
+            Some(rl) => rl.take().err(),
+            None => None,
+        };
+        (take_fault(&mut st, &path), limited)
     };
+
+    if let Some(retry_after) = limited {
+        tracing::warn!(%path, retry_after, "mock: rate limited");
+        let body = json!({
+            "object": "error",
+            "status": 429,
+            "code": "rate_limited",
+            "message": "You have been rate limited. Please try again in a few minutes.",
+        });
+        let mut res = (StatusCode::TOO_MANY_REQUESTS, Json(body)).into_response();
+        if let Ok(header) = retry_after.to_string().parse() {
+            res.headers_mut()
+                .insert(axum::http::header::RETRY_AFTER, header);
+        }
+        return res;
+    }
 
     match fault {
         Some(FaultKind::Status { code, retry_after }) => {
@@ -559,6 +641,11 @@ async fn test_stats(State(state): State<SharedState>) -> impl IntoResponse {
         "faults_armed": st.faults.len(),
         "cursor_stuck": st.cursor_stuck,
         "pages": st.pages.len(),
+        "rate_limit": st.rate_limit.as_ref().map(|r| json!({
+            "rps": r.rps,
+            "burst": r.burst,
+            "refused": r.refused,
+        })),
     }))
 }
 
@@ -571,6 +658,7 @@ async fn test_reset(State(state): State<SharedState>) -> impl IntoResponse {
     st.faults.clear();
     st.cursor_stuck = 0;
     st.unavailable.clear();
+    st.rate_limit = None;
     tracing::info!("mock: control state reset");
     (StatusCode::OK, "reset\n")
 }
@@ -627,6 +715,30 @@ async fn test_garbage(
     let mut st = state.lock().await;
     let described = arm(&mut st, FaultKind::Garbage, &body);
     (StatusCode::OK, format!("{described}\n"))
+}
+
+/// Arm or disarm the token bucket. `{"rps": 0}` disables it.
+async fn test_rate_limit(
+    State(state): State<SharedState>,
+    Json(body): Json<Value>,
+) -> impl IntoResponse {
+    let rps = body.get("rps").and_then(|v| v.as_f64()).unwrap_or(3.0);
+    // Three seconds' worth by default: Notion's documented figure is an
+    // *average* of three per second, which implies some tolerance for a
+    // short burst rather than a hard per-second gate.
+    let burst = body
+        .get("burst")
+        .and_then(|v| v.as_f64())
+        .unwrap_or((rps * 3.0).max(1.0));
+    let mut st = state.lock().await;
+    if rps <= 0.0 {
+        st.rate_limit = None;
+        tracing::info!("mock: rate limit disabled");
+        return (StatusCode::OK, "rate limit disabled\n".to_string());
+    }
+    st.rate_limit = Some(RateLimit::new(rps, burst));
+    tracing::info!(rps, burst, "mock: rate limit armed");
+    (StatusCode::OK, format!("rate limit armed: {rps}/s burst {burst}\n"))
 }
 
 async fn test_cursor_stuck(
@@ -1102,6 +1214,7 @@ async fn main() {
         by_path: std::collections::HashMap::new(),
         faults: Vec::new(),
         cursor_stuck: 0,
+        rate_limit: None,
     }));
 
     let app = Router::new()
@@ -1122,6 +1235,7 @@ async fn main() {
         .route("/v1/_test/delay", post(test_delay))
         .route("/v1/_test/garbage", post(test_garbage))
         .route("/v1/_test/cursor_stuck", post(test_cursor_stuck))
+        .route("/v1/_test/rate_limit", post(test_rate_limit))
         .route("/v1/_test/page/{id}", post(test_set_page))
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
