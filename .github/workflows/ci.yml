@@ -8,9 +8,65 @@ on:
   workflow_dispatch:
 
 jobs:
+  # Which images actually need rebuilding.
+  #
+  # Every push used to rebuild both, which meant a change to a mock -- code
+  # that is not in the production binary at all -- still produced and pushed a
+  # new production image. Since production runs :latest with
+  # imagePullPolicy: Always, that is a production deployment triggered by
+  # staging-only work. It is why the mock and metrics work had to live on
+  # branches with their own image tags.
+  #
+  # The split is clean because the three mock binaries are standalone: they
+  # have zero references to this crate's lib (verified, not assumed), so
+  # nothing under src/bin/mock_*.rs can reach the production binary. Shared
+  # inputs -- the manifest, the lockfile, the Dockerfile -- rebuild both,
+  # since either image could change meaning from any of them.
+  changes:
+    name: Detect changed images
+    runs-on: ubuntu-latest
+    outputs:
+      app: ${{ steps.filter.outputs.app }}
+      mock: ${{ steps.filter.outputs.mock }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            shared: &shared
+              - 'Cargo.toml'
+              - 'Cargo.lock'
+              - 'Dockerfile'
+              - '.github/workflows/ci.yml'
+            app:
+              - *shared
+              - 'src/**'
+              # Negations come last and win: the mock binaries live under
+              # src/ but are not linked into the production image.
+              - '!src/bin/mock_notion.rs'
+              - '!src/bin/mock_resend.rs'
+              - '!src/bin/mock_paddle.rs'
+              - 'crates/**'
+              - 'migrations/**'
+              - 'static/**'
+              - 'tailwind/**'
+            mock:
+              - *shared
+              - 'src/bin/mock_notion.rs'
+              - 'src/bin/mock_resend.rs'
+              - 'src/bin/mock_paddle.rs'
+
   build-and-push:
     name: Build & Push Docker
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: changes
+    # workflow_dispatch forces a build: it is the escape hatch for "rebuild it
+    # anyway", and there is no previous commit to diff against in that case.
+    if: >-
+      github.ref == 'refs/heads/main' &&
+      (github.event_name == 'workflow_dispatch' || needs.changes.outputs.app == 'true')
     runs-on: ubuntu-latest
     permissions:
       packages: write
@@ -36,16 +92,41 @@ jobs:
           context: .
           file: ./Dockerfile
           # Explicit, not implicit -- Docker builds the Dockerfile's LAST
-          # stage when --target is unset, and the `mock` stage added below
-          # is now last. Without this, the next push would have quietly
-          # shipped mock_notion as :latest instead of the real app.
+          # stage when --target is unset, and the `mock` stage is now last.
+          # Without this, a push would quietly ship mock_notion as :latest
+          # instead of the real app.
           target: runtime
           push: true
           tags: ghcr.io/huyvu8051/notion-ical-sync:latest
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      - name: Build and push mock_notion (staging only, see Dockerfile)
+  build-mock:
+    name: Build & Push mock image
+    needs: changes
+    if: >-
+      github.ref == 'refs/heads/main' &&
+      (github.event_name == 'workflow_dispatch' || needs.changes.outputs.mock == 'true')
+    runs-on: ubuntu-latest
+    permissions:
+      packages: write
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push mock image
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -75,7 +156,10 @@ jobs:
   #   gh workflow run ci.yml --ref <branch>
   build-mock-branch:
     name: Build & Push mock image (branch)
-    if: github.ref != 'refs/heads/main'
+    needs: changes
+    if: >-
+      github.ref != 'refs/heads/main' &&
+      (github.event_name == 'workflow_dispatch' || needs.changes.outputs.mock == 'true')
     runs-on: ubuntu-latest
     permissions:
       packages: write
@@ -120,7 +204,10 @@ jobs:
   #   gh workflow run ci.yml --ref <branch>
   build-app-branch:
     name: Build & Push app image (branch)
-    if: github.ref != 'refs/heads/main'
+    needs: changes
+    if: >-
+      github.ref != 'refs/heads/main' &&
+      (github.event_name == 'workflow_dispatch' || needs.changes.outputs.app == 'true')
     runs-on: ubuntu-latest
     permissions:
       packages: write
