@@ -1,3 +1,31 @@
+//! DEPRECATED — the webview's private JSON event API.
+//!
+//! These four endpoints exist only because the webview was written before
+//! the CalDAV write path was finished, and they now duplicate it: each one
+//! has an exact CalDAV equivalent, against the same calendar, with the same
+//! permission check underneath.
+//!
+//! | this                                              | use instead                          |
+//! |---------------------------------------------------|--------------------------------------|
+//! | `GET    /app/{public_id}/api/events`              | `GET    /cal/{public_id}`            |
+//! | `POST   /app/{public_id}/api/events`              | `PUT    /cal/{public_id}/{uid}.ics`  |
+//! | `PATCH  /app/{public_id}/api/events/{event_id}`   | `PUT    /cal/{public_id}/{uid}.ics`  |
+//! | `DELETE /app/{public_id}/api/events/{event_id}`   | `DELETE /cal/{public_id}/{uid}.ics`  |
+//!
+//! The plan is for the web UI to speak CalDAV like every other client, so
+//! there is one write path to reason about rather than two that have to be
+//! kept in step. Two paths is not a theoretical cost: the duplicate-page race
+//! found in the CalDAV PUT handler (five concurrent PUTs of one UID create
+//! five Notion pages) has to be fixed once per path, and a fix applied to
+//! only one of them looks like a fix.
+//!
+//! Marked with RFC 8594 `Deprecation` and `Link` headers by the middleware in
+//! `create_app`, and counted as `notioncal.deprecated.api.calls` so the
+//! removal decision rests on whether anything still calls them rather than on
+//! anyone's memory.
+//!
+//! Still fully supported until the webview migrates. Nothing here is a stub.
+
 use axum::{
     extract::{Path, State},
     http::StatusCode,
@@ -12,6 +40,7 @@ use crate::session::require_owned_calendar;
 use crate::AppState;
 use app::webview::labels_for;
 
+/// Deprecated: `GET /cal/{public_id}` returns the same events as iCalendar.
 pub async fn handle_list_events(
     State(state): State<AppState>,
     claims: OidcClaims<EmptyAdditionalClaims>,
@@ -65,6 +94,7 @@ pub struct CreateEventBody {
     travel_minutes: Option<i64>,
 }
 
+/// Deprecated: `PUT /cal/{public_id}/{uid}.ics` with an iCalendar body.
 pub async fn handle_create_event(
     State(state): State<AppState>,
     claims: OidcClaims<EmptyAdditionalClaims>,
@@ -166,6 +196,8 @@ where
     Ok(Some(Option::deserialize(deserializer)?))
 }
 
+/// Deprecated: `PUT /cal/{public_id}/{uid}.ics` — CalDAV has no separate
+/// create and update; a PUT to an existing UID is the edit.
 pub async fn handle_update_event(
     State(state): State<AppState>,
     claims: OidcClaims<EmptyAdditionalClaims>,
@@ -237,6 +269,7 @@ pub async fn handle_update_event(
     }
 }
 
+/// Deprecated: `DELETE /cal/{public_id}/{uid}.ics`.
 pub async fn handle_delete_event(
     State(state): State<AppState>,
     claims: OidcClaims<EmptyAdditionalClaims>,

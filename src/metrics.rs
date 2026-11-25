@@ -67,6 +67,7 @@ pub struct Instruments {
     sync_cycle_duration: Histogram<f64>,
     sync_calendars: Counter<u64>,
     caldav_requests: Counter<u64>,
+    deprecated_api: Counter<u64>,
 }
 
 static INSTRUMENTS: OnceLock<Instruments> = OnceLock::new();
@@ -132,6 +133,13 @@ fn instruments() -> &'static Instruments {
             caldav_requests: meter
                 .u64_counter("notioncal.caldav.requests")
                 .with_description("CalDAV requests served, by method and status class")
+                .build(),
+            deprecated_api: meter
+                .u64_counter("notioncal.deprecated.api.calls")
+                .with_description(
+                    "Calls to a deprecated endpoint, by route and method. Deprecating without \
+                     measuring use means never knowing when removal is safe.",
+                )
                 .build(),
         }
     })
@@ -244,6 +252,22 @@ pub fn sync_cycle(seconds: f64, succeeded: u64, failed: u64, skipped: u64) {
                 .add(n, &[KeyValue::new("result", result)]);
         }
     }
+}
+
+/// One call to an endpoint that is on its way out.
+///
+/// The point is the removal decision: a deprecation notice that nobody
+/// measures is a comment, and the question "has the web UI actually stopped
+/// calling this" has no answer without a number. When this reaches zero and
+/// stays there, the routes can go.
+pub fn deprecated_api_call(route: &str, method: &str) {
+    instruments().deprecated_api.add(
+        1,
+        &[
+            KeyValue::new("route", route.to_string()),
+            KeyValue::new("method", method.to_string()),
+        ],
+    );
 }
 
 pub fn caldav_request(method: &str, status: u16) {

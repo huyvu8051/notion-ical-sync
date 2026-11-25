@@ -6,7 +6,7 @@ use argon2::password_hash::PasswordVerifier;
 use axum::{
     extract::{Path, State},
     http::header,
-    response::IntoResponse,
+    response::{IntoResponse, Response},
     routing::{get, post},
     Router,
 };
@@ -4009,6 +4009,45 @@ fn routes_dispatched_outside_leptos_routes() -> Vec<String> {
     .collect()
 }
 
+/// Marks a response as coming from a deprecated endpoint, per RFC 8594, and
+/// counts the call.
+///
+/// `Deprecation: true` says the endpoint is deprecated without claiming a
+/// date; `Link ... rel="successor-version"` names what to use instead, so a
+/// client author finds the answer in the response rather than in a changelog
+/// they will not read. No `Sunset` header deliberately -- that asserts a
+/// removal date, and inventing one that nobody has agreed to is worse than
+/// saying nothing.
+///
+/// The counter is the part that matters operationally. A deprecation notice
+/// nobody measures is a comment; `notioncal.deprecated.api.calls` reaching
+/// zero and staying there is what makes removal a decision rather than a
+/// gamble.
+async fn mark_deprecated(req: axum::extract::Request, next: axum::middleware::Next) -> Response {
+    // A route label, not the raw path: the path carries a public_id and an
+    // event id, and putting those in a metric label would mint a new time
+    // series per calendar and per event.
+    let path = req.uri().path();
+    let route = if path.ends_with("/api/events") || path.ends_with("/api/events/") {
+        "/app/{public_id}/api/events"
+    } else {
+        "/app/{public_id}/api/events/{event_id}"
+    };
+    let method = req.method().as_str().to_string();
+    crate::metrics::deprecated_api_call(route, &method);
+
+    let mut res = next.run(req).await;
+    let headers = res.headers_mut();
+    headers.insert("deprecation", http::HeaderValue::from_static("true"));
+    headers.insert(
+        "link",
+        http::HeaderValue::from_static(
+            "</cal/{public_id}>; rel=\"successor-version\"; title=\"CalDAV\"",
+        ),
+    );
+    res
+}
+
 pub fn create_app(
     state: AppState,
     oidc_client: axum_oidc::OidcClient<axum_oidc::EmptyAdditionalClaims>,
@@ -4206,6 +4245,16 @@ pub fn create_app(
             get(|| async { axum::response::Redirect::to("/me") }),
         )
         .route("/app/{public_id}", get(leptos_login_required_page()))
+        // DEPRECATED. These two routes duplicate the CalDAV write path --
+        // see the module header in src/api/webview_events.rs for the
+        // endpoint-by-endpoint mapping. The webview will speak CalDAV like
+        // every other client, leaving one write path instead of two that have
+        // to be kept in step.
+        //
+        // The layer below is the whole deprecation mechanism: it adds the
+        // RFC 8594 headers and counts the call. Attached here rather than
+        // inside each handler so that adding a fifth endpoint to this group
+        // cannot accidentally be born undeprecated.
         .route(
             "/app/{public_id}/api/events",
             get(crate::api::webview_events::handle_list_events)
@@ -4216,6 +4265,7 @@ pub fn create_app(
             axum::routing::patch(crate::api::webview_events::handle_update_event)
                 .delete(crate::api::webview_events::handle_delete_event),
         )
+        .layer(axum::middleware::from_fn(mark_deprecated))
         .route("/billing/checkout", get(crate::billing::start_checkout))
         .route("/billing/manage", get(crate::billing::manage_subscription))
         .layer(oidc_login_service);
